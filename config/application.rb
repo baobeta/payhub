@@ -40,5 +40,16 @@ module Payhub
     # Middleware like session, flash, cookies can be added back manually.
     # Skip views, helpers and assets when generating a new resource.
     config.api_only = true
+
+    # UUID v7 primary keys, generated in Postgres (see the first migration).
+    config.generators do |g|
+      g.orm :active_record, primary_key_type: :uuid
+    end
+
+    # schema.rb cannot represent the uuid_generate_v7() function, CHECK
+    # constraints, or partial indexes faithfully. structure.sql can.
+    config.active_record.schema_format = :sql
+
+    config.active_job.queue_adapter = :sidekiq
   end
 end
