@@ -17,6 +17,7 @@ RSpec.configure do |config|
   config.fixture_paths = [Rails.root.join("spec/fixtures")]
   config.include FactoryBot::Syntax::Methods
   config.include ActiveSupport::Testing::TimeHelpers
+  config.include ActiveJob::TestHelper # perform_enqueued_jobs in property and request specs
 
   # Transactional fixtures roll back after each example. Specs tagged
   # `concurrency: true` use real threads + real connections, which cannot see

@@ -473,6 +473,9 @@ class IdempotencyKey
     def excluding(*args, &blk); end
 
     sig { params(args: T.untyped, blk: T.untyped).returns(PrivateAssociationRelation) }
+    def expired(*args, &blk); end
+
+    sig { params(args: T.untyped, blk: T.untyped).returns(PrivateAssociationRelation) }
     def extending(*args, &blk); end
 
     sig { params(association: Symbol).returns(T::Array[T.untyped]) }
@@ -1253,6 +1256,9 @@ class IdempotencyKey
 
     sig { params(args: T.untyped, blk: T.untyped).returns(PrivateRelation) }
     def excluding(*args, &blk); end
+
+    sig { params(args: T.untyped, blk: T.untyped).returns(PrivateRelation) }
+    def expired(*args, &blk); end
 
     sig { params(args: T.untyped, blk: T.untyped).returns(PrivateRelation) }
     def extending(*args, &blk); end

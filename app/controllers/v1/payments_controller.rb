@@ -19,7 +19,34 @@ module V1
       render json: PaymentSerializer.call(payment, include_transitions: true)
     end
 
+    # POST /v1/payments/:id/capture → 202. Partial allowed; defaults to the full authorized amount.
+    sig { void }
+    def capture
+      payment = current_merchant.payments.find(params[:id])
+      amount = optional_amount
+      CapturePayment.call(payment, amount_minor: amount)
+      render json: PaymentSerializer.call(payment.reload), status: :accepted
+    end
+
+    # POST /v1/payments/:id/cancel → 200. Synchronous; only valid from authorized.
+    sig { void }
+    def cancel
+      payment = current_merchant.payments.find(params[:id])
+      CancelPayment.call(payment)
+      render json: PaymentSerializer.call(payment.reload, include_transitions: true)
+    end
+
     private
+
+    # amount_minor for capture/refund: absent means "all of it"; present must be a positive integer.
+    sig { returns(T.nilable(Integer)) }
+    def optional_amount
+      raw = params[:amount_minor]
+      return nil if raw.nil?
+      return raw if raw.is_a?(Integer) && raw.positive?
+
+      raise ApiError.validation("amount_minor" => ["must be a positive integer when present"])
+    end
 
     # Collects EVERY failing field before raising, as the contract requires.
     sig { returns(CreatePayment::Params) }

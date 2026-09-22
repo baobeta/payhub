@@ -25,7 +25,7 @@ Layout/SpaceInsideArrayLiteralBrackets:
 
 # ── RSpec ─────────────────────────────────────────────────────────────────────
 RSpec/ExampleLength:
-  Max: 25          # request/concurrency specs are naturally longer
+  Max: 35          # real-thread races and property runs need setup + barrier + assertions in one example
 RSpec/MultipleExpectations:
   Max: 6           # one scenario, several assertions about its outcome is fine
 RSpec/NestedGroups:

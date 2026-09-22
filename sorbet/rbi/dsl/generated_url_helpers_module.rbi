@@ -10,6 +10,12 @@ module GeneratedUrlHelpersModule
   include ::ActionDispatch::Routing::PolymorphicRoutes
 
   sig { params(args: T.untyped).returns(String) }
+  def cancel_v1_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def capture_v1_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def healthz_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -23,6 +29,12 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def rails_info_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def v1_balance_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def v1_payment_refunds_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def v1_payment_url(*args); end

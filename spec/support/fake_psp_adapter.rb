@@ -39,6 +39,10 @@ class FakePspAdapter < PspAdapter
 
   def authorize(payment) = answer(:authorize, payment)
   def fetch(psp_reference) = answer(:fetch, psp_reference)
+  def capture(payment, amount_minor) = answer(:capture, [payment, amount_minor])
+  def cancel(payment) = answer(:cancel, payment)
+  def refund(refund) = answer(:refund, refund)
+  def fetch_refund(psp_reference) = answer(:fetch_refund, psp_reference)
 
   private
 

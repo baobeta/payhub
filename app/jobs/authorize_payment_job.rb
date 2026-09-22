@@ -89,6 +89,13 @@ class AuthorizePaymentJob < ApplicationJob
       # HTTP 200 + declined: transport success, domain failure.
       move(payment, :failed, ts, meta.merge("decline_code" => result.decline_code))
 
+    when PspAdapter::Result::Status::Canceled
+      # Only reachable via fetch after a timeout, if someone voided the hold
+      # at the PSP between our send and our poll. pending → canceled is not an
+      # edge; the honest path is authorized then canceled.
+      move(payment, :authorized, ts - 0.001, meta)
+      move(payment, :canceled, ts, meta)
+
     when PspAdapter::Result::Status::RequiresAction
       move(payment, :requires_action, ts, meta.merge("redirect_url" => result.redirect_url))
 

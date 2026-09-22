@@ -29,15 +29,30 @@ module Nordpay
       end
     end
 
+    Refund = Struct.new(:id, :reference, :charge_reference, :status, :code, :amount_minor, :created_at,
+                        keyword_init: true) do
+      def to_h
+        { id: id, reference: reference, charge_reference: charge_reference, status: status, code: code,
+          amount_minor: amount_minor, created_at: created_at.utc.iso8601(3) }.compact
+      end
+    end
+
+    attr_reader :refunds
+
     def initialize
       @charges = {}
+      @refunds = {}
       @mutex = Mutex.new
     end
 
     def sync(&) = @mutex.synchronize(&)
     def find(reference) = @charges[reference]
     def all = @charges.values
-    def reset! = @charges.clear
+
+    def reset!
+      @charges.clear
+      @refunds.clear
+    end
 
     def find_or_create(reference)
       @charges[reference] ||= Charge.new(
@@ -186,6 +201,57 @@ module Nordpay
         charge.status = "captured" if charge.captured_minor == charge.amount_minor
       end
       json!(charge.to_h)
+    end
+
+    # POST /charges/:reference/void — release an authorization. Idempotent.
+    post "/charges/:reference/void" do
+      authenticate!
+      charge = store.find(params[:reference])
+      error!(404, "not_found", "no such charge") unless charge&.status
+      error!(409, "not_voidable", "charge is #{charge.status}") unless %w[authorized canceled].include?(charge.status)
+
+      store.sync { charge.status = "canceled" }
+      json!(charge.to_h)
+    end
+
+    # POST /charges/:reference/refunds — body: amount_minor. Partial allowed.
+    #   Headers: X-Request-Id: <caller's refund reference> (idempotent)
+    #   200: { id, reference, charge_reference, status: succeeded|failed, amount_minor, created_at }
+    post "/charges/:reference/refunds" do
+      authenticate!
+      charge = store.find(params[:reference])
+      error!(404, "not_found", "no such charge") unless charge&.status
+      ref = request.env["HTTP_X_REQUEST_ID"].to_s
+      error!(400, "missing_request_id", "X-Request-Id header is required") if ref.empty?
+
+      refund = nil
+      store.sync do
+        refund = store.refunds[ref]
+        unless refund
+          amount = body_json.fetch("amount_minor", charge.captured_minor)
+          refunded = store.refunds.values.select { |r| r.charge_reference == charge.reference && r.status == "succeeded" }
+                          .sum(&:amount_minor)
+          status, code =
+            if charge.captured_minor.zero? then ["failed", "not_captured"]
+            elsif refunded + amount > charge.captured_minor then ["failed", "exceeds_captured"]
+            else ["succeeded", nil]
+            end
+          refund = store.refunds[ref] = Store::Refund.new(
+            id: "re_#{SecureRandom.hex(8)}", reference: ref, charge_reference: charge.reference,
+            status: status, code: code, amount_minor: amount, created_at: Time.now
+          )
+        end
+      end
+
+      sleep(config.fetch("timeout_seconds", 5).to_f) if inject?("timeout")
+      json!(refund.to_h)
+    end
+
+    get "/refunds/:reference" do
+      authenticate!
+      refund = store.refunds[params[:reference]]
+      error!(404, "not_found", "no refund with reference #{params[:reference]}") unless refund
+      json!(refund.to_h)
     end
 
     error do

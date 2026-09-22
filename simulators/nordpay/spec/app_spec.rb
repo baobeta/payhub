@@ -84,6 +84,38 @@ RSpec.describe Nordpay::App do
     expect(last_response.status).to eq(404)
   end
 
+  it "voids an authorized charge idempotently and refuses to void a captured one" do
+    charge!("ref_void")
+    post "/charges/ref_void/void", "", headers
+    expect(JSON.parse(last_response.body)["status"]).to eq("canceled")
+    post "/charges/ref_void/void", "", headers
+    expect(last_response.status).to eq(200) # idempotent
+
+    charge!("ref_cap2")
+    post "/charges/ref_cap2/capture", "{}", headers
+    post "/charges/ref_cap2/void", "", headers
+    expect(last_response.status).to eq(409)
+  end
+
+  it "refunds up to the captured amount, idempotent on X-Request-Id, and fails beyond it" do
+    charge!("ref_rf")
+    post "/charges/ref_rf/capture", "{}", headers
+    rf = headers.merge("HTTP_X_REQUEST_ID" => "rf_1")
+
+    post "/charges/ref_rf/refunds", JSON.generate(amount_minor: 1000), rf
+    expect(JSON.parse(last_response.body)).to include("status" => "succeeded", "amount_minor" => 1000, "reference" => "rf_1")
+    post "/charges/ref_rf/refunds", JSON.generate(amount_minor: 9999), rf # same id, different body
+    expect(JSON.parse(last_response.body)["amount_minor"]).to eq(1000)      # original, untouched
+
+    post "/charges/ref_rf/refunds", JSON.generate(amount_minor: 2000), headers.merge("HTTP_X_REQUEST_ID" => "rf_2")
+    expect(JSON.parse(last_response.body)).to include("status" => "failed", "code" => "exceeds_captured")
+
+    get "/refunds/rf_1", nil, headers
+    expect(JSON.parse(last_response.body)["status"]).to eq("succeeded")
+    get "/refunds/nope", nil, headers
+    expect(last_response.status).to eq(404)
+  end
+
   it "captures partially then fully" do
     charge!("ref_cap")
     post "/charges/ref_cap/capture", JSON.generate(amount_minor: 1000), headers

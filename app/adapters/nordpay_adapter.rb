@@ -63,6 +63,42 @@ class NordpayAdapter < PspAdapter
     to_result(T.cast(response.body, T::Hash[String, T.untyped]))
   end
 
+  sig { override.params(payment: Payment, amount_minor: Integer).returns(Result) }
+  def capture(payment, amount_minor)
+    response = request(:post, "/charges/#{payment.psp_reference}/capture", body: { amount_minor: amount_minor })
+    return not_found(payment.psp_reference) if response.status == 404
+
+    to_result(T.cast(response.body, T::Hash[String, T.untyped]))
+  end
+
+  sig { override.params(payment: Payment).returns(Result) }
+  def cancel(payment)
+    response = request(:post, "/charges/#{payment.psp_reference}/void")
+    return not_found(payment.psp_reference) if response.status == 404
+
+    to_result(T.cast(response.body, T::Hash[String, T.untyped]))
+  end
+
+  # Nordpay refunds are keyed by our refund reference via X-Request-Id, so a
+  # timed-out refund is resolved by fetch_refund, never by re-sending.
+  sig { override.params(refund: Refund).returns(RefundResult) }
+  def refund(refund)
+    response = request(:post, "/charges/#{T.must(refund.payment).psp_reference}/refunds",
+                       body: { amount_minor: refund.amount_minor },
+                       headers: { "X-Request-Id" => refund.psp_reference })
+    return refund_not_found(refund.psp_reference) if response.status == 404
+
+    to_refund_result(T.cast(response.body, T::Hash[String, T.untyped]))
+  end
+
+  sig { override.params(psp_reference: String).returns(RefundResult) }
+  def fetch_refund(psp_reference)
+    response = request(:get, "/refunds/#{psp_reference}")
+    return refund_not_found(psp_reference) if response.status == 404
+
+    to_refund_result(T.cast(response.body, T::Hash[String, T.untyped]))
+  end
+
   private
 
   sig do
@@ -100,6 +136,7 @@ class NordpayAdapter < PspAdapter
     status = case charge["status"]
     when "authorized" then Result::Status::Authorized
     when "captured" then Result::Status::Captured
+    when "canceled" then Result::Status::Canceled
     when "declined" then Result::Status::Declined
     else raise Rejected.new(200, "nordpay unknown charge status #{charge['status'].inspect}")
     end
@@ -118,6 +155,27 @@ class NordpayAdapter < PspAdapter
   def not_found(psp_reference)
     Result.new(status: Result::Status::NotFound, psp_reference: psp_reference, psp_charge_id: nil,
                decline_code: nil, psp_timestamp: Time.current)
+  end
+
+  sig { params(body: T::Hash[String, T.untyped]).returns(RefundResult) }
+  def to_refund_result(body)
+    status = case body["status"]
+    when "succeeded" then RefundResult::Status::Succeeded
+    when "failed" then RefundResult::Status::Failed
+    when "pending" then RefundResult::Status::Pending
+    else raise Rejected.new(200, "nordpay unknown refund status #{body['status'].inspect}")
+    end
+
+    RefundResult.new(
+      status: status, psp_reference: body.fetch("reference"), psp_refund_id: body["id"],
+      failure_code: body["code"], psp_timestamp: Time.iso8601(body.fetch("created_at")), raw: body
+    )
+  end
+
+  sig { params(psp_reference: String).returns(RefundResult) }
+  def refund_not_found(psp_reference)
+    RefundResult.new(status: RefundResult::Status::NotFound, psp_reference: psp_reference, psp_refund_id: nil,
+                     failure_code: nil, psp_timestamp: Time.current)
   end
 
   sig { params(response: Faraday::Response).returns(String) }

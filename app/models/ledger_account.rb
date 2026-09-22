@@ -19,6 +19,7 @@ class LedgerAccount < ApplicationRecord
 
   # Balance is always derived. credits - debits, never a cached column.
   def balance_minor
-    entries.sum(Arel.sql("CASE direction WHEN 'credit' THEN amount_minor ELSE -amount_minor END"))
+    # SUM over bigint is `numeric` in Postgres; amounts are integers by contract.
+    entries.sum(Arel.sql("CASE direction WHEN 'credit' THEN amount_minor ELSE -amount_minor END")).to_i
   end
 end

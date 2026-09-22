@@ -10,6 +10,12 @@ module GeneratedPathHelpersModule
   include ::ActionDispatch::Routing::PolymorphicRoutes
 
   sig { params(args: T.untyped).returns(String) }
+  def cancel_v1_payment_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def capture_v1_payment_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def healthz_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -25,7 +31,13 @@ module GeneratedPathHelpersModule
   def rails_info_routes_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def v1_balance_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def v1_payment_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def v1_payment_refunds_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def v1_payments_path(*args); end

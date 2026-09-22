@@ -21,6 +21,7 @@ class PspAdapter
       enums do
         Authorized = new("authorized")
         Captured = new("captured")
+        Canceled = new("canceled")
         Declined = new("declined")
         # The PSP created the charge but the customer must act (Kiripay redirect).
         RequiresAction = new("requires_action")
@@ -76,6 +77,43 @@ class PspAdapter
   # The read that resolves `unknown`. Never has side effects.
   sig { abstract.params(psp_reference: String).returns(Result) }
   def fetch(psp_reference); end
+
+  # Take some or all of an authorized amount. Returns the charge's new state;
+  # `captured_minor` in `raw` is the PSP's running total, which the caller
+  # compares against its own ledger rather than trusting blindly.
+  sig { abstract.params(payment: Payment, amount_minor: Integer).returns(Result) }
+  def capture(payment, amount_minor); end
+
+  # Release an authorization hold. Idempotent on the PSP side: voiding twice
+  # is harmless, so the caller may retry on ambiguity.
+  sig { abstract.params(payment: Payment).returns(Result) }
+  def cancel(payment); end
+
+  # Outcome of a refund request, keyed by OUR refund reference so a timeout
+  # can be resolved by `fetch_refund`, exactly as charges are by `fetch`.
+  class RefundResult < T::Struct
+    class Status < T::Enum
+      enums do
+        Succeeded = new("succeeded")
+        Failed = new("failed")
+        Pending = new("pending")
+        NotFound = new("not_found")
+      end
+    end
+
+    const :status, Status
+    const :psp_reference, String
+    const :psp_refund_id, T.nilable(String)
+    const :failure_code, T.nilable(String)
+    const :psp_timestamp, T.any(Time, ActiveSupport::TimeWithZone)
+    const :raw, T::Hash[String, T.untyped], default: {}
+  end
+
+  sig { abstract.params(refund: Refund).returns(RefundResult) }
+  def refund(refund); end
+
+  sig { abstract.params(psp_reference: String).returns(RefundResult) }
+  def fetch_refund(psp_reference); end
 
   # Capability flags. The domain asks; the adapter declares.
   sig { abstract.returns(T::Boolean) }
