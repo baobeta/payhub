@@ -10,6 +10,10 @@ module V1
       T.bind(self, V1::BaseController)
       request.post?
     }
+    around_action :with_idempotency, if: -> {
+      T.bind(self, V1::BaseController)
+      request.post?
+    }
 
     rescue_from ApiError, with: :render_api_error
     rescue_from ActiveRecord::RecordNotFound do
@@ -49,6 +53,34 @@ module V1
 
       raise ApiError.invalid_request("Idempotency-Key header is required", param: "Idempotency-Key",
                                                                           code: "missing_idempotency_key")
+    end
+
+    # Runs the action at most once per (merchant, Idempotency-Key). The action
+    # renders inside the guard so its status and body — including 4xx errors,
+    # which are legitimate repeatable answers — are memoised. 5xx and raised
+    # exceptions release the claim (see IdempotencyGuard#run).
+    sig { params(action: T.proc.void).void }
+    def with_idempotency(&action)
+      guard = IdempotencyGuard.new(
+        merchant: current_merchant, key: request.headers["Idempotency-Key"].to_s,
+        request_method: request.request_method, path: request.path, raw_body: request.raw_post
+      )
+
+      outcome = guard.call do
+        begin
+          action.call
+        rescue ApiError => e
+          # rescue_from runs outside around_action; catch here so the error
+          # response is what gets stored and replayed.
+          render_api_error(e)
+        end
+        [response.status, JSON.parse(response.body)]
+      end
+
+      return unless outcome.replayed
+
+      response.set_header("Idempotent-Replayed", "true")
+      render json: outcome.body, status: outcome.status
     end
 
     sig { params(error: ApiError).void }
