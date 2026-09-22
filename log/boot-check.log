@@ -1,0 +1,24 @@
+Source locally installed gems is ignoring #<Bundler::StubSpecification name=ruby-oci8 version=2.2.14 platform=ruby> because it is missing extensions
+=> Booting Puma
+=> Rails 7.2.3.2 application starting in development 
+=> Run `bin/rails server --help` for more startup options
+Puma starting in single mode...
+* Puma version: 8.0.2 ("Into the Arena")
+* Ruby version: ruby 3.2.6 (2024-10-30 revision 63aeb018eb) [arm64-darwin22]
+*  Min threads: 3
+*  Max threads: 3
+*  Environment: development
+*          PID: 85762
+* Listening on http://127.0.0.1:3000
+* Listening on http://[::1]:3000
+Use Ctrl-C to stop
+Started GET "/healthz" for ::1 at 2026-09-21 18:18:35 +0700
+  [1m[36mActiveRecord::SchemaMigration Load (0.9ms)[0m  [1m[34mSELECT "schema_migrations"."version" FROM "schema_migrations" ORDER BY "schema_migrations"."version" ASC[0m
+Processing by HealthController#show as */*
+  [1m[35m (17.0ms)[0m  [1m[34mSELECT 1[0m
+  ↳ app/controllers/health_controller.rb:6:in `show'
+Completed 200 OK in 20ms (Views: 0.1ms | ActiveRecord: 21.3ms (1 query, 0 cached) | GC: 0.5ms)
+
+
+- Gracefully stopping, waiting for requests to finish
+Exiting

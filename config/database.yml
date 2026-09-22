@@ -1,0 +1,22 @@
+# Local dev: Rails runs natively, Postgres runs in docker compose (port 5432).
+# Inside compose, DATABASE_URL overrides host/user/password.
+default: &default
+  adapter: postgresql
+  encoding: unicode
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  host: <%= ENV.fetch("PGHOST") { "localhost" } %>
+  port: <%= ENV.fetch("PGPORT") { 5434 } %>
+  username: <%= ENV.fetch("PGUSER") { "payhub" } %>
+  password: <%= ENV.fetch("PGPASSWORD") { "payhub" } %>
+
+development:
+  <<: *default
+  database: payhub_development
+
+test:
+  <<: *default
+  database: payhub_test
+
+production:
+  <<: *default
+  database: payhub_production

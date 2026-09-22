@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: payhub
+      POSTGRES_PASSWORD: payhub
+      POSTGRES_DB: payhub_development
+    ports:
+      - "5434:5432" # 5432 is taken on the host; app connects via PGPORT=5434 locally
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payhub"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  web:
+    build: .
+    command: bin/rails server -b 0.0.0.0 -p 3000
+    ports:
+      - "3000:3000"
+    environment: &app_env
+      DATABASE_URL: postgres://payhub:payhub@db:5432/payhub_development
+      REDIS_URL: redis://redis:6379/0
+      NORDPAY_URL: http://nordpay:4001
+      KIRIPAY_URL: http://kiripay:4002
+      RAILS_ENV: development
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/rails
+
+  worker:
+    build: .
+    command: bundle exec sidekiq
+    environment: *app_env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/rails
+
+  # PSP simulators are added in Phase 3 (nordpay) and Phase 7 (kiripay).
+
+volumes:
+  pgdata:
