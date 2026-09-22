@@ -5,6 +5,10 @@ module V1
   class BaseController < ApplicationController
     extend T::Sig
 
+    # JSON bodies are read as-is; no nesting under a controller-named key
+    # (which only produced "unpermitted_params" noise in every request log).
+    wrap_parameters false
+
     before_action :authenticate_merchant!
     before_action :require_idempotency_key!, if: -> {
       T.bind(self, V1::BaseController)
@@ -43,6 +47,8 @@ module V1
       raw = request.authorization.to_s.delete_prefix("Bearer ").strip
       @current_merchant = T.let(Merchant.authenticate(raw), T.nilable(Merchant))
       raise ApiError.unauthorized unless @current_merchant
+
+      @log_merchant_id = @current_merchant.id # onto every log line for this request
     end
 
     # Every POST needs one. The key's semantics (claim, replay, 409) come in

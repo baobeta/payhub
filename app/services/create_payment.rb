@@ -51,6 +51,7 @@ class CreatePayment
     # commit time only with the async adapter's enqueue_after_transaction_commit;
     # keeping it outside the transaction is explicit and adapter-independent.
     AuthorizePaymentJob.perform_later(payment.id)
+    Metrics.increment(:payments_created, psp: psp_name, currency: @params.currency)
     payment
   end
 end

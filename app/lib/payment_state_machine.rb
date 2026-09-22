@@ -29,12 +29,16 @@ module PaymentStateMachine
     end
   end
 
-  # The edges drawn in the README diagram, plus exactly one deliberate extra.
+  # The edges drawn in the README diagram, plus two deliberate extras.
   # Each state is a claim about the PSP's view of the world, so an edge exists
   # only where we can honestly make the new claim (DECISIONS #10):
   #   + pending -> failed: a synchronous decline (Nordpay answers HTTP 200,
   #     status declined) is a definitive verdict straight from pending. The
   #     diagram omits it; routing through unknown or authorized would be a lie.
+  #   + unknown -> requires_action: a capture-only PSP's create call timed out,
+  #     the lookup found nothing, the re-send (same reference) produced a
+  #     redirect. The honest state is "waiting on the customer". Found by the
+  #     sweeper against real seed data, not by the diagram.
   #   - no unknown -> canceled: we can't release a hold we can't see;
   #     an operator giving up uses unknown -> failed with a reason.
   #   - no requires_action -> unknown: nothing is in flight to the PSP there,
@@ -43,7 +47,7 @@ module PaymentStateMachine
     {
       pending: %w[requires_action authorized unknown failed],
       requires_action: %w[authorized failed],
-      unknown: %w[authorized failed],
+      unknown: %w[authorized failed requires_action],
       authorized: %w[captured canceled failed],
       captured: %w[part_refunded refunded],
       part_refunded: %w[refunded],

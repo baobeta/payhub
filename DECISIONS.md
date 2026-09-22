@@ -82,7 +82,9 @@ Each entry: what we chose, what we rejected, and why. Ordered roughly by how muc
 
 ## 10. The state machine is the spec diagram plus exactly one edge
 
-**Decision:** `PaymentStateMachine::TRANSITIONS` encodes the README diagram, plus `pending → failed`. No `unknown → canceled`, no `requires_action → unknown`. A spec parses the Mermaid block and fails if code and diagram drift beyond the declared extras.
+**Decision:** `PaymentStateMachine::TRANSITIONS` encodes the README diagram, plus two edges: `pending → failed` and `unknown → requires_action`. No `unknown → canceled`, no `requires_action → unknown`. A spec parses the Mermaid block and fails if code and diagram drift beyond the declared extras.
+
+**Why the second extra edge:** a capture-only PSP's *create* call can time out (`unknown`); the lookup by our reference finds nothing; the re-send with the same reference succeeds and returns a redirect. The customer must now act — the honest state is `requires_action`, and the diagram has no path from `unknown` to it. The sweeper found this by crashing on it against real data, which is also why the sweeper now isolates one payment's illegal transition instead of aborting the batch.
 
 **Rejected:** Routing a synchronous decline through `unknown` or `authorized` to stay inside the drawn edges; adding an operator cancel from `unknown`; adding a timeout path from `requires_action`.
 

@@ -3,6 +3,7 @@
 
 Rails.application.routes.draw do
   get "healthz", to: "health#show"
+  get "metrics", to: "metrics#show"
 
   namespace :v1 do
     resources :payments, only: %i[index create show] do

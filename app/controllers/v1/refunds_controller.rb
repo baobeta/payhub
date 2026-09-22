@@ -16,6 +16,8 @@ module V1
       else raise ApiError.validation("amount_minor" => ["must be a positive integer when present"])
       end
 
+      @log_payment_id = payment.id
+      @log_psp_name = payment.psp_name
       refund = CreateRefund.call(payment, amount_minor: amount, reason: params[:reason].presence&.to_s)
       render json: RefundSerializer.call(refund), status: :accepted
     end

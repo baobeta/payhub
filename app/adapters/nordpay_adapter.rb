@@ -141,7 +141,10 @@ class NordpayAdapter < PspAdapter
            headers: T::Hash[String, String]).returns(Faraday::Response)
   end
   def request(method, path, body: nil, headers: {})
+    operation = "#{method.upcase} #{path.sub(%r{/ph_[a-f0-9]+}, '/:ref')}"
     response = @conn.run_request(method, path, body, headers)
+    outcome = response.status.between?(200, 299) ? "ok" : "http_#{response.status}"
+    Metrics.increment(:psp_calls, psp: "nordpay", operation: operation, outcome: outcome)
     case response.status
     when 200..299, 404 then response
     when 500..599 then raise Unavailable, "nordpay #{response.status}: #{error_message(response)}"
@@ -149,9 +152,11 @@ class NordpayAdapter < PspAdapter
     end
   rescue Faraday::TimeoutError => e
     # The request MAY have landed. Caller moves to `unknown` and fetches.
+    Metrics.increment(:psp_calls, psp: "nordpay", operation: operation, outcome: "timeout")
     raise TimedOut, "nordpay #{method.upcase} #{path}: #{e.message}"
   rescue Faraday::ConnectionFailed => e
     # Never reached the PSP. Safe to retry with the same reference.
+    Metrics.increment(:psp_calls, psp: "nordpay", operation: operation, outcome: "unreachable")
     raise Unavailable, "nordpay unreachable: #{e.message}"
   end
 

@@ -13,7 +13,8 @@ RSpec.describe PaymentStateMachine do
   # justified in DECISIONS.md (#11).
   let(:deliberate_extras) do
     [
-      %w[pending failed] # synchronous decline: HTTP 200 + status declined is a verdict from pending
+      %w[pending failed], # synchronous decline: HTTP 200 + status declined is a verdict from pending
+      %w[unknown requires_action] # capture-only PSP: create timed out, 404 on lookup, re-send → redirect
     ]
   end
 

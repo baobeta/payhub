@@ -33,6 +33,8 @@ module V1
     sig { void }
     def create
       payment = CreatePayment.call(current_merchant, validated_params)
+      @log_payment_id = payment.id # created mid-action; put it on this request's log line
+      @log_psp_name = payment.psp_name
       render json: PaymentSerializer.call(payment), status: :accepted
     end
 
