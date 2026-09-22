@@ -81,3 +81,11 @@ Each entry: what we chose, what we rejected, and why. Ordered roughly by how muc
 **Rejected:** `if psp_name == 'kiripay'` branches in the service; or letting the adapter reject at call time.
 
 **Reason:** Branching on PSP name in domain code means every new PSP edits the service. Rejecting in the adapter is too late — the row is already locked, ledger possibly written, and the merchant already has a `202`. Capability flags keep the state machine a superset of all PSPs and let a rejection surface as an immediate `422 invalid_request`.
+
+## 11. The state machine has exactly the edges in the spec diagram
+
+**Decision:** `PaymentStateMachine::TRANSITIONS` encodes the README diagram verbatim. No `unknown → canceled`, no `requires_action → unknown`. A spec parses the Mermaid block and fails if code and diagram drift.
+
+**Rejected:** Adding an operator cancel from `unknown`; adding a timeout path from `requires_action`.
+
+**Reason:** Each state is a claim about the PSP's view of the world, and an edge exists only where we can honestly make the new claim. `canceled` claims a hold was released; from `unknown` we cannot know a hold exists, so the only honest exits are informational — `authorized` or `failed` via poll or webhook — and an operator giving up on a dead PSP uses `unknown → failed` with a reason, which the daily reconciliation then reviews. `requires_action` has nothing in flight to the PSP: it waits on the customer (3DS, wallet redirect), so a "timeout" there is abandonment (`failed`), not ambiguity (`unknown`). The one genuinely ambiguous Kiripay call — charge creation — happens in `pending`, which already reaches `unknown`. This matches how Stripe (`processing` cannot be canceled) and Adyen model it.
