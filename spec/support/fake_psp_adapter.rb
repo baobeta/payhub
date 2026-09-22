@@ -9,7 +9,7 @@
 #   adapter.script(:authorize, PspAdapter::TimedOut, result(:authorized))
 #   adapter.script(:fetch, result(:not_found))
 class FakePspAdapter < PspAdapter
-  attr_reader :calls
+  attr_reader :calls, :called_at
 
   def initialize(name: "nordpay", currencies: %w[EUR GBP USD], partial_refund: true, separate_auth: true)
     super()
@@ -19,7 +19,13 @@ class FakePspAdapter < PspAdapter
     @separate_auth = separate_auth
     @scripts = Hash.new { |h, k| h[k] = [] }
     @calls = Hash.new { |h, k| h[k] = [] }
+    @called_at = Hash.new { |h, k| h[k] = [] }
   end
+
+  # The moment the PSP "received" the most recent call of `method`. A realistic
+  # PSP timestamp for a charge is this + a few ms: after we sent it, before we
+  # gave up. Use it to build results that mirror what a real PSP would report.
+  def received_at(method) = @called_at[method].last
 
   def script(method, *answers)
     @scripts[method].concat(answers)
@@ -38,7 +44,9 @@ class FakePspAdapter < PspAdapter
 
   def answer(method, arg)
     @calls[method] << arg
+    @called_at[method] << Time.current
     next_answer = @scripts[method].shift or raise "FakePspAdapter: no scripted answer left for #{method}"
+    next_answer = next_answer.call if next_answer.is_a?(Proc) # lazy: built at call time
     case next_answer
     when Class then raise next_answer, "scripted #{method} failure"
     when Exception then raise next_answer

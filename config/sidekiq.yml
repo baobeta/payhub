@@ -1,0 +1,6 @@
+:concurrency: 5
+:queues:
+  - payments   # PSP calls: authorize, capture, refund
+  - webhooks   # inbound event processing (Phase 6)
+  - sweepers   # status poller, outbound delivery (Phase 6)
+  - default

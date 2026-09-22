@@ -26,11 +26,20 @@ class AuthorizePaymentJob < ApplicationJob
 
     adapter = PspRouter.adapter(payment.psp_name)
 
+    # Captured BEFORE the call. If we time out, `unknown` is dated from the
+    # moment we sent the request, not the moment we gave up. The PSP cannot
+    # have recorded the charge before receiving it, so any verdict it later
+    # reports carries a timestamp >= sent_at and will apply rather than be
+    # judged stale. (Dating `unknown` at give-up time made the PSP's real
+    # timestamp look older than our own, and the poll result was discarded.)
+    sent_at = Time.current
+
     result = begin
       adapter.authorize(payment)
     rescue PspAdapter::TimedOut => e
       # The request MAY have landed. Say so, then go and look.
-      payment.transition!(:unknown, sort_key: Time.current, source: "worker", metadata: { "error" => e.message })
+      payment.transition!(:unknown, sort_key: sent_at, source: "worker",
+                                    metadata: { "error" => e.message, "gave_up_at" => Time.current.utc.iso8601(3) })
       resolve_unknown(payment, adapter)
     end
 
@@ -56,40 +65,64 @@ class AuthorizePaymentJob < ApplicationJob
     nil
   end
 
-  # ───────────────────────────────────────────────────────────────────────────
-  # TODO(you): map the PSP's answer onto the state machine.
-  #
-  # `result.status` is a PspAdapter::Result::Status (a T::Enum). Sorbet checks
-  # that every member is handled — leave one out and `srb tc` fails.
-  #
-  # Rules to encode:
-  #   Authorized     → transition!(:authorized, ...)
-  #                    If the merchant asked for capture-on-authorize, Nordpay
-  #                    has already captured; what state is that? Check
-  #                    `payment.capture_on_authorize` and `result.status`.
-  #   Captured       → transition!(:captured, ...)  — but only if the machine
-  #                    allows pending → captured. It doesn't (see the diagram).
-  #                    Which two transitions get you there honestly?
-  #   Declined       → transition!(:failed, ...) with the decline_code in metadata
-  #   RequiresAction → transition!(:requires_action, ...)  (Kiripay, Phase 7)
-  #   NotFound       → cannot happen here; resolve_unknown already re-sent.
-  #                    What should the job do if it does? (Hint: raise.)
-  #
-  # Every transition! call needs:
-  #   sort_key: result.psp_timestamp    ← the PSP's clock, not ours
-  #   source:   "worker"
-  #   metadata: something useful for the 3am runbook (psp_charge_id at least)
-  #
-  # Two things to remember from the state machine:
-  #   * transition! raises IllegalTransition if the edge doesn't exist, and
-  #     records-without-applying if sort_key is stale. Neither is your job's
-  #     problem to work around — they are the invariants doing their job.
-  #   * If `payment.state` is no longer "pending" by the time you get here
-  #     (a webhook beat you), transition! will tell you. Decide: rescue and
-  #     log, or let it raise? Think about what Sidekiq does with a raise.
-  # ───────────────────────────────────────────────────────────────────────────
+  # Map the PSP's answer onto the state machine. `T.absurd` makes the case
+  # exhaustive: add a Status member without handling it here and srb tc fails.
   sig { params(payment: Payment, result: PspAdapter::Result).void }
   def apply(payment, result)
-    raise NotImplementedError, "TODO(you): see comment above"
+    meta = { "psp_charge_id" => result.psp_charge_id }
+    ts = result.psp_timestamp
+    status = result.status
+
+    case status
+    when PspAdapter::Result::Status::Authorized
+      move(payment, :authorized, ts, meta)
+
+    when PspAdapter::Result::Status::Captured
+      # Nordpay captured in one call (capture_on_authorize). Our model has no
+      # pending → captured edge, and that is correct: money was held before it
+      # was taken, even if the PSP collapsed the two. Record both, with the
+      # authorize 1ms earlier so the history reads in causal order.
+      move(payment, :authorized, ts - 0.001, meta)
+      move(payment, :captured, ts, meta.merge("captured_minor" => payment.amount_minor))
+
+    when PspAdapter::Result::Status::Declined
+      # HTTP 200 + declined: transport success, domain failure.
+      move(payment, :failed, ts, meta.merge("decline_code" => result.decline_code))
+
+    when PspAdapter::Result::Status::RequiresAction
+      move(payment, :requires_action, ts, meta.merge("redirect_url" => result.redirect_url))
+
+    when PspAdapter::Result::Status::NotFound
+      # resolve_unknown already turned NotFound into a re-sent authorize, so
+      # reaching here means a logic error, not a PSP condition. Fail loudly:
+      # discard_on does not cover this, so Sidekiq retries and alerts.
+      raise ArgumentError, "NotFound reached apply for payment #{payment.id}"
+
+    else
+      T.absurd(status)
+    end
+  end
+
+  # A transition that tolerates being beaten to the same state by a webhook.
+  #
+  # Race: the guard in perform saw `pending`, then a webhook applied
+  # `authorized` before we got here. transition!(:authorized) from
+  # `authorized` is an illegal edge. But it is not an error — the payment IS
+  # where we wanted it. Raising would make Sidekiq retry a job whose work is
+  # done. So: if the illegal transition is a no-op in disguise, log and move
+  # on; any OTHER illegal edge (e.g. authorized → pending) is a real bug and
+  # propagates.
+  sig do
+    params(payment: Payment, to: Symbol, sort_key: T.any(Time, ActiveSupport::TimeWithZone),
+           metadata: T::Hash[String, T.untyped]).void
+  end
+  def move(payment, to, sort_key, metadata)
+    payment.transition!(to, sort_key: sort_key, source: "worker", metadata: metadata)
+  rescue PaymentStateMachine::IllegalTransition => e
+    raise unless payment.reload.state == to.to_s
+
+    Rails.logger.info(
+      { event: "authorize_job.already_in_state", payment_id: payment.id, state: to, detail: e.message }.to_json
+    )
   end
 end

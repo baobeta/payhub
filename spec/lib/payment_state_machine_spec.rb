@@ -10,8 +10,12 @@ RSpec.describe PaymentStateMachine do
   end
 
   # Edges the diagram omits but the code adds on purpose. Each one must be
-  # justified in DECISIONS.md. Currently none — see DECISIONS #11.
-  let(:deliberate_extras) { [] }
+  # justified in DECISIONS.md (#11).
+  let(:deliberate_extras) do
+    [
+      %w[pending failed] # synchronous decline: HTTP 200 + status declined is a verdict from pending
+    ]
+  end
 
   describe "TRANSITIONS" do
     it "has an entry for every state, so nothing falls through fetch's default" do

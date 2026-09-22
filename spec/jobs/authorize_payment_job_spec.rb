@@ -15,6 +15,13 @@ RSpec.describe AuthorizePaymentJob do
     )
   end
 
+  # What a real PSP reports after a timeout: a charge stamped a few ms after it
+  # RECEIVED our authorize — i.e. after we sent it, before we gave up. Built
+  # lazily so the timestamp comes from the actual call, not from spec setup.
+  def result_recorded_during_authorize(status, **overrides)
+    -> { result(status, psp_timestamp: adapter.received_at(:authorize) + 0.005, **overrides) }
+  end
+
   before { allow(PspRouter).to receive(:adapter).with("nordpay").and_return(adapter) }
 
   it "authorized → authorized, with the PSP's timestamp as sort_key and the charge id in metadata" do
@@ -41,20 +48,24 @@ RSpec.describe AuthorizePaymentJob do
   context "when the PSP times out but the charge succeeded (the whiteboard case)" do
     it "moves to unknown, polls, and lands on authorized — never re-sends the authorize" do
       adapter.script(:authorize, PspAdapter::TimedOut)
-      adapter.script(:fetch, result(:authorized))
+      # The PSP recorded the charge BEFORE hanging, so its timestamp predates
+      # our give-up time. `unknown` must be dated from send time or this
+      # verdict would be judged stale and the payment stuck (a real bug we hit).
+      adapter.script(:fetch, result_recorded_during_authorize(:authorized))
 
       described_class.perform_now(payment.id)
 
       expect(adapter.calls[:authorize].size).to eq(1)
       expect(adapter.calls[:fetch]).to eq([payment.psp_reference])
       expect(payment.reload.state).to eq("authorized")
-      expect(payment.transitions.map(&:to_state)).to eq(%w[pending unknown authorized])
+      expect(payment.transitions.order(:sort_key).map(&:to_state)).to eq(%w[pending unknown authorized])
+      expect(payment.transitions.where(most_recent: true).pick(:to_state)).to eq("authorized")
     end
   end
 
   context "when the PSP times out and the charge never landed" do
     it "moves to unknown, polls, gets 404, re-sends the authorize with the SAME reference" do
-      adapter.script(:authorize, PspAdapter::TimedOut, result(:authorized))
+      adapter.script(:authorize, PspAdapter::TimedOut, result_recorded_during_authorize(:authorized))
       adapter.script(:fetch, result(:not_found))
 
       described_class.perform_now(payment.id)

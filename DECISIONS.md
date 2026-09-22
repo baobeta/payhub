@@ -82,10 +82,20 @@ Each entry: what we chose, what we rejected, and why. Ordered roughly by how muc
 
 **Reason:** Branching on PSP name in domain code means every new PSP edits the service. Rejecting in the adapter is too late — the row is already locked, ledger possibly written, and the merchant already has a `202`. Capability flags keep the state machine a superset of all PSPs and let a rejection surface as an immediate `422 invalid_request`.
 
-## 11. The state machine has exactly the edges in the spec diagram
+## 11. The state machine is the spec diagram plus exactly one edge
 
-**Decision:** `PaymentStateMachine::TRANSITIONS` encodes the README diagram verbatim. No `unknown → canceled`, no `requires_action → unknown`. A spec parses the Mermaid block and fails if code and diagram drift.
+**Decision:** `PaymentStateMachine::TRANSITIONS` encodes the README diagram, plus `pending → failed`. No `unknown → canceled`, no `requires_action → unknown`. A spec parses the Mermaid block and fails if code and diagram drift beyond the declared extras.
 
-**Rejected:** Adding an operator cancel from `unknown`; adding a timeout path from `requires_action`.
+**Rejected:** Routing a synchronous decline through `unknown` or `authorized` to stay inside the drawn edges; adding an operator cancel from `unknown`; adding a timeout path from `requires_action`.
+
+**Why the extra edge:** Nordpay declines synchronously — HTTP 200, `status: declined` — while the payment is still `pending`. The diagram gives `failed` no edge from `pending`. Passing through `unknown` would claim ambiguity we don't have; through `authorized` would claim a hold that never existed. A decline is a verdict, and the honest edge is the direct one. The first job spec for the declined path found this gap; it is the kind of omission a diagram makes and an implementation cannot.
 
 **Reason:** Each state is a claim about the PSP's view of the world, and an edge exists only where we can honestly make the new claim. `canceled` claims a hold was released; from `unknown` we cannot know a hold exists, so the only honest exits are informational — `authorized` or `failed` via poll or webhook — and an operator giving up on a dead PSP uses `unknown → failed` with a reason, which the daily reconciliation then reviews. `requires_action` has nothing in flight to the PSP: it waits on the customer (3DS, wallet redirect), so a "timeout" there is abandonment (`failed`), not ambiguity (`unknown`). The one genuinely ambiguous Kiripay call — charge creation — happens in `pending`, which already reaches `unknown`. This matches how Stripe (`processing` cannot be canceled) and Adyen model it.
+
+## 12. `unknown` is dated from the moment we sent the request, not when we gave up
+
+**Decision:** `AuthorizePaymentJob` captures `sent_at = Time.current` before calling the PSP, and on a timeout writes the `unknown` transition with `sort_key: sent_at`. The give-up time is kept in metadata.
+
+**Rejected:** Dating `unknown` at the moment the client timed out.
+
+**Reason:** Transitions are ordered by `sort_key`, and a PSP verdict older than the current row is treated as stale and not applied (#4). A PSP that records the charge and *then* hangs stamps that charge a few milliseconds after receiving it — well before our 3-second give-up. Dating `unknown` at give-up made the PSP's genuine timestamp look older than our own, so the poll result was recorded as stale and the payment sat in `unknown` forever; the sweeper would have hit the same wall. A PSP cannot record a charge before receiving it, so send time is the latest instant that is guaranteed to precede any real verdict. Found by running the timeout scenario end-to-end against the simulator; the job spec had used a PSP timestamp in the future, which no real PSP produces, and now builds it from the actual call time.

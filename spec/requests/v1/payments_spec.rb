@@ -37,6 +37,15 @@ RSpec.describe "V1 payments", type: :request do
       expect(json_body["merchant_currency"]).to eq("EUR")
     end
 
+    it "returns 503 api_error (retriable) when a supported currency has no FX rate — never a raw 500" do
+      post "/v1/payments", params: valid_body.merge(currency: "THB").to_json, headers: auth_headers(key)
+
+      expect(response).to have_http_status(:service_unavailable)
+      expect(json_body["error"]).to include("type" => "api_error", "code" => "currency_unavailable",
+                                            "retriable" => true, "param" => "currency")
+      expect(Payment.count).to eq(0)
+    end
+
     it "returns 401 in the standard error shape without a valid key" do
       post "/v1/payments", params: valid_body.to_json, headers: auth_headers("sk_live_wrong")
 

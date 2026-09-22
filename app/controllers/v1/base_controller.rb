@@ -20,6 +20,14 @@ module V1
       T.bind(self, V1::BaseController)
       render_api_error(ApiError.invalid_request("Missing parameter: #{e.param}", param: e.param.to_s))
     end
+    # A currency we route but cannot price, or cannot route at all. The
+    # request is well-formed; our configuration is not. api_error + retriable,
+    # because an operator can fix it without the merchant changing anything.
+    rescue_from FxRate::Missing, PspRouter::NoRoute do |e|
+      T.bind(self, V1::BaseController)
+      render_api_error(ApiError.new(type: ApiError::Type::ApiErrorType, http_status: 503, code: "currency_unavailable",
+                                    message: e.message, param: "currency", retriable: true))
+    end
 
     private
 

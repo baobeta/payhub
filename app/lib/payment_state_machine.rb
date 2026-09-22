@@ -29,16 +29,19 @@ module PaymentStateMachine
     end
   end
 
-  # Exactly the edges drawn in the README diagram — no more, no less.
+  # The edges drawn in the README diagram, plus exactly one deliberate extra.
   # Each state is a claim about the PSP's view of the world, so an edge exists
   # only where we can honestly make the new claim (DECISIONS #11):
+  #   + pending -> failed: a synchronous decline (Nordpay answers HTTP 200,
+  #     status declined) is a definitive verdict straight from pending. The
+  #     diagram omits it; routing through unknown or authorized would be a lie.
   #   - no unknown -> canceled: we can't release a hold we can't see;
   #     an operator giving up uses unknown -> failed with a reason.
   #   - no requires_action -> unknown: nothing is in flight to the PSP there,
   #     we're waiting on the customer; abandonment is failed, not ambiguity.
   TRANSITIONS = T.let(
     {
-      pending: %w[requires_action authorized unknown],
+      pending: %w[requires_action authorized unknown failed],
       requires_action: %w[authorized failed],
       unknown: %w[authorized failed],
       authorized: %w[captured canceled failed],
