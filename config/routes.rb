@@ -5,7 +5,7 @@ Rails.application.routes.draw do
   get "healthz", to: "health#show"
 
   namespace :v1 do
-    resources :payments, only: %i[create show] do
+    resources :payments, only: %i[index create show] do
       member do
         post :capture
         post :cancel
@@ -13,8 +13,13 @@ Rails.application.routes.draw do
       resources :refunds, only: %i[create]
     end
     get "balance", to: "balances#show"
+
+    # Outbound events (to the merchant) and operator replay from dead-letter.
+    resources :events, only: %i[index] do
+      post :redeliver, on: :member
+    end
+
     # Inbound from the PSP simulators. No merchant auth; signature-verified per PSP.
     post "webhooks/:psp_name", to: "webhooks#create", constraints: { psp_name: /nordpay|kiripay/ }
-    # index (cursor pagination), events → Phase 6
   end
 end

@@ -3,7 +3,7 @@
 
 # Kiripay: SEA e-wallets. Capture-only, redirect then webhook-only
 # confirmation, full refunds only, VND has no minor unit, and NO idempotency
-# header — so we dedupe ourselves via merchant_reference (DECISIONS #13).
+# header — so we dedupe ourselves via merchant_reference (DECISIONS #12).
 class KiripayAdapter < PspAdapter
   extend T::Sig
 

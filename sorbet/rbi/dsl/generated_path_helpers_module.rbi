@@ -31,7 +31,13 @@ module GeneratedPathHelpersModule
   def rails_info_routes_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def redeliver_v1_event_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def v1_balance_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def v1_events_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def v1_path(*args); end

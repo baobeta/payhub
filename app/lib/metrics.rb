@@ -18,9 +18,15 @@ module Metrics
       webhook_deliveries: [:attempt],
       webhook_duplicates: [:psp],
       webhook_signature_failures: [:psp],
-      unknown_state_payments: [],
+      stuck_payment_alerts: [:psp, :state],
       ledger_imbalance_detected: []
     }.freeze,
+    T::Hash[Symbol, T::Array[Symbol]]
+  )
+
+  # Gauges: a current value, not a rate. Set on every sweep.
+  GAUGES = T.let(
+    { unknown_state_payments: [], outbound_events_pending: [], outbound_events_dead: [] }.freeze,
     T::Hash[Symbol, T::Array[Symbol]]
   )
 
@@ -30,6 +36,14 @@ module Metrics
     sig { params(name: Symbol, labels: T.untyped).void }
     def increment(name, **labels)
       counter(name).increment(labels: labels)
+    end
+
+    sig { params(name: Symbol, value: Numeric, labels: T.untyped).void }
+    def gauge(name, value, **labels)
+      label_names = GAUGES.fetch(name) { raise ArgumentError, "unknown gauge #{name.inspect}" }
+      g = REGISTRY.get(:"payhub_#{name}") ||
+          REGISTRY.gauge(:"payhub_#{name}", docstring: name.to_s.tr("_", " "), labels: label_names)
+      g.set(value, labels: labels)
     end
 
     sig { params(name: Symbol).returns(Prometheus::Client::Counter) }

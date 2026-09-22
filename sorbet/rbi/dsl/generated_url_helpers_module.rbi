@@ -31,7 +31,13 @@ module GeneratedUrlHelpersModule
   def rails_info_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def redeliver_v1_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def v1_balance_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def v1_events_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def v1_payment_refunds_url(*args); end

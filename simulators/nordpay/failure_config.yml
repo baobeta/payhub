@@ -5,3 +5,12 @@ timeout_seconds: 5           # long enough to exceed PayHub's 3s client timeout
 flaky_500_rate: 0.10         # 500 on the first attempt for an X-Request-Id, 200 after
 duplicate_response_rate: 0.05 # the same charge appears twice in one response body
 decline_rate: 0.10           # HTTP 200 with status: declined
+
+# Webhooks (charge.authorized on create, charge.captured on capture)
+webhook_delay_seconds: 0.2
+webhook_duplicate_rate: 0.10     # send the same event 5 times
+webhook_out_of_order_rate: 0.10  # on capture, resend the older charge.authorized AFTER charge.captured
+webhook_late_rate: 0.05          # deliver late (honest timestamp, delayed delivery)
+webhook_late_extra_seconds: 1.5
+webhook_never_rate: 0.05         # never send — the sweeper must catch it
+webhook_bad_signature_rate: 0.05 # sign with the wrong secret

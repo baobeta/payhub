@@ -53,11 +53,16 @@ class RefundPaymentJob < ApplicationJob
           to = Ledger.refunded_minor(payment) >= Ledger.captured_minor(payment) ? :refunded : :part_refunded
           # captured → part_refunded → refunded, or captured → refunded. Both drawn.
           payment.transition!(to, sort_key: result.psp_timestamp, source: "worker", metadata: meta) if payment.state != to.to_s
+          OutboundEvent.emit!(payment, "refund.succeeded", "refund" => RefundSerializer.call(refund))
         end
       end
 
     when PspAdapter::RefundResult::Status::Failed
-      refund.update!(state: "failed")
+      Refund.transaction do
+        refund.update!(state: "failed")
+        OutboundEvent.emit!(payment, "refund.failed", "refund" => RefundSerializer.call(refund),
+                                                      "failure_code" => result.failure_code)
+      end
       Rails.logger.warn({ event: "refund.failed", refund_id: refund.id, code: result.failure_code }.to_json)
 
     when PspAdapter::RefundResult::Status::Pending, PspAdapter::RefundResult::Status::NotFound

@@ -66,6 +66,11 @@ class Payment < ApplicationRecord
       # write_attribute + save! so lock_version bumps and validations run
       write_attribute(:state, to_state)
       save!
+
+      # Transactional outbox: the merchant-facing event is written in the SAME
+      # transaction as the state change, so it exists iff the change committed.
+      # Delivery happens later, by the sweeper.
+      OutboundEvent.emit!(self, "payment.#{to_state}")
       row
     end
   end
@@ -87,5 +92,6 @@ class Payment < ApplicationRecord
     transitions.create!(
       from_state: nil, to_state: state, sort_key: created_at, source: "api", most_recent: true
     )
+    OutboundEvent.emit!(self, "payment.created")
   end
 end

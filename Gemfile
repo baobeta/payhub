@@ -10,6 +10,11 @@ gem "tzinfo-data", platforms: %i[ windows jruby ]
 
 # Background jobs — the PSP calls, status poller, and webhook sweepers all run here.
 gem "sidekiq", "~> 7.3"
+# Periodic jobs (sweepers) scheduled from config/schedule.yml.
+gem "sidekiq-cron", "~> 2.0"
+# Sidekiq 7.3 calls ConnectionPool::TimedStack#pop(timeout); connection_pool 3.x removed that
+# argument and the scheduler thread dies at boot. Pin until Sidekiq 8.
+gem "connection_pool", "< 3"
 
 # Outbound HTTP to the PSP simulators. Faraday gives us per-request timeouts
 # and a retry middleware that we control (we must NOT retry blindly).

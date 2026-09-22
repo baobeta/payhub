@@ -31,7 +31,7 @@ module PaymentStateMachine
 
   # The edges drawn in the README diagram, plus exactly one deliberate extra.
   # Each state is a claim about the PSP's view of the world, so an edge exists
-  # only where we can honestly make the new claim (DECISIONS #11):
+  # only where we can honestly make the new claim (DECISIONS #10):
   #   + pending -> failed: a synchronous decline (Nordpay answers HTTP 200,
   #     status declined) is a definitive verdict straight from pending. The
   #     diagram omits it; routing through unknown or authorized would be a lie.

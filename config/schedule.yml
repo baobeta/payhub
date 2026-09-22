@@ -1,0 +1,20 @@
+# Periodic jobs, loaded by config/initializers/sidekiq.rb via sidekiq-cron.
+# All sweepers are idempotent and cheap when there is nothing to do, so a
+# one-minute cadence is safe.
+stuck_payment_sweeper:
+  cron: "* * * * *"
+  class: StuckPaymentSweeperJob
+  queue: sweepers
+  description: "Poll payments stuck in pending/unknown; re-drive pending refunds and orphan webhooks; expire idempotency keys; alert past 15 minutes"
+
+deliver_outbound_events:
+  cron: "* * * * *"
+  class: DeliverOutboundEventsJob
+  queue: sweepers
+  description: "Deliver due outbound webhooks with backoff; dead-letter after 8 attempts"
+
+daily_reconciliation:
+  cron: "15 2 * * *"
+  class: ReconciliationJob
+  queue: sweepers
+  description: "Compare ledger and PSP views; flag unbalanced transfers and drifted payments"

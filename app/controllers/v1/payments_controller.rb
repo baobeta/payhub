@@ -5,6 +5,30 @@ module V1
   class PaymentsController < BaseController
     extend T::Sig
 
+    # GET /v1/payments — cursor pagination, filters on state, currency, created_at range.
+    # Must stay under 100ms at 1M rows: keyset predicate on the (merchant_id, created_at, id) index,
+    # no COUNT, no OFFSET, no N+1 (transitions are not loaded for the list).
+    sig { void }
+    def index
+      scope = current_merchant.payments
+      scope = scope.where(state: params[:state]) if params[:state].present?
+      scope = scope.where(currency: params[:currency]) if params[:currency].present?
+      scope = scope.where(created_at: Time.iso8601(params[:created_after])..) if params[:created_after].present?
+      scope = scope.where(created_at: ..Time.iso8601(params[:created_before])) if params[:created_before].present?
+
+      page = Cursor.paginate(scope, after: params[:cursor].presence, limit: params[:limit]&.to_i)
+      render json: {
+        "object" => "list",
+        "data" => page.records.map { |p| PaymentSerializer.call(p) },
+        "has_more" => page.has_more,
+        "next_cursor" => page.next_cursor
+      }
+    rescue Cursor::Invalid => e
+      raise ApiError.invalid_request(e.message, param: "cursor", code: "invalid_cursor")
+    rescue ArgumentError => e
+      raise ApiError.invalid_request("created_after/created_before must be ISO-8601: #{e.message}", param: "created_after")
+    end
+
     # POST /v1/payments → 202 pending. Never blocks on the PSP.
     sig { void }
     def create

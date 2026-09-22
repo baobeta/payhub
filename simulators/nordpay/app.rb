@@ -4,6 +4,8 @@ require "sinatra/base"
 require "json"
 require "yaml"
 require "securerandom"
+require "openssl"
+require "net/http"
 require "time"
 
 # Nordpay simulator: EU cards, separate authorize then capture, synchronous
@@ -37,11 +39,12 @@ module Nordpay
       end
     end
 
-    attr_reader :refunds
+    attr_reader :refunds, :sent_webhooks
 
     def initialize
       @charges = {}
       @refunds = {}
+      @sent_webhooks = []
       @mutex = Mutex.new
     end
 
@@ -52,6 +55,7 @@ module Nordpay
     def reset!
       @charges.clear
       @refunds.clear
+      @sent_webhooks.clear
     end
 
     def find_or_create(reference)
@@ -66,10 +70,14 @@ module Nordpay
     CURRENCIES = %w[EUR GBP USD].freeze
     API_KEY = ENV.fetch("NORDPAY_API_KEY", "np_test_key")
 
+    WEBHOOK_SECRET = ENV.fetch("NORDPAY_WEBHOOK_SECRET", "np_whsec_test")
+    WEBHOOK_URL = ENV.fetch("PAYHUB_WEBHOOK_URL", "http://localhost:3000/v1/webhooks/nordpay")
+
     set :store, Store.new
     set :failure, YAML.safe_load_file(File.expand_path("failure_config.yml", __dir__))
     set :show_exceptions, false
     set :logging, true
+    set :deliver_webhooks, true # tests flip this off and inspect store.sent_webhooks
     # Rack::Protection guards browser sessions/cookies (CSRF, host auth). This is
     # a bearer-token JSON API with neither, and its host header varies by
     # environment (compose service name, localhost, rack-test).
@@ -95,13 +103,52 @@ module Nordpay
       end
 
       # Rolls the dice once per behaviour, or obeys X-Sim-Force.
-      def inject?(behaviour)
-        forced = request.env["HTTP_X_SIM_FORCE"].to_s.split(",").map(&:strip)
+      def inject?(behaviour, forced_header = request.env["HTTP_X_SIM_FORCE"].to_s)
+        forced = forced_header.split(",").map(&:strip)
         return true if forced.include?(behaviour)
         return false if forced.any? # forcing one behaviour disables the random others
 
         rate = config.fetch("#{behaviour}_rate", 0).to_f
         rate.positive? && rand < rate
+      end
+
+      # ── Webhook delivery ──────────────────────────────────────────────
+      # Signature: X-Nordpay-Signature: <hex HMAC-SHA256 of the raw body>.
+      def deliver(event, secret: WEBHOOK_SECRET, delay: config.fetch("webhook_delay_seconds", 0.2).to_f)
+        body = JSON.generate(event)
+        headers = { "Content-Type" => "application/json", "X-Nordpay-Event-Id" => event[:id],
+                    "X-Nordpay-Signature" => OpenSSL::HMAC.hexdigest("SHA256", secret, body) }
+        store.sync { store.sent_webhooks << { event: event, headers: headers, delay: delay } }
+        return unless settings.deliver_webhooks
+
+        Thread.new do
+          sleep delay
+          uri = URI(WEBHOOK_URL)
+          req = Net::HTTP::Post.new(uri, headers)
+          req.body = body
+          Net::HTTP.start(uri.host, uri.port, open_timeout: 2, read_timeout: 5) { |h| h.request(req) }
+        rescue StandardError => e
+          warn "nordpay: webhook delivery failed: #{e.class}: #{e.message}"
+        end
+      end
+
+      def event_for(charge, type, at)
+        { id: "evt_#{SecureRandom.hex(8)}", type: type, created_at: at.utc.iso8601(3), data: charge.to_h }
+      end
+
+      # Emit one charge event, misbehaving as configured: duplicated ×5,
+      # late, unsigned, or never. Out-of-order is emitted by the capture path,
+      # which resends the earlier authorized event AFTER captured.
+      def emit!(charge, type, at, forced = request.env["HTTP_X_SIM_FORCE"].to_s)
+        return if inject?("webhook_never", forced)
+
+        secret = inject?("webhook_bad_signature", forced) ? "wrong-secret" : WEBHOOK_SECRET
+        delay = config.fetch("webhook_delay_seconds", 0.2).to_f
+        delay += config.fetch("webhook_late_extra_seconds", 1.5).to_f if inject?("webhook_late", forced)
+        copies = inject?("webhook_duplicate", forced) ? 5 : 1
+        ev = event_for(charge, type, at)
+        copies.times { |c| deliver(ev, secret: secret, delay: delay + (c * 0.02)) }
+        ev
       end
     end
 
@@ -115,6 +162,10 @@ module Nordpay
 
     get "/_sim/charges" do
       json!(store.all.map(&:to_h))
+    end
+
+    get "/_sim/webhooks" do
+      json!(store.sent_webhooks)
     end
 
     put "/_sim/config" do
@@ -162,6 +213,14 @@ module Nordpay
         end
       end
 
+      # Webhook for the outcome — only on the first attempt, so a retried
+      # request does not re-announce. The webhook belongs to the CHARGE, not to
+      # this HTTP response: it fires even when the response then 500s or times
+      # out. That is the "timeout but the charge succeeded" scenario.
+      if charge.attempts == 1
+        emit!(charge, charge.status == "declined" ? "charge.declined" : "charge.authorized", charge.created_at)
+      end
+
       # Flaky: the charge IS recorded, but the first attempt fails at the transport layer.
       if charge.attempts == 1 && inject?("flaky_500")
         error!(500, "internal_error", "try again")
@@ -196,9 +255,20 @@ module Nordpay
       amount = body_json.fetch("amount_minor", charge.amount_minor - charge.captured_minor)
       error!(422, "invalid_amount", "capture exceeds authorized") if charge.captured_minor + amount > charge.amount_minor
 
+      captured_at = Time.now
       store.sync do
         charge.captured_minor += amount
         charge.status = "captured" if charge.captured_minor == charge.amount_minor
+      end
+
+      # charge.captured, honestly timestamped. Out-of-order injection resends
+      # the EARLIER charge.authorized event after it — same ids as a real PSP
+      # replaying an older event, so the receiver must order by created_at.
+      emit!(charge, "charge.captured", captured_at)
+      if inject?("webhook_out_of_order")
+        stale = charge.to_h.merge(status: "authorized", captured_minor: 0)
+        deliver({ id: "evt_#{SecureRandom.hex(8)}", type: "charge.authorized", created_at: charge.created_at.utc.iso8601(3), data: stale },
+                delay: config.fetch("webhook_delay_seconds", 0.2).to_f + 0.1)
       end
       json!(charge.to_h)
     end

@@ -13,9 +13,58 @@ RSpec.describe Nordpay::App do
   let(:body) { { amount_minor: 2500, currency: "EUR", payment_method_token: "tok_visa" } }
 
   before do
+    described_class.deliver_webhooks = false # inspect store.sent_webhooks instead of hitting the network
     described_class.failure.merge!("timeout_rate" => 0, "flaky_500_rate" => 0, "duplicate_response_rate" => 0,
-                                   "decline_rate" => 0, "timeout_seconds" => 0.05)
+                                   "decline_rate" => 0, "timeout_seconds" => 0.05,
+                                   "webhook_duplicate_rate" => 0, "webhook_out_of_order_rate" => 0, "webhook_late_rate" => 0,
+                                   "webhook_never_rate" => 0, "webhook_bad_signature_rate" => 0)
     post "/_sim/reset"
+  end
+
+  def webhooks = JSON.parse(get("/_sim/webhooks", nil, headers).body)
+
+  describe "webhooks" do
+    it "emits a signed charge.authorized on create and charge.captured on capture, once each" do
+      charge!("wh_1")
+      post "/charges/wh_1/capture", "{}", headers
+
+      sent = webhooks
+      expect(sent.map { |w| w["event"]["type"] }).to eq(%w[charge.authorized charge.captured])
+      body = JSON.generate(sent.first["event"])
+      expect(sent.first["headers"]["X-Nordpay-Signature"]).to eq(OpenSSL::HMAC.hexdigest("SHA256", "np_whsec_test", body))
+    end
+
+    it "does not re-announce on a retried (same X-Request-Id) create" do
+      charge!("wh_2", force: "flaky_500")
+      charge!("wh_2", force: "flaky_500")
+      expect(webhooks.size).to eq(1)
+    end
+
+    it "still emits charge.authorized when the response then times out — the whiteboard case" do
+      charge!("wh_3", force: "timeout")
+      expect(webhooks.map { |w| w["event"]["type"] }).to eq(%w[charge.authorized])
+    end
+
+    it "misbehaves on demand: ×5, out of order, bad signature, never" do
+      charge!("wh_4", force: "webhook_duplicate")
+      expect(webhooks.count { |w| w["event"]["type"] == "charge.authorized" }).to eq(5)
+
+      post "/_sim/reset"
+      charge!("wh_5")
+      post "/charges/wh_5/capture", "{}", headers.merge("HTTP_X_SIM_FORCE" => "webhook_out_of_order")
+      types = webhooks.map { |w| w["event"]["type"] }
+      expect(types).to eq(%w[charge.authorized charge.captured charge.authorized])
+      expect(webhooks.last["delay"]).to be > webhooks[1]["delay"] # stale one arrives after captured
+
+      post "/_sim/reset"
+      charge!("wh_6", force: "webhook_bad_signature")
+      body = JSON.generate(webhooks.first["event"])
+      expect(webhooks.first["headers"]["X-Nordpay-Signature"]).not_to eq(OpenSSL::HMAC.hexdigest("SHA256", "np_whsec_test", body))
+
+      post "/_sim/reset"
+      charge!("wh_7", force: "webhook_never")
+      expect(webhooks).to be_empty
+    end
   end
 
   def charge!(ref, force: nil, **overrides)

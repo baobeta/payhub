@@ -42,6 +42,8 @@ Each entry: what we chose, what we rejected, and why. Ordered roughly by how muc
 
 **Reason:** A cached number has no history and cannot prove itself wrong; a duplicated write is invisible. With paired entries, a stray row breaks the zero-sum and `ledger_imbalance_detected` fires. Corrections are reversing entries, never edits — which is why `ledger_entries` has no `updated_at`.
 
+**Corollary — booking by comparison:** money for a capture-only PSP (Kiripay) is booked from the webhook through the same `BookCapture` as Nordpay's capture job: book the difference between what the PSP reports captured and what the ledger already holds. five copies of the same webhook, a webhook that races the sweeper, a webhook re-processed after a crash — all must book exactly once. Comparing two sources of truth (PSP total vs. ledger sum) is idempotent without remembering anything; a flag would have to be set atomically with the ledger write and checked everywhere. One booking path for both PSPs also means one place to be wrong.
+
 ## 6. Over-refund is prevented by a row lock plus a ledger sum
 
 **Decision:** `RefundService` takes `SELECT ... FOR UPDATE` on the payment, sums captured and refunded from `ledger_entries`, then writes.
@@ -68,15 +70,9 @@ Each entry: what we chose, what we rejected, and why. Ordered roughly by how muc
 
 **Reason:** A synchronous call ties a Puma thread to the PSP's latency. With a 30-second timeout and a handful of threads, one slow PSP exhausts the web tier and every merchant's request queues behind it — an outage caused by a dependency we don't control. Returning `202` bounds the request at the cost of one database write. What the merchant gives up is the immediate `authorized`/`failed` answer; they get it instead through an outbound `payment.authorized` webhook or by polling `GET /v1/payments/:id`, both of which they need anyway for Kiripay, whose confirmation is webhook-only. So async is not an extra integration burden — it is the one model that works for both PSPs.
 
-## 9. Amounts are integer minor units with a per-currency exponent table
+**Corollary — transactional outbox:** the merchant's `payment.<state>` event is inserted by `Payment#transition!` in the *same* transaction as the state change, so the event exists if and only if the change committed; a sweeper delivers it later with signed POSTs, per-attempt rows, exponential backoff and a dead-letter state that `POST /v1/events/:id/redeliver` can replay. The rejected alternative — enqueue a Sidekiq job from the controller after commit — can lose the event when the process dies between commit and enqueue, or send it for a change that then rolled back. Concurrent sweepers partition the work with `FOR UPDATE SKIP LOCKED` rather than double-sending.
 
-**Decision:** `amount_minor` integer + ISO-4217 `currency` column. A frozen `CURRENCY_EXPONENT` hash (`VND => 0`, others `2`) drives display and PSP wire conversion.
-
-**Rejected:** Decimal columns; or a hardcoded `/ 100`.
-
-**Reason:** Floats and decimals accumulate rounding across millions of rows. `/ 100` is wrong for VND, which has no minor unit — `50000` is fifty thousand đồng, not five hundred. One lookup table for both directions means display and adapter can never disagree.
-
-## 10. Adapters declare capabilities; the domain enforces rules
+## 9. Adapters declare capabilities; the domain enforces rules
 
 **Decision:** Each PSP adapter exposes flags such as `supports_partial_refund?`. `RefundService` checks them before locking or writing.
 
@@ -84,7 +80,7 @@ Each entry: what we chose, what we rejected, and why. Ordered roughly by how muc
 
 **Reason:** Branching on PSP name in domain code means every new PSP edits the service. Rejecting in the adapter is too late — the row is already locked, ledger possibly written, and the merchant already has a `202`. Capability flags keep the state machine a superset of all PSPs and let a rejection surface as an immediate `422 invalid_request`.
 
-## 11. The state machine is the spec diagram plus exactly one edge
+## 10. The state machine is the spec diagram plus exactly one edge
 
 **Decision:** `PaymentStateMachine::TRANSITIONS` encodes the README diagram, plus `pending → failed`. No `unknown → canceled`, no `requires_action → unknown`. A spec parses the Mermaid block and fails if code and diagram drift beyond the declared extras.
 
@@ -94,7 +90,7 @@ Each entry: what we chose, what we rejected, and why. Ordered roughly by how muc
 
 **Reason:** Each state is a claim about the PSP's view of the world, and an edge exists only where we can honestly make the new claim. `canceled` claims a hold was released; from `unknown` we cannot know a hold exists, so the only honest exits are informational — `authorized` or `failed` via poll or webhook — and an operator giving up on a dead PSP uses `unknown → failed` with a reason, which the daily reconciliation then reviews. `requires_action` has nothing in flight to the PSP: it waits on the customer (3DS, wallet redirect), so a "timeout" there is abandonment (`failed`), not ambiguity (`unknown`). The one genuinely ambiguous Kiripay call — charge creation — happens in `pending`, which already reaches `unknown`. This matches how Stripe (`processing` cannot be canceled) and Adyen model it.
 
-## 12. `unknown` is dated from the moment we sent the request, not when we gave up
+## 11. `unknown` is dated from the moment we sent the request, not when we gave up
 
 **Decision:** `AuthorizePaymentJob` captures `sent_at = Time.current` before calling the PSP, and on a timeout writes the `unknown` transition with `sort_key: sent_at`. The give-up time is kept in metadata.
 
@@ -102,18 +98,11 @@ Each entry: what we chose, what we rejected, and why. Ordered roughly by how muc
 
 **Reason:** Transitions are ordered by `sort_key`, and a PSP verdict older than the current row is treated as stale and not applied (#4). A PSP that records the charge and *then* hangs stamps that charge a few milliseconds after receiving it — well before our 3-second give-up. Dating `unknown` at give-up made the PSP's genuine timestamp look older than our own, so the poll result was recorded as stale and the payment sat in `unknown` forever; the sweeper would have hit the same wall. A PSP cannot record a charge before receiving it, so send time is the latest instant that is guaranteed to precede any real verdict. Found by running the timeout scenario end-to-end against the simulator; the job spec had used a PSP timestamp in the future, which no real PSP produces, and now builds it from the actual call time.
 
-## 13. Kiripay is deduplicated by our own reference, because it has no idempotency key
+## 12. Kiripay is deduplicated by our own reference, because it has no idempotency key
 
 **Decision:** Every Kiripay charge is created with our `psp_reference` as `merchant_reference`. On any ambiguity (timeout, retry, sweeper) we resolve by `GET /charges?merchant_reference=…`, never by re-POSTing. If Kiripay holds several charges for one reference, the earliest is treated as real and the rest are logged for reconciliation.
 
 **Rejected:** Treating Kiripay's own charge id as the reference (it does not exist until the response arrives — a timeout leaves nothing to look up); adding a `kiripay_charge_id` column and branching on PSP in the jobs.
 
-**Reason:** Nordpay honours `X-Request-Id`, so a retried authorize is deduplicated for us. Kiripay honours nothing: a second POST is a second charge. The only stable handle we control is the reference we chose *before* the first call (#2), so the adapter turns "find my charge" into a lookup by that reference and "several found" into a warning instead of a guess. The domain never learns any of this — `fetch(psp_reference)` has the same signature for both PSPs, which is the test of whether the adapter abstraction is real (#10).
+**Reason:** Nordpay honours `X-Request-Id`, so a retried authorize is deduplicated for us. Kiripay honours nothing: a second POST is a second charge. The only stable handle we control is the reference we chose *before* the first call (#2), so the adapter turns "find my charge" into a lookup by that reference and "several found" into a warning instead of a guess. The domain never learns any of this — `fetch(psp_reference)` has the same signature for both PSPs, which is the test of whether the adapter abstraction is real (#9).
 
-## 14. Money for a capture-only PSP is booked from the webhook, by comparison
-
-**Decision:** A Kiripay `charge.captured` webhook books the ledger through the same `BookCapture` service Nordpay's capture job uses: book the difference between what the PSP reports captured and what the ledger already holds.
-
-**Rejected:** A separate "webhook capture" path; trusting a `captured` flag on the payment.
-
-**Reason:** Five copies of the same webhook, a webhook that races the sweeper, a webhook re-processed after a crash — all must book exactly once. Comparing two sources of truth (PSP total vs. ledger sum) is idempotent without remembering anything; a flag would have to be set atomically with the ledger write and checked everywhere. One booking path for both PSPs also means one place to be wrong.

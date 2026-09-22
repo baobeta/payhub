@@ -6,7 +6,7 @@
 #
 # `abstract!` + `sig { abstract }` means a new adapter that forgets a method is
 # a Sorbet error, not a NoMethodError at 3am. That is what makes the claim
-# "the adapter abstraction is real" (DECISIONS #10) checkable.
+# "the adapter abstraction is real" (DECISIONS #9) checkable.
 class PspAdapter
   extend T::Sig
   extend T::Helpers
