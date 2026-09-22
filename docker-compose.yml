@@ -56,7 +56,20 @@ services:
     volumes:
       - .:/rails
 
-  # PSP simulators are added in Phase 3 (nordpay) and Phase 7 (kiripay).
+  # PSP simulators: deliberately unreliable, see simulators/*/failure_config.yml
+  nordpay:
+    build: ./simulators/nordpay
+    ports:
+      - "4001:4001"
+    environment:
+      NORDPAY_API_KEY: np_test_key
+    healthcheck:
+      test: ["CMD-SHELL", "ruby -rnet/http -e 'exit Net::HTTP.get_response(URI(\"http://localhost:4001/healthz\")).code == \"200\" ? 0 : 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # kiripay is added in Phase 7.
 
 volumes:
   pgdata:

@@ -34,6 +34,9 @@ Rails.application.configure do
   # Print deprecation notices to the stderr.
   config.active_support.deprecation = :stderr
 
+  # Jobs are asserted with have_enqueued_job / perform_enqueued_jobs, never pushed to Redis.
+  config.active_job.queue_adapter = :test
+
   # Raise exceptions for disallowed deprecations.
   config.active_support.disallowed_deprecation = :raise
 

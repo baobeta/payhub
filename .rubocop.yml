@@ -36,3 +36,6 @@ RSpec/DescribeClass:
   Exclude:
     - "spec/requests/**/*"   # described by route, not class
     - "spec/properties/**/*"
+RSpec/SpecFilePathFormat:
+  Exclude:
+    - "simulators/**/*"      # standalone Sinatra apps, not Rails autoload paths

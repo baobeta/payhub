@@ -23,4 +23,10 @@ module GeneratedPathHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def rails_info_routes_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def v1_payment_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def v1_payments_path(*args); end
 end

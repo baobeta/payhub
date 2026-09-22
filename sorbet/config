@@ -5,3 +5,4 @@
 --parser=prism
 # rdoc 8 ships a Struct-based Heading; Sorbet payload predates it.
 --suppress-payload-superclass-redefinition-for=RDoc::Markup::Heading
+--ignore=simulators/

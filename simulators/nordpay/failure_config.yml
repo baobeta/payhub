@@ -1,0 +1,7 @@
+# Failure injection rates (0.0 - 1.0). Each request rolls once per behaviour.
+# Tests set every rate to 0 and force behaviours with the X-Sim-Force header.
+timeout_rate: 0.10           # record the charge, then hang past the client's timeout
+timeout_seconds: 5           # long enough to exceed PayHub's 3s client timeout
+flaky_500_rate: 0.10         # 500 on the first attempt for an X-Request-Id, 200 after
+duplicate_response_rate: 0.05 # the same charge appears twice in one response body
+decline_rate: 0.10           # HTTP 200 with status: declined

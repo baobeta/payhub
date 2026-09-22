@@ -23,4 +23,10 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def rails_info_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def v1_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def v1_payments_url(*args); end
 end
