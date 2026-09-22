@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Rails calls `pg_dump` from PATH for db/structure.sql. The server is Postgres 16
+# (docker compose), so the client must be >= 16. Prefer a modern local client,
+# otherwise run pg_dump inside the db container so no host install is needed.
+set -euo pipefail
+
+# Find the --file argument so we can post-process the dump.
+outfile=""
+prev=""
+for a in "$@"; do
+  case "$a" in
+    --file=*) outfile="${a#--file=}" ;;
+    *) [ "$prev" = "--file" ] || [ "$prev" = "-f" ] && outfile="$a" ;;
+  esac
+  prev="$a"
+done
+
+run_dump() {
+  for candidate in /opt/homebrew/opt/libpq/bin/pg_dump /opt/homebrew/opt/postgresql@16/bin/pg_dump /usr/lib/postgresql/16/bin/pg_dump; do
+    if [ -x "$candidate" ]; then
+      "$candidate" "$@"
+      return
+    fi
+  done
+
+  # Fallback: the container's own pg_dump. Drop host/port; inside the
+  # container it's localhost:5432. Stream the file back out.
+  args=()
+  for a in "$@"; do
+    case "$a" in
+      --host=*|--port=*|--file=*|--file|-f) ;;
+      *) [ "$prev_fb" = "--file" ] || [ "$prev_fb" = "-f" ] || args+=("$a") ;;
+    esac
+    prev_fb="$a"
+  done
+  docker compose exec -T -e PGPASSWORD=payhub db pg_dump --host=localhost --username=payhub "${args[@]}" > "$outfile"
+}
+
+run_dump "$@"
+
+# A newer pg_dump (17+) emits settings older servers reject on load.
+if [ -n "$outfile" ] && [ -f "$outfile" ]; then
+  sed -i '' -e '/^SET transaction_timeout/d' "$outfile" 2>/dev/null || sed -i -e '/^SET transaction_timeout/d' "$outfile"
+fi
