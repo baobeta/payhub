@@ -1,6 +1,6 @@
 # Development image. Production hardening (multi-stage, non-root, precompile)
 # is out of scope per the spec: `docker compose up` is enough.
-ARG RUBY_VERSION=3.2.6
+ARG RUBY_VERSION=3.3.12
 FROM docker.io/library/ruby:$RUBY_VERSION-slim
 
 WORKDIR /rails
