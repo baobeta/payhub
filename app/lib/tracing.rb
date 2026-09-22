@@ -13,10 +13,6 @@ module Tracing
   def in_span(name, attributes: {})
     tracer.in_span(name, attributes: attributes.compact) do |span|
       yield span
-    rescue StandardError => error
-      span.record_exception(error) if span.respond_to?(:record_exception)
-      span.status = OpenTelemetry::Trace::Status.error(error.message) if span.respond_to?(:status=)
-      raise
     end
   end
 
