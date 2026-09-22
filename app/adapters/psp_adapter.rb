@@ -115,6 +115,34 @@ class PspAdapter
   sig { abstract.params(psp_reference: String).returns(RefundResult) }
   def fetch_refund(psp_reference); end
 
+  # ── Inbound webhooks ────────────────────────────────────────────────────
+
+  # A verified, normalised inbound event. `psp_reference` is OUR reference
+  # (the one we sent), resolved from whatever the PSP calls it.
+  class WebhookEvent < T::Struct
+    const :external_id, String        # the PSP's event id — dedupe key
+    const :event_type, String         # PSP's own name, e.g. charge.captured
+    const :psp_reference, T.nilable(String)
+    const :psp_charge_id, T.nilable(String)
+    const :status, T.nilable(Result::Status) # what the charge is now, if the event says
+    const :decline_code, T.nilable(String)
+    const :psp_timestamp, T.any(Time, ActiveSupport::TimeWithZone) # ordering key
+    const :payload, T::Hash[String, T.untyped]
+  end
+
+  class InvalidSignature < StandardError; end
+  class MalformedWebhook < StandardError; end
+
+  # Verify the signature with secure_compare, then parse. Raises InvalidSignature
+  # (store, alert, 401, never process) or MalformedWebhook (400).
+  sig { abstract.params(raw_body: String, headers: T::Hash[String, String]).returns(WebhookEvent) }
+  def verify_webhook(raw_body, headers); end
+
+  # Parse an already-verified payload (the stored inbound_events.payload).
+  # No signature check here — that happened once, at receipt.
+  sig { abstract.params(payload: T::Hash[String, T.untyped]).returns(WebhookEvent) }
+  def parse_webhook(payload); end
+
   # Capability flags. The domain asks; the adapter declares.
   sig { abstract.returns(T::Boolean) }
   def supports_partial_refund?; end

@@ -34,6 +34,9 @@ module GeneratedPathHelpersModule
   def v1_balance_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def v1_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def v1_payment_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }

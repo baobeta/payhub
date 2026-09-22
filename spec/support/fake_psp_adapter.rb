@@ -43,6 +43,8 @@ class FakePspAdapter < PspAdapter
   def cancel(payment) = answer(:cancel, payment)
   def refund(refund) = answer(:refund, refund)
   def fetch_refund(psp_reference) = answer(:fetch_refund, psp_reference)
+  def verify_webhook(raw_body, headers) = answer(:verify_webhook, [raw_body, headers])
+  def parse_webhook(payload) = answer(:parse_webhook, payload)
 
   private
 

@@ -27,14 +27,20 @@ services:
 
   web:
     build: .
-    command: bin/rails server -b 0.0.0.0 -p 3000
+    # rm the pid file first: the bind mount preserves it across container
+    # restarts, and Puma refuses to boot if it sees one.
+    command: sh -c "rm -f tmp/pids/server.pid && bin/rails server -b 0.0.0.0 -p 3000"
     ports:
-      - "3000:3000"
+      - "${WEB_PORT:-3000}:3000" # host port; override if 3000 is taken (WEB_PORT=3100 docker compose up)
     environment: &app_env
       DATABASE_URL: postgres://payhub:payhub@db:5432/payhub_development
       REDIS_URL: redis://redis:6379/0
       NORDPAY_URL: http://nordpay:4001
+      NORDPAY_API_KEY: np_test_key
+      NORDPAY_WEBHOOK_SECRET: np_whsec_test
       KIRIPAY_URL: http://kiripay:4002
+      KIRIPAY_API_KEY: kp_test_key
+      KIRIPAY_WEBHOOK_SECRET: kp_whsec_test
       RAILS_ENV: development
     depends_on:
       db:
@@ -69,7 +75,22 @@ services:
       timeout: 3s
       retries: 10
 
-  # kiripay is added in Phase 7.
+  kiripay:
+    build: ./simulators/kiripay
+    ports:
+      - "4002:4002"
+    environment:
+      KIRIPAY_API_KEY: kp_test_key
+      KIRIPAY_WEBHOOK_SECRET: kp_whsec_test
+      KIRIPAY_PUBLIC_URL: http://localhost:4002
+      # Where the simulator POSTs its webhooks. Inside compose: the web service.
+      # For a locally-run Rails (bin/rails s), override to http://host.docker.internal:3000/v1/webhooks/kiripay
+      PAYHUB_WEBHOOK_URL: ${PAYHUB_WEBHOOK_URL:-http://web:3000/v1/webhooks/kiripay}
+    healthcheck:
+      test: ["CMD-SHELL", "ruby -rnet/http -e 'exit Net::HTTP.get_response(URI(\"http://localhost:4002/healthz\")).code == \"200\" ? 0 : 1'"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   pgdata:

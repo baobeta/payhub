@@ -13,7 +13,8 @@ Rails.application.routes.draw do
       resources :refunds, only: %i[create]
     end
     get "balance", to: "balances#show"
-    # index (cursor pagination) → later in this phase
-    # webhooks / events         → Phase 6
+    # Inbound from the PSP simulators. No merchant auth; signature-verified per PSP.
+    post "webhooks/:psp_name", to: "webhooks#create", constraints: { psp_name: /nordpay|kiripay/ }
+    # index (cursor pagination), events → Phase 6
   end
 end

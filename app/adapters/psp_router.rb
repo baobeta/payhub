@@ -10,7 +10,7 @@ module PspRouter
   class NoRoute < StandardError; end
 
   ADAPTERS = T.let(
-    { "nordpay" => NordpayAdapter }.freeze,
+    { "nordpay" => NordpayAdapter, "kiripay" => KiripayAdapter }.freeze,
     T::Hash[String, T.class_of(PspAdapter)]
   )
 

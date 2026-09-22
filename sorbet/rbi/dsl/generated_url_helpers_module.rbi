@@ -41,4 +41,7 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def v1_payments_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def v1_url(*args); end
 end

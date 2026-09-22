@@ -30,28 +30,9 @@ class CapturePaymentJob < ApplicationJob
       adapter.fetch(payment.psp_reference)
     end
 
-    reconcile(payment, result)
-  end
-
-  private
-
-  # Book whatever the PSP has captured that we have not yet booked.
-  sig { params(payment: Payment, result: PspAdapter::Result).void }
-  def reconcile(payment, result)
-    psp_captured = result.raw.fetch("captured_minor", 0).to_i
-
-    payment.with_lock do
-      booked = Ledger.captured_minor(payment)
-      delta = psp_captured - booked
-      next if delta <= 0 # nothing new (re-run, or capture never happened)
-
-      Ledger.record_capture!(payment, delta)
-      payment.update_column(:captured_minor, psp_captured) # display cache only; ledger is truth
-
-      if payment.state == "authorized"
-        payment.transition!(:captured, sort_key: result.psp_timestamp, source: "worker",
-                                       metadata: { "psp_charge_id" => result.psp_charge_id, "captured_minor" => psp_captured })
-      end
-    end
+    # Book whatever the PSP has captured that the ledger does not yet hold.
+    BookCapture.call(payment, psp_captured_minor: result.raw.fetch("captured_minor", 0).to_i,
+                              psp_timestamp: result.psp_timestamp, source: "worker",
+                              metadata: { "psp_charge_id" => result.psp_charge_id })
   end
 end

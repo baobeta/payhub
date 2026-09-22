@@ -12,9 +12,11 @@ class NordpayAdapter < PspAdapter
   OPEN_TIMEOUT = 1
   READ_TIMEOUT = 3
 
-  sig { params(base_url: String, api_key: String).void }
+  sig { params(base_url: String, api_key: String, webhook_secret: String).void }
   def initialize(base_url: ENV.fetch("NORDPAY_URL", "http://localhost:4001"),
-                 api_key: ENV.fetch("NORDPAY_API_KEY", "np_test_key"))
+                 api_key: ENV.fetch("NORDPAY_API_KEY", "np_test_key"),
+                 webhook_secret: ENV.fetch("NORDPAY_WEBHOOK_SECRET", "np_whsec_test"))
+    @webhook_secret = webhook_secret
     @conn = T.let(
       Faraday.new(url: base_url) do |f|
         f.request :json
@@ -97,6 +99,39 @@ class NordpayAdapter < PspAdapter
     return refund_not_found(psp_reference) if response.status == 404
 
     to_refund_result(T.cast(response.body, T::Hash[String, T.untyped]))
+  end
+
+  # Signature: X-Nordpay-Signature: <hex HMAC-SHA256 of the raw body>.
+  # Events: { id, type: charge.authorized|charge.captured|charge.declined, created_at, data: <charge> }
+  sig { override.params(raw_body: String, headers: T::Hash[String, String]).returns(WebhookEvent) }
+  def verify_webhook(raw_body, headers)
+    given = headers["X-Nordpay-Signature"].to_s
+    raise InvalidSignature, "missing signature" if given.empty?
+
+    expected = OpenSSL::HMAC.hexdigest("SHA256", @webhook_secret, raw_body)
+    raise InvalidSignature, "signature mismatch" unless ActiveSupport::SecurityUtils.secure_compare(expected, given)
+
+    parse_webhook(JSON.parse(raw_body))
+  rescue JSON::ParserError => e
+    raise MalformedWebhook, e.message
+  end
+
+  sig { override.params(payload: T::Hash[String, T.untyped]).returns(WebhookEvent) }
+  def parse_webhook(payload)
+    data = T.cast(payload.fetch("data"), T::Hash[String, T.untyped])
+    status = case data["status"]
+    when "authorized" then Result::Status::Authorized
+    when "captured" then Result::Status::Captured
+    when "canceled" then Result::Status::Canceled
+    when "declined" then Result::Status::Declined
+    end
+    WebhookEvent.new(
+      external_id: payload.fetch("id"), event_type: payload.fetch("type"),
+      psp_reference: data["reference"], psp_charge_id: data["id"], status: status, decline_code: data["code"],
+      psp_timestamp: Time.iso8601(payload.fetch("created_at")), payload: payload
+    )
+  rescue KeyError, ArgumentError => e
+    raise MalformedWebhook, e.message
   end
 
   private

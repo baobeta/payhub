@@ -1,0 +1,12 @@
+# Failure injection for the Kiripay simulator. Rates 0.0–1.0; tests set all
+# to 0 and force behaviours per request with X-Sim-Force, or per approval with
+# the `force` field on POST /_sim/charges/:id/approve.
+timeout_rate: 0.10           # charge IS created, then we hang past the client's timeout
+timeout_seconds: 5
+webhook_delay_seconds: 0.2   # normal delivery delay after approval
+webhook_duplicate_rate: 0.10 # send the captured webhook 5 times
+webhook_out_of_order_rate: 0.10 # send charge.captured BEFORE charge.created
+webhook_late_rate: 0.05      # deliver hours late (simulated by an old timestamp + delay)
+webhook_never_rate: 0.05     # never send — the sweeper must catch it
+webhook_bad_signature_rate: 0.05 # sign with the wrong secret
+decline_rate: 0.10           # customer's wallet declines at approval time
