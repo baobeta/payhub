@@ -1,4 +1,47 @@
-.omc/
+# Runtime artefacts
+/log/*
+!/log/.keep
+/tmp/*
+!/tmp/.keep
+!/tmp/pids
+/tmp/pids/*
+!/tmp/pids/.keep
+/tmp/storage/*
+/storage/*
+!/storage/.keep
+/public/assets
 
-# Ignore master key for decrypting credentials and more.
+# Secrets & local config — never commit these
 /config/master.key
+/config/credentials/*.key
+.env
+.env.*
+!.env.example
+
+# Test / coverage output
+/coverage
+/spec/examples.txt
+/spec/reports
+
+# Tooling caches
+/.bundle
+/node_modules
+/.yarn
+.byebug_history
+.rspec_status
+*.orig
+*.rej
+
+# OMC / Claude Code session state
+.omc/
+.claude/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+/.idea
+/.vscode/*
+!/.vscode/settings.json
