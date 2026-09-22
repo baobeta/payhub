@@ -1,3 +1,5 @@
+# typed: true
+
 class IdempotencyKey < ApplicationRecord
   belongs_to :merchant
 

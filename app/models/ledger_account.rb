@@ -1,3 +1,5 @@
+# typed: true
+
 class LedgerAccount < ApplicationRecord
   belongs_to :merchant
   has_many :entries, class_name: "LedgerEntry", foreign_key: :account_id, dependent: :restrict_with_exception

@@ -1,3 +1,5 @@
+# typed: true
+
 # Append-only. The database trigger rejects UPDATE/DELETE; these guards make
 # the same rule visible from Ruby before a query is even sent.
 class LedgerEntry < ApplicationRecord

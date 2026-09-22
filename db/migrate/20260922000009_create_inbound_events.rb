@@ -25,8 +25,8 @@ class CreateInboundEvents < ActiveRecord::Migration[7.2]
     end
 
     # Five identical webhooks => four RecordNotUnique => four no-ops with 200.
-    add_index :inbound_events, [ :psp_name, :external_id ], unique: true, name: "idx_inbound_events_dedupe"
-    add_index :inbound_events, [ :psp_name, :psp_reference ], name: "idx_inbound_events_by_ref"
+    add_index :inbound_events, [:psp_name, :external_id], unique: true, name: "idx_inbound_events_dedupe"
+    add_index :inbound_events, [:psp_name, :psp_reference], name: "idx_inbound_events_by_ref"
     # Worklist for the processor: valid, not yet applied.
     add_index :inbound_events, :received_at, where: "processed_at IS NULL AND signature_valid",
               name: "idx_inbound_events_unprocessed"

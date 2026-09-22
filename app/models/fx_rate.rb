@@ -1,3 +1,5 @@
+# typed: true
+
 class FxRate < ApplicationRecord
   validates :base, :quote, inclusion: { in: Currency::SUPPORTED }
   validates :rate, numericality: { greater_than: 0 }

@@ -10,7 +10,7 @@ class CreateLedger < ActiveRecord::Migration[7.2]
     add_check_constraint :ledger_accounts,
                          "kind IN ('psp_receivable', 'merchant_payable', 'refunds_paid')",
                          name: "chk_ledger_accounts_kind"
-    add_index :ledger_accounts, [ :merchant_id, :kind, :currency ], unique: true,
+    add_index :ledger_accounts, [:merchant_id, :kind, :currency], unique: true,
               name: "idx_ledger_accounts_unique"
 
     # No updated_at on purpose: nothing here is ever changed.
@@ -34,7 +34,7 @@ class CreateLedger < ActiveRecord::Migration[7.2]
     add_check_constraint :ledger_entries, "amount_minor > 0", name: "chk_ledger_entries_amount_positive"
 
     add_index :ledger_entries, :transfer_id, name: "idx_ledger_entries_transfer"
-    add_index :ledger_entries, [ :account_id, :currency ], name: "idx_ledger_entries_balance"
+    add_index :ledger_entries, [:account_id, :currency], name: "idx_ledger_entries_balance"
 
     # Append-only, enforced by the database: any UPDATE or DELETE raises.
     # Corrections are new reversing entries.

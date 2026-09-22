@@ -1,3 +1,5 @@
+# typed: true
+
 class Merchant < ApplicationRecord
   has_many :payments, dependent: :restrict_with_exception
   has_many :ledger_accounts, dependent: :restrict_with_exception
@@ -19,7 +21,7 @@ class Merchant < ApplicationRecord
       api_key_digest: digest(raw),
       webhook_secret: SecureRandom.hex(32)
     ))
-    [ merchant, raw ]
+    [merchant, raw]
   end
 
   # Constant-time authentication. We look up by digest (an indexed equality

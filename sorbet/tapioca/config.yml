@@ -1,0 +1,6 @@
+gem:
+  doc: false
+dsl:
+  # The `parallel` gem forks workers; a forked child inheriting the parent's
+  # Postgres socket crashes in pg/connection.rb. Single process is fine here.
+  workers: 1

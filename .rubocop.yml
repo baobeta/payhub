@@ -1,8 +1,38 @@
-# Omakase Ruby styling for Rails
-inherit_gem: { rubocop-rails-omakase: rubocop.yml }
+# Base: Rails core's omakase config (minimal, opinionated, maintained by Rails).
+# Layered: rspec + performance cops, which nearly every Rails team adds.
+inherit_gem:
+  rubocop-rails-omakase: rubocop.yml
 
-# Overwrite or add rules to create your own house style
-#
-# # Use `[a, [b, c]]` not `[ a, [ b, c ] ]`
-# Layout/SpaceInsideArrayLiteralBrackets:
-#   Enabled: false
+plugins:
+  - rubocop-rspec
+  - rubocop-performance
+
+AllCops:
+  NewCops: enable
+  TargetRubyVersion: 3.3
+  Exclude:
+    - "bin/**/*"
+    - "db/structure.sql"
+    - "node_modules/**/*"
+    - "sorbet/**/*"
+    - "tmp/**/*"
+    - "vendor/**/*"
+
+# Omakase's one unusual rule: `[ a, b ]`. Almost every other Ruby codebase
+# writes `[a, b]`; we follow the wider convention.
+Layout/SpaceInsideArrayLiteralBrackets:
+  EnforcedStyle: no_space
+
+# ── RSpec ─────────────────────────────────────────────────────────────────────
+RSpec/ExampleLength:
+  Max: 25          # request/concurrency specs are naturally longer
+RSpec/MultipleExpectations:
+  Max: 6           # one scenario, several assertions about its outcome is fine
+RSpec/NestedGroups:
+  Max: 4
+RSpec/MultipleMemoizedHelpers:
+  Max: 8
+RSpec/DescribeClass:
+  Exclude:
+    - "spec/requests/**/*"   # described by route, not class
+    - "spec/properties/**/*"

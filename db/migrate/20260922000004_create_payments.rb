@@ -40,13 +40,13 @@ class CreatePayments < ActiveRecord::Migration[7.2]
                          name: "chk_payments_state"
 
     # A PSP returning the same charge twice cannot create a second payment.
-    add_index :payments, [ :psp_name, :psp_reference ], unique: true, name: "idx_payments_psp_ref"
+    add_index :payments, [:psp_name, :psp_reference], unique: true, name: "idx_payments_psp_ref"
 
     # THE cursor-pagination index. GET /v1/payments must stay < 100ms at 1M rows.
-    add_index :payments, [ :merchant_id, :created_at, :id ],
+    add_index :payments, [:merchant_id, :created_at, :id],
               order: { created_at: :desc, id: :desc }, name: "idx_payments_cursor"
 
     # Sweeper: WHERE state IN ('pending','unknown') AND updated_at < now() - interval.
-    add_index :payments, [ :state, :updated_at ], name: "idx_payments_stuck"
+    add_index :payments, [:state, :updated_at], name: "idx_payments_stuck"
   end
 end

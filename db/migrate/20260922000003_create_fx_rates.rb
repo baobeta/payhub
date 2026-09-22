@@ -12,7 +12,7 @@ class CreateFxRates < ActiveRecord::Migration[7.2]
 
     # "Latest rate for this pair" lookup. Rates are never joined at read time —
     # the value is copied onto payments.fx_rate at creation.
-    add_index :fx_rates, [ :base, :quote, :captured_at ],
+    add_index :fx_rates, [:base, :quote, :captured_at],
               order: { captured_at: :desc }, name: "idx_fx_rates_latest"
   end
 end

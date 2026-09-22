@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# The full quality gate, in the order that fails fastest. CI runs exactly this.
+#   bin/check          run everything
+#   bin/check --fix    autocorrect lint first, then run everything
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+if [ "${1:-}" = "--fix" ]; then
+  bundle exec rubocop -A
+fi
+
+step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
+
+step "zeitwerk (autoload layout)"
+bin/rails zeitwerk:check
+
+step "rubocop (style)"
+bundle exec rubocop
+
+step "sorbet (types)"
+bundle exec srb tc
+
+step "rspec (behaviour)"
+bundle exec rspec
+
+step "brakeman (security)"
+bundle exec brakeman --no-pager --quiet --no-summary
+
+printf '\n\033[32mAll gates green.\033[0m\n'

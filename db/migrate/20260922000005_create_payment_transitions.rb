@@ -24,6 +24,6 @@ class CreatePaymentTransitions < ActiveRecord::Migration[7.2]
               where: "most_recent", name: "idx_transitions_most_recent"
 
     # Transition history in PSP-time order for GET /v1/payments/:id.
-    add_index :payment_transitions, [ :payment_id, :sort_key ], name: "idx_transitions_history"
+    add_index :payment_transitions, [:payment_id, :sort_key], name: "idx_transitions_history"
   end
 end

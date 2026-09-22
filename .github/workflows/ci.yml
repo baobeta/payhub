@@ -3,37 +3,53 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  scan_ruby:
+  check:
     runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: payhub
+          POSTGRES_PASSWORD: payhub
+          POSTGRES_DB: payhub_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U payhub"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
 
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+    env:
+      RAILS_ENV: test
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: payhub
+      PGPASSWORD: payhub
+      REDIS_URL: redis://localhost:6379/0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
         with:
           ruby-version: .ruby-version
           bundler-cache: true
 
-      - name: Scan for common Rails security vulnerabilities using static analysis
-        run: bin/brakeman --no-pager
+      - name: Postgres client matching the server
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-16
 
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Prepare database
+        run: bin/rails db:create db:schema:load
 
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: .ruby-version
-          bundler-cache: true
-
-      - name: Lint code for consistent style
-        run: bin/rubocop -f github
-
+      # Same gate as `bin/check` locally: zeitwerk, rubocop, sorbet, rspec, brakeman.
+      - name: Quality gate
+        run: bin/check

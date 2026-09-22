@@ -1,3 +1,5 @@
+# typed: true
+
 class HealthController < ApplicationController
   # Liveness: proves the process is up and can reach the database.
   # Deeper checks (Redis, Sidekiq queue depth) belong on /metrics, not here —

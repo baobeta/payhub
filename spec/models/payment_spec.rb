@@ -77,7 +77,7 @@ RSpec.describe Payment do
     end
 
     it "raises StaleObjectError for a concurrent writer holding an old lock_version" do
-      other = Payment.find(payment.id)
+      other = described_class.find(payment.id)
       payment.transition!(:authorized, sort_key: t0, source: "worker")
 
       # `other` still has lock_version 0; a plain save should be refused.
@@ -95,8 +95,8 @@ RSpec.describe Payment do
       done.transition!(:authorized, sort_key: done.created_at + 1.second, source: "worker")
       done.update_column(:updated_at, 20.minutes.ago)
 
-      expect(Payment.stuck(older_than: 15.minutes.ago)).to contain_exactly(old)
-      expect(Payment.stuck(older_than: 15.minutes.ago)).not_to include(fresh, done)
+      expect(described_class.stuck(older_than: 15.minutes.ago)).to contain_exactly(old)
+      expect(described_class.stuck(older_than: 15.minutes.ago)).not_to include(fresh, done)
     end
   end
 

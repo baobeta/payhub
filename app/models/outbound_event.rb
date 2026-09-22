@@ -1,3 +1,5 @@
+# typed: true
+
 # Transactional outbox: created in the same DB transaction as the state change
 # it announces, delivered later by the sweeper (Phase 6).
 class OutboundEvent < ApplicationRecord

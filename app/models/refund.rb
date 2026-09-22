@@ -1,3 +1,5 @@
+# typed: true
+
 class Refund < ApplicationRecord
   belongs_to :payment
   has_many :ledger_entries, dependent: :restrict_with_exception

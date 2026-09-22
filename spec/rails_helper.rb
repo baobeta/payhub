@@ -14,7 +14,7 @@ end
 Dir[Rails.root.join("spec/support/**/*.rb")].sort.each { |f| require f }
 
 RSpec.configure do |config|
-  config.fixture_paths = [ Rails.root.join("spec/fixtures") ]
+  config.fixture_paths = [Rails.root.join("spec/fixtures")]
   config.include FactoryBot::Syntax::Methods
   config.include ActiveSupport::Testing::TimeHelpers
 
@@ -22,7 +22,7 @@ RSpec.configure do |config|
   # `concurrency: true` use real threads + real connections, which cannot see
   # an uncommitted transaction, so they run without and clean up manually.
   config.use_transactional_fixtures = true
-  config.around(:each, concurrency: true) do |example|
+  config.around(:each, :concurrency) do |example|
     self.use_transactional_tests = false
     example.run
     ActiveRecord::Base.connection.execute(

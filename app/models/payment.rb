@@ -1,3 +1,5 @@
+# typed: true
+
 class Payment < ApplicationRecord
   belongs_to :merchant
   has_many :transitions, -> { order(:sort_key, :created_at) },

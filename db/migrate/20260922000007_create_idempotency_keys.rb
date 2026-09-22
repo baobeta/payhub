@@ -20,7 +20,7 @@ class CreateIdempotencyKeys < ActiveRecord::Migration[7.2]
 
     # THE referee. Claimed by INSERT and rescue RecordNotUnique,
     # never by SELECT-then-INSERT (DECISIONS #3).
-    add_index :idempotency_keys, [ :merchant_id, :key ], unique: true, name: "idx_idempotency_merchant_key"
+    add_index :idempotency_keys, [:merchant_id, :key], unique: true, name: "idx_idempotency_merchant_key"
     add_index :idempotency_keys, :expires_at, name: "idx_idempotency_expiry"
   end
 end

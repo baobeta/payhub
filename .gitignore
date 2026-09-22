@@ -45,3 +45,7 @@ Thumbs.db
 /.idea
 /.vscode/*
 !/.vscode/settings.json
+
+# Sorbet
+/sorbet/rbi/hidden-definitions/
+/sorbet/rbi/todo.rbi

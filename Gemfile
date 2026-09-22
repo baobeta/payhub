@@ -1,9 +1,8 @@
 source "https://rubygems.org"
 
-ruby "3.2.6"
+ruby "3.3.12"
 
-gem "rails", "~> 7.2.3", ">= 7.2.3.2"
-gem "json", "~> 2.9" # json 3.x removed `quirks_mode`, which ActiveSupport 7.2's encoder still passes
+gem "rails", "~> 8.1.3"
 gem "pg", "~> 1.1"
 gem "puma", ">= 5.0"
 gem "bootsnap", require: false
@@ -26,12 +25,24 @@ gem "prometheus-client", "~> 4.2"
 # JSON log lines: one per request and per job.
 gem "lograge", "~> 0.14"
 
+# Gradual static typing. Runtime sigs are checked in dev/test and
+# stripped to no-ops in production via T::Configuration (see initializer).
+gem "sorbet-runtime"
+
 group :development, :test do
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
   gem "rspec-rails", "~> 7.1"
   gem "factory_bot_rails", "~> 6.4"
   gem "brakeman", require: false
+
   gem "rubocop-rails-omakase", require: false
+  gem "rubocop-rspec", require: false
+  gem "rubocop-performance", require: false
+end
+
+group :development do
+  gem "sorbet", require: false
+  gem "tapioca", require: false
 end
 
 group :test do

@@ -1,3 +1,5 @@
+# typed: true
+
 # One row per state change, append-only. `sort_key` is the PSP's own event
 # timestamp; `created_at` is when we heard about it. Their difference is the
 # webhook lag we log.

@@ -10,11 +10,8 @@ RSpec.describe PaymentStateMachine do
   end
 
   # Edges the diagram omits but the code adds on purpose. Each one must be
-  # justified in DECISIONS.md. Keep this list in sync with that file.
-  DELIBERATE_EXTRAS = [
-    # ["unknown", "canceled"],
-    # ["requires_action", "unknown"],
-  ].freeze
+  # justified in DECISIONS.md. Currently none — see DECISIONS #11.
+  let(:deliberate_extras) { [] }
 
   describe "TRANSITIONS" do
     it "has an entry for every state, so nothing falls through fetch's default" do
@@ -34,8 +31,8 @@ RSpec.describe PaymentStateMachine do
     it "contains no edges beyond the README diagram except the deliberate extras" do
       readme_edges = edges_from_readme.map { |from, to| [from, to] }
       coded_edges = described_class::TRANSITIONS.flat_map { |from, tos| tos.map { |to| [from.to_s, to.to_s] } }
-      extra = coded_edges - readme_edges - DELIBERATE_EXTRAS
-      expect(extra).to be_empty, "edges in TRANSITIONS but not in README (add to DELIBERATE_EXTRAS + DECISIONS.md if intended): #{extra.inspect}"
+      extra = coded_edges - readme_edges - deliberate_extras
+      expect(extra).to be_empty, "edges in TRANSITIONS but not in README (add to deliberate_extras + DECISIONS.md if intended): #{extra.inspect}"
     end
 
     it "gives terminal states no outgoing edges" do

@@ -1,3 +1,5 @@
+# typed: true
+
 class OutboundDeliveryAttempt < ApplicationRecord
   belongs_to :outbound_event
 

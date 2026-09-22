@@ -21,9 +21,9 @@ class CreateOutboundEvents < ActiveRecord::Migration[7.2]
     add_check_constraint :outbound_events, "state IN ('pending', 'delivered', 'dead')", name: "chk_outbound_events_state"
 
     # Delivery sweeper: WHERE state = 'pending' AND next_attempt_at <= now().
-    add_index :outbound_events, [ :state, :next_attempt_at ], name: "idx_outbound_events_sweeper"
+    add_index :outbound_events, [:state, :next_attempt_at], name: "idx_outbound_events_sweeper"
     # GET /v1/events
-    add_index :outbound_events, [ :merchant_id, :created_at ], order: { created_at: :desc },
+    add_index :outbound_events, [:merchant_id, :created_at], order: { created_at: :desc },
               name: "idx_outbound_events_list"
 
     # One row per delivery try, so GET /v1/events shows the history and
@@ -37,7 +37,7 @@ class CreateOutboundEvents < ActiveRecord::Migration[7.2]
       t.datetime :created_at, precision: 6, null: false
     end
 
-    add_index :outbound_delivery_attempts, [ :outbound_event_id, :attempt_number ], unique: true,
+    add_index :outbound_delivery_attempts, [:outbound_event_id, :attempt_number], unique: true,
               name: "idx_delivery_attempts_unique"
   end
 end
