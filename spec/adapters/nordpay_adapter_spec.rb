@@ -126,4 +126,25 @@ RSpec.describe NordpayAdapter do
       expect(charge_stub).not_to have_been_requested
     end
   end
+
+  describe "#settlement_report" do
+    it "parses the day's CSV into settlement lines keyed by our references" do
+      csv = <<~CSV
+        line_id,type,reference,refund_reference,gross_minor,fee_minor,net_minor,currency,booked_at
+        stl_1,capture,ph_a,,6000,109,5891,EUR,2026-09-23T10:00:00.000Z
+        stl_2,refund,ph_a,phr_b,2500,0,-2500,EUR,2026-09-23T11:00:00.000Z
+      CSV
+      stub_request(:get, "http://nordpay.test/settlements?date=2026-09-23").to_return(status: 200, body: csv, headers: { "Content-Type" => "text/csv" })
+
+      lines = adapter.settlement_report(Date.new(2026, 9, 23))
+
+      expect(lines.map { |l| [l.kind, l.psp_reference, l.refund_reference, l.gross_minor, l.fee_minor, l.net_minor] })
+        .to eq([["capture", "ph_a", nil, 6000, 109, 5891], ["refund", "ph_a", "phr_b", 2500, 0, -2500]])
+    end
+
+    it "treats an unreadable report as the PSP's error, not ours to guess at" do
+      stub_request(:get, %r{nordpay.test/settlements}).to_return(status: 200, body: "line_id\nstl_1\n", headers: { "Content-Type" => "text/csv" })
+      expect { adapter.settlement_report(Date.new(2026, 9, 23)) }.to raise_error(PspAdapter::Rejected, /unreadable/)
+    end
+  end
 end

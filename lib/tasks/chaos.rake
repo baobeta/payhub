@@ -130,6 +130,13 @@ class ChaosRun
     per_payment("refunded ≤ captured", rows) { |r| r[:refunded] <= r[:captured] }
     per_payment("money refunded by the PSP == refunds in our ledger", rows) { |r| r[:refunded] == r[:psp_refunded] }
     per_payment("no refund reservation left once refunds settle", rows) { |r| r[:reserved].zero? }
+    # What the PSP actually paid out: reconcile today's settlement report and
+    # hold every line for these payments to the ledger (DECISIONS #18).
+    SettlementReconciliationJob.perform_now(Time.current.utc.to_date.iso8601)
+    lines = SettlementLine.where(psp_name: "nordpay", psp_reference: all.map(&:psp_reference))
+    check("settlement report: #{lines.count} lines, #{lines.discrepancies.count} not matching the ledger", lines.discrepancies.none?)
+    per_payment("every capture fully settled by the PSP", rows) { |r| Ledger.settled_minor(Payment.find(r[:id])) == r[:captured] }
+
     ours = LedgerEntry.where(payment: all).distinct.pluck(:transfer_id)
     check("every ledger transfer nets to zero (#{ours.size} transfers)", (Ledger.unbalanced_transfer_ids & ours).empty?)
 

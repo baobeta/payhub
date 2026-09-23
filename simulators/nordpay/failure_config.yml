@@ -14,3 +14,6 @@ webhook_late_rate: 0.05          # deliver late (honest timestamp, delayed deliv
 webhook_late_extra_seconds: 1.5
 webhook_never_rate: 0.05         # never send — the sweeper must catch it
 webhook_bad_signature_rate: 0.05 # sign with the wrong secret
+
+# Settlement report (GET /settlements?date=)
+settlement_drop_rate: 0.0        # leave a line out of the day's report — reconciliation must notice

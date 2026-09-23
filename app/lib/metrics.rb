@@ -21,6 +21,7 @@ module Metrics
       stuck_payment_alerts: [:psp, :state],
       authorizations_expired: [:psp],
       psp_circuit_opened: [:psp],
+      settlement_discrepancies: [:psp, :status],
       ledger_imbalance_detected: []
     }.freeze,
     T::Hash[Symbol, T::Array[Symbol]]

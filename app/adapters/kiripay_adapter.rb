@@ -116,6 +116,10 @@ class KiripayAdapter < PspAdapter
                      psp_timestamp: Time.current, raw: charge.raw)
   end
 
+  # Kiripay publishes no settlement report we can fetch (DECISIONS #18).
+  sig { override.params(date: Date).returns(T.nilable(T::Array[SettlementReportLine])) }
+  def settlement_report(date) = nil
+
   # Signature: X-Kiripay-Signature: t=<unix>,v1=<hex HMAC-SHA256 of "<t>.<body>">[,v1=…]
   sig { override.params(raw_body: String, headers: T::Hash[String, String]).returns(WebhookEvent) }
   def verify_webhook(raw_body, headers)

@@ -24,3 +24,9 @@ daily_reconciliation:
   class: ReconciliationJob
   queue: sweepers
   description: "Compare ledger and PSP views; flag unbalanced transfers and drifted payments"
+
+settlement_reconciliation:
+  cron: "45 3 * * *"
+  class: SettlementReconciliationJob
+  queue: sweepers
+  description: "Ingest yesterday's PSP settlement reports; match every line to the ledger, book matched ones, flag the rest and unsettled captures"

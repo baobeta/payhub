@@ -143,6 +143,26 @@ class PspAdapter
   sig { abstract.params(payload: T::Hash[String, T.untyped]).returns(WebhookEvent) }
   def parse_webhook(payload); end
 
+  # ── Settlement ──────────────────────────────────────────────────────────
+
+  # One line of the PSP's settlement report: money it actually paid out (a
+  # capture, net of its fee) or took back (a refund). References are OURS.
+  class SettlementReportLine < T::Struct
+    const :external_id, String
+    const :kind, String # capture | refund
+    const :psp_reference, String
+    const :refund_reference, T.nilable(String)
+    const :gross_minor, Integer
+    const :fee_minor, Integer
+    const :net_minor, Integer
+    const :currency, String
+    const :booked_at, T.any(Time, ActiveSupport::TimeWithZone)
+  end
+
+  # The report for one UTC day, or nil if this PSP publishes none (DECISIONS #18).
+  sig { abstract.params(date: Date).returns(T.nilable(T::Array[SettlementReportLine])) }
+  def settlement_report(date); end
+
   # Capability flags. The domain asks; the adapter declares.
   sig { abstract.returns(T::Boolean) }
   def supports_partial_refund?; end

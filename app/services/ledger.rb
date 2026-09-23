@@ -10,9 +10,14 @@
 #     reserve (asked): debit merchant_payable Y   / credit refunds_reserved Y
 #     post (PSP ok):   debit refunds_reserved Y   / credit refunds_paid Y
 #     void (PSP no):   debit refunds_reserved Y   / credit merchant_payable Y
+#   settle, from the PSP's settlement report (DECISIONS #18):
+#     capture G, fee F: debit psp_payouts G−F, debit psp_fees F / credit psp_receivable G
+#     refund R:         debit refunds_paid R            / credit psp_payouts R
 #
 # A reservation is money no longer available to the merchant but not yet
 # returned to the customer. It is a real balance, not a side calculation.
+# psp_receivable is what the PSP owes us for captures; settlement clears it,
+# so a payment whose receivable never reaches zero was never paid out.
 module Ledger
   extend T::Sig
 
@@ -83,6 +88,29 @@ module Ledger
     def void_refund!(refund)
       require_reservation!(refund)
       refund_transfer!(refund, from: "refunds_reserved", to: "merchant_payable")
+    end
+
+    # A matched settlement line: money the PSP actually paid out or took back.
+    # Zero-amount legs are omitted (a fee-free line has no fee leg); a capture
+    # smaller than its fee pays out a negative net, booked as a credit.
+    sig { params(line: SettlementLine).returns(String) }
+    def record_settlement!(line)
+      payment = T.must(line.payment)
+      signed = if line.kind == "capture"
+        { "psp_receivable" => -line.gross_minor, "psp_fees" => line.fee_minor, "psp_payouts" => line.net_minor }
+      else
+        { "refunds_paid" => line.gross_minor, "psp_payouts" => -line.gross_minor }
+      end
+      legs = signed.reject { |_, amount| amount.zero? }.map do |kind, amount|
+        Leg.new(account_kind: kind, direction: amount.positive? ? "debit" : "credit", amount_minor: amount.abs)
+      end
+      record!(merchant: T.must(payment.merchant), currency: line.currency, payment: payment, refund: line.refund, legs: legs)
+    end
+
+    # What the PSP has settled for this payment's captures so far.
+    sig { params(payment: Payment).returns(Integer) }
+    def settled_minor(payment)
+      sum_for(payment, kind: "psp_receivable", direction: "credit")
     end
 
     # ── Sums. Always from rows, never from a cached column. ─────────────────

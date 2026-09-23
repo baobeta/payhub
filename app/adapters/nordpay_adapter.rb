@@ -102,6 +102,23 @@ class NordpayAdapter < PspAdapter
     to_refund_result(T.cast(response.body, T::Hash[String, T.untyped]))
   end
 
+  # GET /settlements?date= — a CSV, one row per capture (net of fee) or refund.
+  sig { override.params(date: Date).returns(T.nilable(T::Array[SettlementReportLine])) }
+  def settlement_report(date)
+    response = request(:get, "/settlements?date=#{date.iso8601}")
+    CSV.parse(response.body.to_s, headers: true).map do |parsed|
+      row = T.cast(parsed, CSV::Row) # headers: true always yields rows, never arrays
+      SettlementReportLine.new(
+        external_id: row.fetch("line_id"), kind: row.fetch("type"), psp_reference: row.fetch("reference"),
+        refund_reference: row["refund_reference"].presence, gross_minor: Integer(row.fetch("gross_minor")),
+        fee_minor: Integer(row.fetch("fee_minor")), net_minor: Integer(row.fetch("net_minor")),
+        currency: row.fetch("currency"), booked_at: Time.iso8601(row.fetch("booked_at"))
+      )
+    end
+  rescue KeyError, ArgumentError, CSV::MalformedCSVError => e
+    raise Rejected.new(200, "nordpay settlement report unreadable: #{e.message}")
+  end
+
   # Signature: X-Nordpay-Signature: <hex HMAC-SHA256 of the raw body>. Nordpay
   # signs no timestamp; that is its wire format, and we don't invent one (#15).
   # Events: { id, type: charge.authorized|charge.captured|charge.declined, created_at, data: <charge> }

@@ -45,6 +45,7 @@ class FakePspAdapter < PspAdapter
   def fetch_refund(psp_reference) = answer(:fetch_refund, psp_reference)
   def verify_webhook(raw_body, headers) = answer(:verify_webhook, [raw_body, headers])
   def parse_webhook(payload) = answer(:parse_webhook, payload)
+  def settlement_report(date) = answer(:settlement_report, date)
 
   private
 
