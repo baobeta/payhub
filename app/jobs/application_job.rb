@@ -22,9 +22,11 @@ class ApplicationJob < ActiveJob::Base
       error = "#{e.class}: #{e.message}"[0, 300]
       raise
     ensure
+      trace_ids = Tracing.ids
       Rails.logger.info({
         time: Time.current.utc.iso8601(3), kind: "job", job: job.class.name, job_id: job.job_id,
         request_id: job.enqueued_request_id, queue: job.queue_name, attempt: job.executions,
+        trace_id: trace_ids[:trace_id], span_id: trace_ids[:span_id],
         duration_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round(1),
         error: error
       }.merge(ctx).compact.to_json)

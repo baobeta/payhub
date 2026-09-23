@@ -66,7 +66,9 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
 
     expect(request_line).to be_present
     expect(job_line).to be_present
-    expect(job_line).to include("payment_id" => Payment.last.id, "merchant_id" => merchant.id, "psp_name" => "nordpay")
+    expect(job_line).to include("payment_id" => Payment.last.id, "merchant_id" => merchant.id, "psp_name" => "nordpay",
+                                "trace_id" => a_string_matching(/\A[0-9a-f]{32}\z/),
+                                "span_id" => a_string_matching(/\A[0-9a-f]{16}\z/))
     expect(job_line["duration_ms"]).to be_a(Numeric)
     # The join: grep on either id finds both lines.
     expect(job_line["request_id"]).to eq(request_line["request_id"])
