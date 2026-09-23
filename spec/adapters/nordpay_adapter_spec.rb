@@ -114,4 +114,16 @@ RSpec.describe NordpayAdapter do
       expect(rotating.verify_webhook(body, signed("np_new")).external_id).to eq("evt_1")
     end
   end
+
+  describe "circuit breaker (DECISIONS #17)" do
+    it "refuses before sending once the PSP keeps failing, so a refused authorize can never be ambiguous" do
+      stub = stub_request(:get, %r{nordpay.test/charges/}).to_return(status: 503, body: "{}")
+      10.times { adapter.fetch("ph_x") rescue PspAdapter::Unavailable }
+      expect(stub).to have_been_requested.times(10)
+
+      charge_stub = stub_request(:post, "http://nordpay.test/charges")
+      expect { adapter.authorize(create(:payment)) }.to raise_error(PspCircuit::Open)
+      expect(charge_stub).not_to have_been_requested
+    end
+  end
 end

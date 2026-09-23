@@ -141,6 +141,19 @@ RSpec.describe "V1 capture / cancel / refunds / balance", type: :request do
     end
   end
 
+  describe "when the PSP cannot be reached" do
+    it "answers a synchronous cancel with a retriable 503, not a 500, and leaves the payment untouched" do
+      payment = authorized_payment
+      adapter.script(:cancel, PspCircuit::Open.new("nordpay circuit open"))
+
+      post "/v1/payments/#{payment.id}/cancel", params: "{}", headers: auth_headers(key)
+
+      expect(response).to have_http_status(:service_unavailable)
+      expect(json_body["error"]).to include("code" => "psp_unavailable", "retriable" => true)
+      expect(payment.reload.state).to eq("authorized")
+    end
+  end
+
   describe "GET /v1/balance" do
     it "derives per-currency balances from the ledger" do
       captured_payment(2500)

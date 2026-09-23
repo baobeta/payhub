@@ -20,6 +20,7 @@ module Metrics
       webhook_signature_failures: [:psp],
       stuck_payment_alerts: [:psp, :state],
       authorizations_expired: [:psp],
+      psp_circuit_opened: [:psp],
       ledger_imbalance_detected: []
     }.freeze,
     T::Hash[Symbol, T::Array[Symbol]]

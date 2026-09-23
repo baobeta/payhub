@@ -135,11 +135,21 @@ class NordpayAdapter < PspAdapter
 
   private
 
+  # Every call goes through the PSP's circuit breaker (DECISIONS #17). An open
+  # circuit raises PspCircuit::Open — an Unavailable — before anything is sent.
   sig do
     params(method: Symbol, path: String, body: T.nilable(T::Hash[Symbol, T.untyped]),
            headers: T::Hash[String, String]).returns(Faraday::Response)
   end
   def request(method, path, body: nil, headers: {})
+    PspCircuit.call("nordpay") { send_request(method, path, body: body, headers: headers) }
+  end
+
+  sig do
+    params(method: Symbol, path: String, body: T.nilable(T::Hash[Symbol, T.untyped]),
+           headers: T::Hash[String, String]).returns(Faraday::Response)
+  end
+  def send_request(method, path, body: nil, headers: {})
     operation = "#{method.upcase} #{path.sub(%r{/ph_[a-f0-9]+}, '/:ref')}"
     response = @conn.run_request(method, path, body, headers)
     outcome = response.status.between?(200, 299) ? "ok" : "http_#{response.status}"

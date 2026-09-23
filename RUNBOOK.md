@@ -43,6 +43,8 @@ docker compose ps
 
 If the PSP is down: **there is nothing to do to the payment.** It is in a safe state — the customer is not being charged twice, the merchant knows it is `pending`/`unknown` via `GET /v1/payments/:id` and the outbound event stream. The sweeper keeps polling with backoff (1, 2, 4, 8, 16, then every 30 minutes — DECISIONS #13) and resolves it on the first poll after the PSP answers. When the PSP comes back, don't wait for the backoff: poll the affected payments now with the command in §4. Silence the page for the PSP outage, not the payment.
 
+`psp_circuit.opened` in the log (and `payhub_psp_circuit_opened_total`) means PayHub has stopped calling that PSP for 30 seconds at a time: new payments stay `pending`, sweeps skip it, `POST /cancel` answers a retriable 503. That is the breaker doing its job (DECISIONS #17) — nothing was sent, so nothing is ambiguous. It closes itself on the first successful probe after the PSP recovers.
+
 If the PSP is *up* and we still time out, check `NORDPAY_URL` / `KIRIPAY_URL` in the worker's environment, then go to §5.
 
 ## 4. The PSP knows the answer and we don't
