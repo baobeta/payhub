@@ -17,7 +17,8 @@ class ApplicationJob < ActiveJob::Base
     ctx = job.log_context
     error = nil
     begin
-      block.call
+      carrier = { "traceparent" => job.enqueued_traceparent }.compact
+      Tracing.with_context(carrier) { block.call }
     rescue StandardError => e
       error = "#{e.class}: #{e.message}"[0, 300]
       raise
@@ -34,15 +35,19 @@ class ApplicationJob < ActiveJob::Base
   end
 
   # Carry the originating request's id into the job so the two log lines join.
-  attr_accessor :enqueued_request_id
+  attr_accessor :enqueued_request_id, :enqueued_traceparent
 
   def serialize
-    super.merge("enqueued_request_id" => enqueued_request_id || Current.request_id)
+    super.merge(
+      "enqueued_request_id" => enqueued_request_id || Current.request_id,
+      "enqueued_traceparent" => enqueued_traceparent || Current.traceparent
+    )
   end
 
   def deserialize(job_data)
     super
     self.enqueued_request_id = job_data["enqueued_request_id"]
+    self.enqueued_traceparent = job_data["enqueued_traceparent"]
   end
 
   # Best effort: find the payment / merchant / psp this job is about from its

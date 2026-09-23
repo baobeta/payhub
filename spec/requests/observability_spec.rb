@@ -72,5 +72,6 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
     expect(job_line["duration_ms"]).to be_a(Numeric)
     # The join: grep on either id finds both lines.
     expect(job_line["request_id"]).to eq(request_line["request_id"])
+    expect(job_line["trace_id"]).to eq(request_line["trace_id"])
   end
 end

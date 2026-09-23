@@ -27,4 +27,19 @@ module Tracing
   rescue StandardError
     {}
   end
+
+  def inject_context
+    carrier = {}
+    OpenTelemetry.propagation.inject(carrier)
+    carrier.compact
+  rescue StandardError
+    {}
+  end
+
+  def with_context(carrier)
+    context = OpenTelemetry.propagation.extract(carrier.compact)
+    OpenTelemetry::Context.with_current(context) { yield }
+  rescue StandardError
+    yield
+  end
 end

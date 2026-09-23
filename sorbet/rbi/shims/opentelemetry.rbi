@@ -7,5 +7,9 @@ module OpenTelemetry
     def self.configure; end
   end
 
+  module Context
+    def self.with_current(context); end
+  end
+
   module Trace; end
 end

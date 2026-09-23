@@ -14,6 +14,12 @@ class Current
 
     sig { params(value: T.untyped).returns(T.untyped) }
     def request_id=(value); end
+
+    sig { returns(T.untyped) }
+    def traceparent; end
+
+    sig { params(value: T.untyped).returns(T.untyped) }
+    def traceparent=(value); end
   end
 
   module GeneratedAttributeMethods
@@ -22,5 +28,11 @@ class Current
 
     sig { params(value: T.untyped).returns(T.untyped) }
     def request_id=(value); end
+
+    sig { returns(T.untyped) }
+    def traceparent; end
+
+    sig { params(value: T.untyped).returns(T.untyped) }
+    def traceparent=(value); end
   end
 end
