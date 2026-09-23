@@ -1,8 +1,39 @@
 # PayHub
 
+[![CI](https://github.com/baobeta/payhub/actions/workflows/ci.yml/badge.svg)](https://github.com/baobeta/payhub/actions/workflows/ci.yml)
+![Ruby 3.3](https://img.shields.io/badge/ruby-3.3-CC342D?logo=ruby)
+![Rails 8.1](https://img.shields.io/badge/rails-8.1-D30001?logo=rubyonrails)
+![Postgres 16](https://img.shields.io/badge/postgres-16-4169E1?logo=postgresql&logoColor=white)
+![Sorbet](https://img.shields.io/badge/types-sorbet-6E5494)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 A payment orchestration API. Merchants integrate once; PayHub routes each payment to one of two deliberately unreliable PSP simulators and keeps one consistent view of money movement.
 
 **The one rule:** no customer is ever charged twice, and no merchant is ever refunded more than they captured — under timeouts, duplicate webhooks, concurrent requests, worker crashes and PSP outages. Every design choice serves it; [DECISIONS.md](DECISIONS.md) records the twelve that mattered, and [RUNBOOK.md](RUNBOOK.md) is what you read at 3am.
+
+### What's worth a look
+
+- **Timeouts become `unknown`, not retries.** A charge the PSP might have taken is never re-sent blind; it's resolved by status poll or webhook, using a reference we wrote *before* the call.
+- **Idempotency decided by a unique index**, not a `SELECT`: three concurrent copies of one request make exactly one payment.
+- **An append-only double-entry ledger** — a trigger rejects `UPDATE`/`DELETE`; every balance is a `SUM` over rows.
+- **Two hostile PSP simulators** that time out, 500, duplicate responses and send webhooks late, twice, out of order, badly signed or never.
+- **[`bin/rails chaos:run`](#chaos-run-the-one-rule-live)** turns them up and checks the ledger against the PSP's own records.
+- **Keyset pagination proven at 1M rows**, OpenTelemetry traces across HTTP → Sidekiq → PSP, Sorbet-typed adapters.
+
+```mermaid
+flowchart LR
+    M[Merchant] -- "POST /v1/payments<br/>Idempotency-Key" --> API[Rails API]
+    API -- "INSERT payment + outbox<br/>(one transaction)" --> DB[(Postgres<br/>payments · transitions<br/>ledger · outbox)]
+    API -- enqueue --> W[Sidekiq worker]
+    W -- "charge, X-Request-Id = psp_reference" --> NP[Nordpay sim<br/>EU cards]
+    W -- charge --> KP[Kiripay sim<br/>SEA wallets]
+    NP -. "signed webhooks<br/>(dup / late / out of order)" .-> API
+    KP -. signed webhooks .-> API
+    S[Sweepers<br/>every minute] -- "poll pending / unknown" --> NP
+    S -- "deliver outbox" --> M
+    W --> DB
+    S --> DB
+```
 
 ## Run it
 
@@ -131,6 +162,29 @@ Every non-2xx uses one shape: `{"error":{"type","code","message","param","retria
 | Webhook signature | `X-Nordpay-Signature: <hmac-sha256 hex of body>` | `X-Kiripay-Signature: t=<unix>,v1=<hmac of "t.body">` |
 
 Each reads `failure_config.yml` and misbehaves at the configured rate: 30s timeouts after recording the charge, `500` then `200`, the same charge twice in one body, `200` with `status: declined`, and webhooks that are duplicated ×5, reordered, hours late, mis-signed or never sent. Every behaviour can be forced per request with `X-Sim-Force: timeout,webhook_duplicate,…` so PayHub's specs are deterministic. Admin endpoints: `POST /_sim/reset`, `GET /_sim/charges`, `GET /_sim/webhooks`, `PUT /_sim/config`.
+
+## Chaos: run the one rule live
+
+The specs prove each guard in isolation. This proves them together, over real HTTP, against a simulator set to misbehave:
+
+```bash
+docker compose exec web bin/rails chaos:run        # 40 payments; "chaos:run[200]" for more
+```
+
+It makes Nordpay hostile (15% timeouts, 20% flaky 500s, 20% duplicated response bodies, 30% duplicated and out-of-order webhooks, 10% never-sent or badly-signed webhooks), then:
+
+1. sends every payment **three times at once** with the same `Idempotency-Key`,
+2. races **two full captures** on each authorized payment,
+3. races **three 60% refunds** on each captured payment — at most one fits,
+
+waits for the sweepers to settle everything, and checks — against the **simulator's own records**, not ours:
+
+- N keys produced exactly N payments, and the PSP holds no charge that isn't one of our payments,
+- money the PSP captured == money captured in our ledger, per payment,
+- money the PSP refunded == refunds in our ledger, and refunded ≤ captured, per payment,
+- every ledger transfer nets to zero.
+
+It exits non-zero on any violation and restores the simulator's config afterwards.
 
 ## Tests
 
