@@ -51,6 +51,7 @@ class StuckPaymentSweeperJob < ApplicationJob
   sig { void }
   def perform
     sweep_payments
+    redrive_captures
     redrive_refunds
     redrive_orphan_webhooks
     expire_idempotency_keys
@@ -103,6 +104,16 @@ class StuckPaymentSweeperJob < ApplicationJob
     # Unavailable: try next sweep. Rejected: our bug, alert. Stale: someone
     # else wrote first — fine. None of these should stop the rest of the batch.
     Rails.logger.warn({ event: "sweeper.skip", payment_id: payment.id, error: e.class.name, detail: e.message }.to_json)
+  end
+
+  # A capture left `pending` past the stuck threshold: its job exhausted its
+  # retries, or never ran. CapturePaymentJob reads the PSP before it sends,
+  # so re-running it can never capture twice (DECISIONS #20).
+  sig { void }
+  def redrive_captures
+    Capture.pending.where(updated_at: ..STUCK_AFTER.ago).order(:updated_at).limit(BATCH).pluck(:id).each do |id|
+      CapturePaymentJob.perform_later(id)
+    end
   end
 
   # A refund left `pending` past the stuck threshold had its job time out on

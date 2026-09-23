@@ -30,6 +30,7 @@ class ExpireAuthorizationsJob < ApplicationJob
   def perform
     now = Time.current
     Payment.where(state: "authorized").where(updated_at: ..(now - HOLD_LIMIT))
+           .where.not(id: Capture.pending.select(:payment_id)) # a capture in flight wins
            .where("next_check_at IS NULL OR next_check_at <= ?", now)
            .order(:updated_at).limit(BATCH).each { |payment| expire(payment, now) }
   end

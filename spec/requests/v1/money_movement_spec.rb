@@ -31,13 +31,26 @@ RSpec.describe "V1 capture / cancel / refunds / balance", type: :request do
   end
 
   describe "POST /v1/payments/:id/capture" do
-    it "202s and enqueues a capture for the full authorized amount by default" do
+    it "202s, records the capture request for the full authorized amount by default, and enqueues it" do
       payment = authorized_payment
 
-      expect do
-        post "/v1/payments/#{payment.id}/capture", params: "{}", headers: auth_headers(key)
-      end.to have_enqueued_job(CapturePaymentJob).with(payment.id, 2500)
+      post "/v1/payments/#{payment.id}/capture", params: "{}", headers: auth_headers(key)
+
       expect(response).to have_http_status(:accepted)
+      capture = payment.captures.sole
+      expect(capture).to have_attributes(amount_minor: 2500, base_captured_minor: 0, state: "pending")
+      expect(CapturePaymentJob).to have_been_enqueued.with(capture.id)
+    end
+
+    it "allows one capture in flight per payment: a second gets a retriable 409 (DECISIONS #20)" do
+      payment = authorized_payment
+      post "/v1/payments/#{payment.id}/capture", params: { amount_minor: 1000 }.to_json, headers: auth_headers(key)
+
+      post "/v1/payments/#{payment.id}/capture", params: { amount_minor: 500 }.to_json, headers: auth_headers(key)
+
+      expect(response).to have_http_status(:conflict)
+      expect(json_body["error"]).to include("code" => "capture_in_progress", "retriable" => true)
+      expect(payment.captures.count).to eq(1)
     end
 
     it "allows a partial capture and rejects one beyond the authorized amount" do

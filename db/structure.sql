@@ -73,6 +73,24 @@ CREATE TABLE public.ar_internal_metadata (
 
 
 --
+-- Name: captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.captures (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    payment_id uuid NOT NULL,
+    amount_minor bigint NOT NULL,
+    base_captured_minor bigint NOT NULL,
+    state character varying DEFAULT 'pending'::character varying NOT NULL,
+    failure_code character varying,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_captures_amount_positive CHECK ((amount_minor > 0)),
+    CONSTRAINT chk_captures_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying])::text[])))
+);
+
+
+--
 -- Name: fx_rates; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -323,6 +341,14 @@ ALTER TABLE ONLY public.ar_internal_metadata
 
 
 --
+-- Name: captures captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.captures
+    ADD CONSTRAINT captures_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: fx_rates fx_rates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -424,6 +450,13 @@ ALTER TABLE ONLY public.schema_migrations
 
 ALTER TABLE ONLY public.settlement_lines
     ADD CONSTRAINT settlement_lines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: idx_captures_one_pending_per_payment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_captures_one_pending_per_payment ON public.captures USING btree (payment_id) WHERE ((state)::text = 'pending'::text);
 
 
 --
@@ -557,6 +590,13 @@ CREATE INDEX idx_transitions_history ON public.payment_transitions USING btree (
 --
 
 CREATE UNIQUE INDEX idx_transitions_most_recent ON public.payment_transitions USING btree (payment_id) WHERE most_recent;
+
+
+--
+-- Name: index_captures_on_payment_id_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_captures_on_payment_id_and_created_at ON public.captures USING btree (payment_id, created_at);
 
 
 --
@@ -694,6 +734,14 @@ ALTER TABLE ONLY public.outbound_events
 
 
 --
+-- Name: captures fk_rails_835edaeb47; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.captures
+    ADD CONSTRAINT fk_rails_835edaeb47 FOREIGN KEY (payment_id) REFERENCES public.payments(id);
+
+
+--
 -- Name: ledger_accounts fk_rails_9581c3f98d; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -740,6 +788,7 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260924000006'),
 ('20260924000005'),
 ('20260924000004'),
 ('20260924000003'),

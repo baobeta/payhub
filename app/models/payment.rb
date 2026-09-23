@@ -5,6 +5,7 @@ class Payment < ApplicationRecord
   has_many :transitions, -> { order(:sort_key, :created_at) },
            class_name: "PaymentTransition", dependent: :restrict_with_exception
   has_many :refunds, dependent: :restrict_with_exception
+  has_many :captures, dependent: :restrict_with_exception
   has_many :ledger_entries, dependent: :restrict_with_exception
 
   PSPS = %w[nordpay kiripay].freeze
