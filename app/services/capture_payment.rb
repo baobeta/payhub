@@ -28,6 +28,9 @@ class CapturePayment
                                        code: "partial_capture_unsupported", param: "amount_minor")
       end
 
+      # A capture request restarts the hold clock, so ExpireAuthorizationsJob
+      # cannot void a payment whose capture job is still queued (DECISIONS #14).
+      payment.touch
       CapturePaymentJob.perform_later(payment.id, amount)
     end
     payment
