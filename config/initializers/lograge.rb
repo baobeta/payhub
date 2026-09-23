@@ -13,6 +13,7 @@ Rails.application.configure do
 
   config.lograge.custom_options = lambda do |event|
     payload = event.payload
+    trace_ids = Tracing.ids
     {
       time: Time.current.utc.iso8601(3),
       kind: "request",
@@ -20,6 +21,8 @@ Rails.application.configure do
       merchant_id: payload[:merchant_id],
       payment_id: payload[:payment_id],
       psp_name: payload[:psp_name],
+      trace_id: trace_ids[:trace_id],
+      span_id: trace_ids[:span_id],
       duration_ms: event.duration.round(1),
       # Rails' default `params` dump is filtered by filter_parameters, but we
       # do not log params at all: the body of a payment request has a token

@@ -30,7 +30,7 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
     expect(response.body).to match(/payhub_outbound_events_pending \d+/)
   end
 
-  it "logs one JSON line per request carrying request_id, merchant_id, payment_id, psp_name, duration_ms" do
+  it "logs one JSON line per request carrying correlation IDs and payment context" do
     payment = create(:payment, merchant: merchant)
     log = capture_log { get "/v1/payments/#{payment.id}", headers: auth_headers(key) }
 
@@ -38,7 +38,9 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
     expect(line).to be_present, "no request log line in: #{log}"
     parsed = JSON.parse(line)
     expect(parsed).to include("kind" => "request", "merchant_id" => merchant.id, "payment_id" => payment.id,
-                              "method" => "GET", "status" => 200)
+                              "method" => "GET", "status" => 200,
+                              "trace_id" => a_string_matching(/\A[0-9a-f]{32}\z/),
+                              "span_id" => a_string_matching(/\A[0-9a-f]{16}\z/))
     expect(parsed["request_id"]).to be_present
     expect(parsed["duration_ms"]).to be_a(Numeric)
     expect(parsed).not_to have_key("params") # bodies are never logged
