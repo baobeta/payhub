@@ -36,6 +36,30 @@ RSpec.describe AuthorizePaymentJob do
     expect(current.metadata).to include("psp_charge_id" => "ch_1")
   end
 
+  it "dates `unknown` from the FIRST send of the reference, so a charge an earlier sender created is not judged stale" do
+    # Found by the deterministic simulation (DECISIONS #11, #19): the sweeper
+    # re-sent this pending payment after a 404 and lost the response; the PSP
+    # stamped the charge then. The queued job ran two minutes later and timed
+    # out too. Dated from ITS send, `unknown` was newer than every verdict the
+    # PSP could ever report, and the payment stayed unknown forever.
+    first_send = payment.created_at + 1.second
+    travel_to(first_send, with_usec: true) { payment.mark_sent! }
+    adapter.script(:authorize, PspAdapter::TimedOut)
+    adapter.script(:fetch, result(:authorized, psp_timestamp: first_send + 0.005))
+
+    travel_to(first_send + 2.minutes, with_usec: true) { described_class.perform_now(payment.id) }
+
+    expect(payment.reload.state).to eq("authorized")
+    expect(payment.transitions.find_by(to_state: "unknown").sort_key).to eq(first_send)
+  end
+
+  it "keeps the earliest send time when two senders race" do
+    t = payment.created_at + 1.second
+    travel_to(t, with_usec: true) { payment.mark_sent! }
+    later = Payment.find(payment.id)
+    travel_to(t + 1.minute, with_usec: true) { expect(later.mark_sent!).to eq(t) }
+  end
+
   it "declined (HTTP 200) → failed, carrying the decline code" do
     adapter.script(:authorize, result(:declined, decline_code: "insufficient_funds"))
 

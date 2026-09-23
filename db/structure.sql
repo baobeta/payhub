@@ -251,6 +251,7 @@ CREATE TABLE public.payments (
     updated_at timestamp(6) without time zone NOT NULL,
     next_check_at timestamp(6) without time zone,
     check_attempts integer DEFAULT 0 NOT NULL,
+    first_sent_at timestamp(6) without time zone,
     CONSTRAINT chk_payments_amount_positive CHECK ((amount_minor > 0)),
     CONSTRAINT chk_payments_captured_non_negative CHECK ((captured_minor >= 0)),
     CONSTRAINT chk_payments_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'requires_action'::character varying, 'authorized'::character varying, 'unknown'::character varying, 'captured'::character varying, 'canceled'::character varying, 'failed'::character varying, 'part_refunded'::character varying, 'refunded'::character varying])::text[])))
@@ -739,6 +740,7 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260924000005'),
 ('20260924000004'),
 ('20260924000003'),
 ('20260924000002'),

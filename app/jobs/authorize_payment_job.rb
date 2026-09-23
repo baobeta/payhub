@@ -27,11 +27,12 @@ class AuthorizePaymentJob < ApplicationJob
     adapter = PspRouter.adapter(payment.psp_name)
 
     # Captured BEFORE the call. If we time out, `unknown` is dated from the
-    # moment we sent the request, not the moment we gave up. The PSP cannot
-    # have recorded the charge before receiving it, so any verdict it later
-    # reports carries a timestamp >= sent_at and will apply rather than be
-    # judged stale (DECISIONS #11).
-    sent_at = Time.current
+    # moment the reference was FIRST sent — by this job or an earlier sender
+    # (the sweeper re-sends after a 404) — not the moment we gave up, and not
+    # this attempt's send. The PSP cannot have recorded the charge before first
+    # receiving the reference, so any verdict it reports carries a timestamp
+    # >= first_sent_at and applies rather than being judged stale (DECISIONS #11).
+    sent_at = payment.mark_sent!
 
     result = begin
       adapter.authorize(payment)

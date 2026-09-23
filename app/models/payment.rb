@@ -34,6 +34,18 @@ class Payment < ApplicationRecord
   # charge can always be looked up (DECISIONS #2).
   def self.generate_psp_reference = "ph_#{SecureRandom.hex(12)}"
 
+  # Records that an authorize for this reference is about to be sent, and
+  # returns the FIRST such moment — whoever sent first, job or sweeper. Written
+  # before the call, keep-earliest in one statement, so two racing senders both
+  # get the earlier time. A PSP cannot record a charge before it first receives
+  # the reference, so every verdict it reports is at or after this (#11).
+  def mark_sent!(at = Time.current)
+    self.class.where(id: id).update_all(["first_sent_at = COALESCE(first_sent_at, ?)", at])
+    self.first_sent_at = self.class.where(id: id).pick(:first_sent_at)
+    clear_attribute_changes([:first_sent_at]) # already persisted; with_lock refuses dirty records
+    first_sent_at
+  end
+
   # Every new payment starts life with a `pending` transition row so the
   # history is complete from the first moment.
   after_create :record_initial_transition
