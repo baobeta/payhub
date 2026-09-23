@@ -78,6 +78,74 @@ RSpec.describe StuckPaymentSweeperJob do
     expect(Metrics).to have_received(:gauge).with(:unknown_state_payments, 2)
   end
 
+  describe "scheduling (DECISIONS #13)" do
+    it "polls a newly stuck payment even when a backlog of unresolvable ones fills the batch" do
+      # The regression the chaos run found: order(:updated_at).limit(BATCH)
+      # re-picked the same oldest rows forever, so a new `unknown` was never polled.
+      stub_const("#{described_class}::BATCH", 4)
+      backlog = Array.new(6) { |i| stuck("unknown", age: (60 - i).days) }
+      fresh = stuck("unknown", age: 3.minutes)
+      allow(adapter).to receive(:fetch) do |ref|
+        raise PspAdapter::Unavailable, "gone" unless ref == fresh.psp_reference
+
+        PspAdapter::Result.new(status: PspAdapter::Result::Status::Authorized, psp_reference: ref,
+                               psp_charge_id: "ch_1", decline_code: nil, psp_timestamp: Time.current)
+      end
+
+      described_class.perform_now
+
+      expect(fresh.reload.state).to eq("authorized")
+      expect(adapter).to have_received(:fetch).exactly(4).times
+      # the other half of the batch went to the most overdue of the backlog
+      expect(adapter).to have_received(:fetch).with(backlog.first.psp_reference)
+    end
+
+    it "pushes a failed poll's next check out by its backoff, so the next sweep does not repeat it" do
+      payment = stuck("unknown", age: 5.minutes)
+      adapter.script(:fetch, PspAdapter::Unavailable)
+
+      described_class.perform_now
+      payment.reload
+      expect(payment.check_attempts).to eq(1)
+      expect(payment.next_check_at).to be_within(15.seconds).of(1.minute.from_now)
+
+      expect { described_class.perform_now }.not_to raise_error # nothing due: no scripted answer consumed
+      expect(adapter.calls[:fetch].size).to eq(1)
+
+      travel 2.minutes do
+        adapter.script(:fetch, result(payment, :authorized))
+        described_class.perform_now
+      end
+      expect(payment.reload.state).to eq("authorized")
+    end
+
+    it "starts the backoff over when the payment changes state" do
+      payment = create(:payment)
+      payment.update_columns(check_attempts: 7, next_check_at: 1.hour.from_now)
+
+      payment.transition!(:unknown, sort_key: payment.created_at + 0.001, source: "worker")
+
+      expect(payment.reload).to have_attributes(check_attempts: 0, next_check_at: nil)
+    end
+
+    it "lets an operator poll one payment now, whatever its backoff (RUNBOOK §4)" do
+      payment = stuck("unknown", age: 5.minutes)
+      payment.update_columns(next_check_at: 20.minutes.from_now, check_attempts: 5)
+      adapter.script(:fetch, result(payment, :authorized))
+
+      described_class.poll_now(payment)
+
+      expect(payment.reload.state).to eq("authorized")
+    end
+
+    it "backs off exponentially with jitter and caps at 30 minutes" do
+      delays = (0..12).map { |n| described_class.check_delay(n) }
+      expect(delays.first).to be_between(48, 72)
+      expect(delays[4]).to be_between(16 * 60 * 0.8, 16 * 60 * 1.2)
+      expect(delays.last(6)).to all(be_between(30 * 60 * 0.8, 30 * 60 * 1.2))
+    end
+  end
+
   it "re-drives pending refunds and orphan webhooks, and expires idempotency keys" do
     payment = create(:payment)
     refund = create(:refund, payment: payment)

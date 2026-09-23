@@ -28,7 +28,7 @@ Read the last row's `metadata`. It usually tells you the story: `"error":"... Re
 
 | You see | Situation | Go to |
 |---|---|---|
-| `state=unknown`, sweeper log lines `resolve_unknown.timeout` every minute | **PSP is unreachable** — we keep asking, it keeps not answering | §3 |
+| `state=unknown`, sweeper log lines `resolve_unknown.timeout`, further apart each time | **PSP is unreachable** — we keep asking, it keeps not answering | §3 |
 | `state=unknown`, sweeper lines `sweeper.skip` with `Rejected` | **Our bug** — the PSP answers, we cannot interpret it | §5 |
 | `state=pending`, no `authorize` log line at all | **Job never ran** — Sidekiq down or queue backed up | §6 |
 | `state=pending` or `unknown` but the PSP simulator/dashboard shows the charge `captured` | **Webhook lost** and the sweeper has not caught up yet | §4 |
@@ -41,7 +41,7 @@ curl -s localhost:4002/healthz   # kiripay
 docker compose ps
 ```
 
-If the PSP is down: **there is nothing to do to the payment.** It is in a safe state — the customer is not being charged twice, the merchant knows it is `pending`/`unknown` via `GET /v1/payments/:id` and the outbound event stream. The sweeper polls every minute and will resolve it the moment the PSP answers. Silence the page for the PSP outage, not the payment.
+If the PSP is down: **there is nothing to do to the payment.** It is in a safe state — the customer is not being charged twice, the merchant knows it is `pending`/`unknown` via `GET /v1/payments/:id` and the outbound event stream. The sweeper keeps polling with backoff (1, 2, 4, 8, 16, then every 30 minutes — DECISIONS #13) and resolves it on the first poll after the PSP answers. When the PSP comes back, don't wait for the backoff: poll the affected payments now with the command in §4. Silence the page for the PSP outage, not the payment.
 
 If the PSP is *up* and we still time out, check `NORDPAY_URL` / `KIRIPAY_URL` in the worker's environment, then go to §5.
 
@@ -56,9 +56,9 @@ curl -s localhost:4001/charges/<PSP_REFERENCE> -H 'Authorization: Bearer np_test
 curl -s 'localhost:4002/charges?merchant_reference=<PSP_REFERENCE>' -H 'Authorization: Bearer kp_test_key'
 ```
 
-- **Charge exists and is `authorized`/`captured`/`declined`:** run the sweeper by hand — it applies exactly what the PSP says, with the PSP's timestamp, and books the ledger through the same code path as the worker:
+- **Charge exists and is `authorized`/`captured`/`declined`:** poll it now — this applies exactly what the PSP says, with the PSP's timestamp, and books the ledger through the same code path as the worker. (Running the whole sweeper would not do: it only polls payments whose backoff has elapsed.)
   ```bash
-  bin/rails runner 'StuckPaymentSweeperJob.perform_now'
+  bin/rails runner 'StuckPaymentSweeperJob.poll_now(Payment.find("<PAYMENT_ID>"))'
   ```
   Re-read the transitions (§1). It should now be resolved. If it is still stuck, go to §5.
 - **404 — the PSP has never seen it:** the request never landed. The sweeper will re-send **with the same `psp_reference`** on its next pass (this is the only re-send in the system, and only after a confirmed 404). Let it.

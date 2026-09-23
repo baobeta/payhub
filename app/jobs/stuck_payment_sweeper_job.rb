@@ -9,6 +9,14 @@
 # refunds left pending by a timeout, and re-enqueues inbound webhooks that
 # arrived before their payment row existed.
 #
+# Scheduling (DECISIONS #13): each payment carries next_check_at. A sweep
+# claims due rows with FOR UPDATE SKIP LOCKED and pushes their next check out
+# by an exponential backoff BEFORE polling, so a poll that fails cannot keep
+# a payment at the head of the queue. Half the batch is the longest-overdue
+# (nothing waits forever); half is the least-polled, most recently due (a
+# payment that just went unknown is polled within a minute, whatever backlog
+# is ahead of it).
+#
 # Locking (DECISIONS #7): the PSP call happens with NO row lock held.
 # transition! locks only for the write; if another writer resolved the
 # payment meanwhile, ApplyPspResult's already-there tolerance absorbs it.
@@ -24,6 +32,21 @@ class StuckPaymentSweeperJob < ApplicationJob
   STUCK_AFTER = T.let(2.minutes, ActiveSupport::Duration)
   ALERT_AFTER = T.let(15.minutes, ActiveSupport::Duration) # "any payment stuck in pending or unknown for more than 15 minutes"
   BATCH = 200
+  BACKOFF_BASE = T.let(1.minute, ActiveSupport::Duration)
+  BACKOFF_CAP = T.let(30.minutes, ActiveSupport::Duration)
+
+  # 1, 2, 4, 8, 16, then every 30 minutes, with ±20% jitter so a batch that
+  # failed together (a PSP outage) does not come back together.
+  sig { params(attempts: Integer).returns(Float) }
+  def self.check_delay(attempts)
+    [BACKOFF_BASE.to_f * (2**[attempts, 10].min), BACKOFF_CAP.to_f].min * rand(0.8..1.2)
+  end
+
+  # Operator entry point (RUNBOOK §4): poll one payment now, whatever its backoff.
+  sig { params(payment: Payment).void }
+  def self.poll_now(payment)
+    new.send(:resolve, payment)
+  end
 
   sig { void }
   def perform
@@ -37,10 +60,9 @@ class StuckPaymentSweeperJob < ApplicationJob
 
   sig { void }
   def sweep_payments
-    stuck = Payment.stuck(older_than: STUCK_AFTER.ago).order(:updated_at).limit(BATCH).to_a
     Metrics.gauge(:unknown_state_payments, Payment.where(state: "unknown").count)
 
-    stuck.each do |payment|
+    claim_due(Time.current).each do |payment|
       age = Time.current - payment.updated_at
       if age > ALERT_AFTER
         # The one alert that would actually page someone.
@@ -49,6 +71,24 @@ class StuckPaymentSweeperJob < ApplicationJob
         Metrics.increment(:stuck_payment_alerts, psp: payment.psp_name, state: payment.state)
       end
       resolve(payment)
+    end
+  end
+
+  # Claims up to BATCH due payments and reschedules each before any PSP call.
+  # The lock is held only for this short transaction, never across HTTP.
+  sig { params(now: ActiveSupport::TimeWithZone).returns(T::Array[Payment]) }
+  def claim_due(now)
+    Payment.transaction do
+      due = Payment.due_for_check(now).lock("FOR UPDATE SKIP LOCKED")
+      overdue = due.order(Arel.sql("#{Payment::DUE_AT_SQL} ASC")).limit(BATCH / 2).to_a
+      fresh = due.where.not(id: overdue.map(&:id))
+                 .order(:check_attempts, Arel.sql("#{Payment::DUE_AT_SQL} DESC"))
+                 .limit(BATCH - overdue.size).to_a
+
+      (overdue + fresh).each do |payment|
+        payment.update_columns(next_check_at: now + self.class.check_delay(payment.check_attempts),
+                               check_attempts: payment.check_attempts + 1)
+      end
     end
   end
 

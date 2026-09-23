@@ -21,6 +21,15 @@ class Payment < ApplicationRecord
     where(state: PaymentStateMachine::STUCK_CANDIDATES).where(updated_at: ..older_than)
   }
 
+  # When the sweeper should next poll a stuck candidate: its scheduled check,
+  # or two minutes after its last state change if it has never been polled.
+  # Must match the expression index in AddNextCheckAtToPayments (DECISIONS #13).
+  DUE_AT_SQL = "COALESCE(next_check_at, updated_at + interval '2 minutes')"
+
+  scope :due_for_check, ->(now) {
+    where(state: PaymentStateMachine::STUCK_CANDIDATES).where("#{DUE_AT_SQL} <= ?", now)
+  }
+
   # The psp_reference is OURS and exists before any network call, so a timed-out
   # charge can always be looked up (DECISIONS #2).
   def self.generate_psp_reference = "ph_#{SecureRandom.hex(12)}"
@@ -65,6 +74,10 @@ class Payment < ApplicationRecord
       )
       # write_attribute + save! so lock_version bumps and validations run
       write_attribute(:state, to_state)
+      # A new state is a new question for the PSP: the sweeper's backoff
+      # starts over (DECISIONS #13).
+      self.next_check_at = nil
+      self.check_attempts = 0
       save!
 
       # Transactional outbox: the merchant-facing event is written in the SAME

@@ -247,6 +247,8 @@ CREATE TABLE public.payments (
     lock_version integer DEFAULT 0 NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
+    next_check_at timestamp(6) without time zone,
+    check_attempts integer DEFAULT 0 NOT NULL,
     CONSTRAINT chk_payments_amount_positive CHECK ((amount_minor > 0)),
     CONSTRAINT chk_payments_captured_non_negative CHECK ((captured_minor >= 0)),
     CONSTRAINT chk_payments_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'requires_action'::character varying, 'authorized'::character varying, 'unknown'::character varying, 'captured'::character varying, 'canceled'::character varying, 'failed'::character varying, 'part_refunded'::character varying, 'refunded'::character varying])::text[])))
@@ -534,6 +536,13 @@ CREATE INDEX index_outbound_events_on_payment_id ON public.outbound_events USING
 
 
 --
+-- Name: index_payments_on_sweeper_due_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_payments_on_sweeper_due_at ON public.payments USING btree (COALESCE(next_check_at, (updated_at + '00:02:00'::interval))) WHERE ((state)::text = ANY ((ARRAY['pending'::character varying, 'unknown'::character varying])::text[]));
+
+
+--
 -- Name: index_refunds_on_payment_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -642,6 +651,7 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260924000001'),
 ('20260922000010'),
 ('20260922000009'),
 ('20260922000008'),
