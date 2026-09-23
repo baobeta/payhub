@@ -23,7 +23,7 @@ class ChaosRun
     "webhook_late_rate" => 0.1, "webhook_never_rate" => 0.1, "webhook_bad_signature_rate" => 0.1
   }.freeze
   COPIES = 3             # each Idempotency-Key is sent this many times, concurrently
-  SETTLE_TIMEOUT = 180   # seconds; unknowns wait for the one-minute sweeper
+  SETTLE_TIMEOUT = 300   # seconds; an unknown is first polled 2 min after it appears, by a once-a-minute sweeper
   UNSETTLED = %w[pending unknown requires_action].freeze
 
   def initialize(payments:)

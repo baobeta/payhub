@@ -53,3 +53,30 @@ jobs:
       # Same gate as `bin/check` locally: zeitwerk, rubocop, sorbet, rspec, brakeman.
       - name: Quality gate
         run: bin/check
+
+  # The one rule, end to end: the real compose stack, a hostile PSP simulator,
+  # and bin/rails chaos:run checking the ledger against the simulator's own
+  # records and settlement report. Slower than the unit gate, so it runs after it.
+  chaos:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start the stack
+        run: docker compose up -d --build --wait
+
+      - name: Prepare database
+        run: docker compose exec -T web bin/rails db:prepare
+
+      - name: Wait for the API
+        run: timeout 120 bash -c 'until curl -sf localhost:3000/healthz >/dev/null; do sleep 2; done'
+
+      - name: Chaos run
+        run: docker compose exec -T web bin/rails "chaos:run[30]"
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs --tail=300 web worker nordpay
