@@ -79,12 +79,42 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
 
     expect(request_line).to be_present
     expect(job_line).to be_present
+    # The log line points at the job's own span, not the request's.
+    job_span = SPAN_EXPORTER.finished_spans.find { |s| s.kind == :consumer && s.attributes["code.namespace"] == "AuthorizePaymentJob" }
     expect(job_line).to include("payment_id" => Payment.last.id, "merchant_id" => merchant.id, "psp_name" => "nordpay",
                                 "trace_id" => a_string_matching(/\A[0-9a-f]{32}\z/),
-                                "span_id" => a_string_matching(/\A[0-9a-f]{16}\z/))
+                                "span_id" => job_span.hex_span_id)
     expect(job_line["duration_ms"]).to be_a(Numeric)
     # The join: grep on either id finds both lines.
     expect(job_line["request_id"]).to eq(request_line["request_id"])
     expect(job_line["trace_id"]).to eq(request_line["trace_id"])
+  end
+
+  it "puts request, enqueue, job, and in-job spans in one trace" do
+    allow(PspRouter).to receive(:adapter).and_return(FakePspAdapter.new.tap { |a| a.script(:authorize, -> { raise "unused" }) })
+    post "/v1/payments", params: { amount_minor: 2500, currency: "EUR", payment_method_token: "tok" }.to_json,
+                         headers: auth_headers(key)
+    payment = Payment.last
+    PspRouter.adapter("nordpay").instance_variable_get(:@scripts)[:authorize] = [
+      PspAdapter::Result.new(status: PspAdapter::Result::Status::Authorized, psp_reference: payment.psp_reference,
+                             psp_charge_id: "ch", decline_code: nil, psp_timestamp: payment.created_at + 1)
+    ]
+    perform_enqueued_jobs
+
+    spans = SPAN_EXPORTER.finished_spans
+    request_span = spans.find { |s| s.kind == :server }
+    job_span = spans.find { |s| s.kind == :consumer && s.attributes["code.namespace"] == "AuthorizePaymentJob" }
+    expect(request_span).to be_present, "no server span in: #{spans.map(&:name)}"
+    expect(job_span).to be_present, "no job span in: #{spans.map(&:name)}"
+
+    # Same trace, and the job span hangs off an enqueue-time span rather than starting a new root.
+    expect(job_span.hex_trace_id).to eq(request_span.hex_trace_id)
+    by_id = spans.index_by(&:hex_span_id)
+    expect(by_id[job_span.hex_parent_span_id]).to be_present
+
+    # Work done inside the job (e.g. DB queries) nests under the job span.
+    children = spans.select { |s| s.hex_parent_span_id == job_span.hex_span_id }
+    expect(children).not_to be_empty
+    expect(children.map(&:hex_trace_id).uniq).to eq([request_span.hex_trace_id])
   end
 end

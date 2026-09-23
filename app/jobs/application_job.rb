@@ -12,44 +12,39 @@ class ApplicationJob < ActiveJob::Base
 
   # One JSON line per job, with the same keys as request lines so that
   # `grep '"payment_id":"<id>"'` spans web and worker (see lograge.rb).
+  # Trace context arrives via the ActiveJob instrumentation (see opentelemetry.rb),
+  # so the current span here is the job's own span in the request's trace.
   around_perform do |job, block|
-    carrier = { "traceparent" => job.enqueued_traceparent }.compact
-    Tracing.with_context(carrier) do
-      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      ctx = job.log_context
-      error = nil
-      begin
-        block.call
-      rescue StandardError => e
-        error = "#{e.class}: #{e.message}"[0, 300]
-        raise
-      ensure
-        trace_ids = Tracing.ids
-        Rails.logger.info({
-          time: Time.current.utc.iso8601(3), kind: "job", job: job.class.name, job_id: job.job_id,
-          request_id: job.enqueued_request_id, queue: job.queue_name, attempt: job.executions,
-          trace_id: trace_ids[:trace_id], span_id: trace_ids[:span_id],
-          duration_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round(1),
-          error: error
-        }.merge(ctx).compact.to_json)
-      end
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    ctx = job.log_context
+    error = nil
+    begin
+      block.call
+    rescue StandardError => e
+      error = "#{e.class}: #{e.message}"[0, 300]
+      raise
+    ensure
+      trace_ids = Tracing.ids
+      Rails.logger.info({
+        time: Time.current.utc.iso8601(3), kind: "job", job: job.class.name, job_id: job.job_id,
+        request_id: job.enqueued_request_id, queue: job.queue_name, attempt: job.executions,
+        trace_id: trace_ids[:trace_id], span_id: trace_ids[:span_id],
+        duration_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round(1),
+        error: error
+      }.merge(ctx).compact.to_json)
     end
   end
 
   # Carry the originating request's id into the job so the two log lines join.
-  attr_accessor :enqueued_request_id, :enqueued_traceparent
+  attr_accessor :enqueued_request_id
 
   def serialize
-    super.merge(
-      "enqueued_request_id" => enqueued_request_id || Current.request_id,
-      "enqueued_traceparent" => enqueued_traceparent || Current.traceparent
-    )
+    super.merge("enqueued_request_id" => enqueued_request_id || Current.request_id)
   end
 
   def deserialize(job_data)
     super
     self.enqueued_request_id = job_data["enqueued_request_id"]
-    self.enqueued_traceparent = job_data["enqueued_traceparent"]
   end
 
   # Best effort: find the payment / merchant / psp this job is about from its

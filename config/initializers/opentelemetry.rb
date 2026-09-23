@@ -11,5 +11,10 @@ ENV["OTEL_TRACES_EXPORTER"] ||= otlp_endpoint_configured ? "otlp" : "none"
 
 OpenTelemetry::SDK.configure do |c|
   c.service_name = ENV.fetch("OTEL_SERVICE_NAME", "payhub")
-  c.use_all
+  # Jobs continue the enqueuing request's trace (the default :link starts a new
+  # root per job), so request -> enqueue -> job -> PSP call reads as one trace.
+  c.use_all(
+    "OpenTelemetry::Instrumentation::ActiveJob" => { propagation_style: :child },
+    "OpenTelemetry::Instrumentation::Sidekiq" => { propagation_style: :child }
+  )
 end

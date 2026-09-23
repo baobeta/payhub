@@ -5,10 +5,14 @@
 module OpenTelemetry
   module SDK
     def self.configure; end
-  end
 
-  module Context
-    def self.with_current(context); end
+    # Used by spec/support/span_capture.rb to assert on trace shape.
+    module Trace
+      module Export
+        class InMemorySpanExporter; end
+        class SimpleSpanProcessor; end
+      end
+    end
   end
 
   module Trace; end

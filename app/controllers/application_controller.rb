@@ -6,9 +6,7 @@ class ApplicationController < ActionController::API
 
   before_action do
     T.bind(self, ApplicationController)
-    Current.request_id = request.request_id
-    Current.traceparent = Tracing.inject_context["traceparent"]
-  end
+    Current.request_id = request.request_id  end
 
   private
 
