@@ -69,6 +69,9 @@ services:
       - "4001:4001"
     environment:
       NORDPAY_API_KEY: np_test_key
+      # Where the simulator POSTs its webhooks. Inside compose: the web service.
+      # For a locally-run Rails (bin/rails s), override to http://host.docker.internal:3000/v1/webhooks/nordpay
+      PAYHUB_WEBHOOK_URL: ${NORDPAY_WEBHOOK_URL:-http://web:3000/v1/webhooks/nordpay}
     healthcheck:
       test: ["CMD-SHELL", "ruby -rnet/http -e 'exit Net::HTTP.get_response(URI(\"http://localhost:4001/healthz\")).code == \"200\" ? 0 : 1'"]
       interval: 5s
