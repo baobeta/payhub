@@ -17,7 +17,7 @@ A payment orchestration API. Merchants integrate once; PayHub routes each paymen
 - **Idempotency decided by a unique index**, not a `SELECT`: three concurrent copies of one request make exactly one payment.
 - **An append-only double-entry ledger** — a trigger rejects `UPDATE`/`DELETE`; every balance is a `SUM` over rows.
 - **Two hostile PSP simulators** that time out, 500, duplicate responses and send webhooks late, twice, out of order, badly signed or never.
-- **[`bin/rails chaos:run`](#chaos-run-the-one-rule-live)** turns them up and checks the ledger against the PSP's own records.
+- **[`bin/rails chaos:run`](#chaos-run-the-one-rule-live)** turns them up and checks the ledger against the PSP's own records; a **seeded deterministic simulation** does the same in-process, replayably, and found two bugs the specs had missed.
 - **Settlement-file reconciliation**: the PSP's daily payout report is matched line by line to the ledger — fees booked, receivables cleared, and anything the PSP paid that we never booked flagged.
 - **Keyset pagination proven at 1M rows**, OpenTelemetry traces across HTTP → Sidekiq → PSP, Sorbet-typed adapters.
 
@@ -195,6 +195,7 @@ It exits non-zero on any violation and restores the simulator's config afterward
 - **Request specs for every endpoint**, including the unhappy paths.
 - **Job specs that call `perform` twice** and assert the ledger is unchanged (`capture_payment_job_spec`, `refund_payment_job_spec`).
 - **Real-thread concurrency tests** with real connections and no transactional fixture: N identical idempotency keys (one wins), N simultaneous refunds on one capture (one wins), three outbox sweepers over one queue (no double-send).
+- **A deterministic simulation** (`spec/simulation`, DECISIONS #19): one seed drives PSP faults, job order and duplication, webhook loss and reordering, merchant actions and a virtual clock; invariants after every step, and books equal to the PSP's truth once it settles. A failure prints its seed and replays exactly. Its first runs found two real bugs (#11's refinement, #20).
 - **A property test**: 25 random capture/refund sequences against a PSP that always says yes — the ledger stays balanced, `refunded ≤ captured ≤ authorized`, balance = captured − refunded.
 - **The state-machine spec parses the Mermaid diagram in this README** and fails if code and diagram drift beyond the one declared extra edge.
 - **A PAN never reaches the log**, proven by capturing everything Rails logs during a request that carries one.
