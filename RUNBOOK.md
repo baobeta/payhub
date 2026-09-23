@@ -108,6 +108,13 @@ WHERE e.payment_id = '<PAYMENT_ID>' ORDER BY e.created_at;
 - If you used `source: "operator"`: it is in the history forever, with your reason. Reconciliation at 02:15 will compare it against the PSP and flag any disagreement as `reconciliation.psp_drift`.
 - If a webhook was never sent by the PSP: the sweeper caught it; consider raising the PSP's webhook reliability with them, with the `inbound_events` gap as evidence.
 
+## Rotating a webhook secret (not a page — planned work)
+
+Every verifier accepts a list of secrets, so no step below drops a webhook (DECISIONS #15).
+
+- **A PSP's secret (inbound).** Set `NORDPAY_WEBHOOK_SECRETS=<new>,<old>` (or `KIRIPAY_…`) on web and restart; the single-secret variable is ignored while the list is set. Switch the secret in the PSP's dashboard. Once `inbound_events` shows no `signature_valid=false` rows for an hour, set the list to `<new>` alone.
+- **A merchant's secret (outbound).** `bin/rails "merchants:rotate_webhook_secret[<MERCHANT_ID>]"` prints the new secret once. For 24 hours every webhook carries two `v1=` signatures, new and old, so the merchant can deploy the new secret whenever suits them in that window.
+
 ## Quick reference
 
 | Question | Where |

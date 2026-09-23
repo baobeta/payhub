@@ -92,4 +92,26 @@ RSpec.describe NordpayAdapter do
     expect(adapter.supports_partial_refund?).to be true
     expect(adapter.separate_authorize_and_capture?).to be true
   end
+
+  describe "#verify_webhook" do
+    let(:body) { { "id" => "evt_1", "type" => "charge.captured", "created_at" => "2026-01-01T10:01:00.000Z", "data" => charge.merge("status" => "captured") }.to_json }
+
+    def signed(secret) = { "X-Nordpay-Signature" => OpenSSL::HMAC.hexdigest("SHA256", secret, body) }
+
+    it "accepts a body signed with the configured secret and normalises it" do
+      event = adapter.verify_webhook(body, signed("np_whsec_test"))
+      expect(event).to have_attributes(external_id: "evt_1", status: PspAdapter::Result::Status::Captured)
+    end
+
+    it "rejects a wrong secret and a missing header" do
+      expect { adapter.verify_webhook(body, signed("wrong")) }.to raise_error(PspAdapter::InvalidSignature, /mismatch/)
+      expect { adapter.verify_webhook(body, {}) }.to raise_error(PspAdapter::InvalidSignature, /missing/)
+    end
+
+    it "accepts both secrets while rotating (DECISIONS #15)" do
+      rotating = described_class.new(base_url: "http://nordpay.test", api_key: "np_test_key", webhook_secrets: %w[np_new np_whsec_test])
+      expect(rotating.verify_webhook(body, signed("np_whsec_test")).external_id).to eq("evt_1")
+      expect(rotating.verify_webhook(body, signed("np_new")).external_id).to eq("evt_1")
+    end
+  end
 end

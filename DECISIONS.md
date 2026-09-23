@@ -132,3 +132,15 @@ Rescheduling before the call means neither a failed poll nor a crash mid-batch c
 Voiding the moment `unknown → authorized` lands would be wrong the other way: most late resolutions are minutes old and the merchant still wants the money; PayHub has no signal that an order was abandoned, so idle time is the honest proxy. Measuring from creation instead of activity would race a merchant who captures on day 6: their `202` would be followed by a void before the capture job ran, and the job would silently skip a canceled payment. Touching the row on capture closes that race without a new column.
 
 **Not handled:** the uncaptured remainder of a *partial* capture stays held at the PSP until the network releases it; PayHub moves to `captured` and has no state for "part-held". Recorded here rather than papered over.
+
+## 15. Every webhook verifier takes a list of secrets
+
+**Decision:** Signing and verifying live in one module, `WebhookSignature`, and every verifier accepts a *list* of secrets. Inbound, each adapter reads `NORDPAY_WEBHOOK_SECRETS` / `KIRIPAY_WEBHOOK_SECRETS` (`new,old`), falling back to the single-secret variable. Outbound, a merchant keeps its previous secret for 24 hours after `rotate_webhook_secret!`, and each delivery carries one `v1=` per active secret. Kiripay and PayHub-to-merchant signatures sign `t.body` and are rejected outside a 5-minute window; Nordpay's are body-only, and stay that way.
+
+**Rejected:** one secret per side (what we had); adding a timestamp to Nordpay's signature; per-event secret versioning.
+
+**Reason:** With one secret, rotation is a flag day: the sender and receiver must switch in the same instant or webhooks fail verification — and failed PSP webhooks don't just bounce, they leave payments for the sweeper and page someone. Accepting several secrets for a while turns rotation into two independent, reversible steps. This is Stripe's scheme: during a roll it signs with both secrets and puts a `v1` per secret in one header ([Stripe: webhooks](https://docs.stripe.com/webhooks)). Rotation is what you do after a leak, so it has to be cheap enough to do the same day.
+
+Every candidate pair is compared with `secure_compare` and no early exit, so timing shows neither which secret matched nor how close a forgery came.
+
+We do not "fix" Nordpay by signing a timestamp: its signature scheme is the PSP's wire format, and a real PSP doesn't change it because we'd like it to. A replay there is stopped by the unique index on the PSP's event id (#4) — a replayed event is a duplicate — and a forged new event needs the secret. The timestamp window matters where we control the format: Kiripay's, and our own to merchants, where it stops a captured delivery being replayed later.

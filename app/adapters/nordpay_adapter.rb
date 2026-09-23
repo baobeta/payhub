@@ -12,11 +12,12 @@ class NordpayAdapter < PspAdapter
   OPEN_TIMEOUT = 1
   READ_TIMEOUT = 3
 
-  sig { params(base_url: String, api_key: String, webhook_secret: String).void }
+  # webhook_secrets: current first; more than one only while rotating (#15).
+  sig { params(base_url: String, api_key: String, webhook_secrets: T::Array[String]).void }
   def initialize(base_url: ENV.fetch("NORDPAY_URL", "http://localhost:4001"),
                  api_key: ENV.fetch("NORDPAY_API_KEY", "np_test_key"),
-                 webhook_secret: ENV.fetch("NORDPAY_WEBHOOK_SECRET", "np_whsec_test"))
-    @webhook_secret = webhook_secret
+                 webhook_secrets: WebhookSignature.secrets_from_env("NORDPAY_WEBHOOK_SECRETS", "NORDPAY_WEBHOOK_SECRET", "np_whsec_test"))
+    @webhook_secrets = webhook_secrets
     @conn = T.let(
       Faraday.new(url: base_url) do |f|
         f.request :json
@@ -101,17 +102,15 @@ class NordpayAdapter < PspAdapter
     to_refund_result(T.cast(response.body, T::Hash[String, T.untyped]))
   end
 
-  # Signature: X-Nordpay-Signature: <hex HMAC-SHA256 of the raw body>.
+  # Signature: X-Nordpay-Signature: <hex HMAC-SHA256 of the raw body>. Nordpay
+  # signs no timestamp; that is its wire format, and we don't invent one (#15).
   # Events: { id, type: charge.authorized|charge.captured|charge.declined, created_at, data: <charge> }
   sig { override.params(raw_body: String, headers: T::Hash[String, String]).returns(WebhookEvent) }
   def verify_webhook(raw_body, headers)
-    given = headers["X-Nordpay-Signature"].to_s
-    raise InvalidSignature, "missing signature" if given.empty?
-
-    expected = OpenSSL::HMAC.hexdigest("SHA256", @webhook_secret, raw_body)
-    raise InvalidSignature, "signature mismatch" unless ActiveSupport::SecurityUtils.secure_compare(expected, given)
-
+    WebhookSignature.verify_body!(raw_body, headers["X-Nordpay-Signature"].to_s, secrets: @webhook_secrets)
     parse_webhook(JSON.parse(raw_body))
+  rescue WebhookSignature::Invalid => e
+    raise InvalidSignature, e.message
   rescue JSON::ParserError => e
     raise MalformedWebhook, e.message
   end

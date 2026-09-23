@@ -1,7 +1,7 @@
 require "rails_helper"
 
 RSpec.describe KiripayAdapter do
-  subject(:adapter) { described_class.new(base_url: "http://kiripay.test", api_key: "kp_test_key", webhook_secret: "whsec") }
+  subject(:adapter) { described_class.new(base_url: "http://kiripay.test", api_key: "kp_test_key", webhook_secrets: ["whsec"]) }
 
   let(:payment) { create(:payment, :vnd, psp_reference: "ph_vnd1") }
   let(:charge) do
@@ -94,6 +94,12 @@ RSpec.describe KiripayAdapter do
       expect { adapter.verify_webhook(body, {}) }.to raise_error(PspAdapter::InvalidSignature, /missing/)
       expect { adapter.verify_webhook(body, { "X-Kiripay-Signature" => signature("whsec", 1.hour.ago.to_i) }) }
         .to raise_error(PspAdapter::InvalidSignature, /too old/)
+    end
+
+    it "accepts the previous secret while rotating (DECISIONS #15)" do
+      rotating = described_class.new(base_url: "http://kiripay.test", api_key: "kp_test_key", webhook_secrets: %w[new_secret whsec])
+      expect(rotating.verify_webhook(body, { "X-Kiripay-Signature" => signature("whsec") }).external_id).to eq("evt_1")
+      expect(rotating.verify_webhook(body, { "X-Kiripay-Signature" => signature("new_secret") }).external_id).to eq("evt_1")
     end
 
     it "uses a constant-time comparison" do

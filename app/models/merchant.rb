@@ -38,4 +38,22 @@ class Merchant < ApplicationRecord
   end
 
   def self.digest(raw) = Digest::SHA256.hexdigest(raw)
+
+  ROTATION_GRACE = 24.hours
+
+  # Every secret an outbound webhook is signed with right now: the current
+  # one, plus the previous one while its grace period lasts (DECISIONS #15).
+  def webhook_signing_secrets
+    previous = previous_webhook_secret if previous_webhook_secret_expires_at&.future?
+    [webhook_secret, previous].compact
+  end
+
+  # Returns the new secret — shown once, like the API key. The old one keeps
+  # signing for `grace`, so the merchant can deploy the new one at leisure.
+  def rotate_webhook_secret!(grace: ROTATION_GRACE)
+    fresh = SecureRandom.hex(32)
+    update!(previous_webhook_secret: webhook_secret, previous_webhook_secret_expires_at: grace.from_now,
+            webhook_secret: fresh)
+    fresh
+  end
 end

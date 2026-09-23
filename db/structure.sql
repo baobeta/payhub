@@ -169,7 +169,9 @@ CREATE TABLE public.merchants (
     webhook_url character varying,
     default_currency character varying(3) NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
-    updated_at timestamp(6) without time zone NOT NULL
+    updated_at timestamp(6) without time zone NOT NULL,
+    previous_webhook_secret character varying,
+    previous_webhook_secret_expires_at timestamp(6) without time zone
 );
 
 
@@ -651,6 +653,7 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260924000002'),
 ('20260924000001'),
 ('20260922000010'),
 ('20260922000009'),
