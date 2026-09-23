@@ -4,7 +4,8 @@
 # Send a pending refund to the PSP and book the outcome.
 #
 # Idempotent: a refund row moves pending → succeeded|failed exactly once, and
-# its ledger legs are written in the same transaction as that move. A re-run
+# its reservation is posted or voided in the same transaction as that move
+# (DECISIONS #16). The unique refund-leg index refuses a second settlement. A re-run
 # finds the row no longer pending and stops before touching the PSP.
 class RefundPaymentJob < ApplicationJob
   extend T::Sig
@@ -48,7 +49,7 @@ class RefundPaymentJob < ApplicationJob
         next unless refund.state == "pending" # a concurrent run got here first
 
         Refund.transaction do
-          Ledger.record_refund!(refund)
+          Ledger.post_refund!(refund)
           refund.update!(state: "succeeded")
           to = Ledger.refunded_minor(payment) >= Ledger.captured_minor(payment) ? :refunded : :part_refunded
           # captured → part_refunded → refunded, or captured → refunded. Both drawn.
@@ -58,15 +59,21 @@ class RefundPaymentJob < ApplicationJob
       end
 
     when PspAdapter::RefundResult::Status::Failed
-      Refund.transaction do
-        refund.update!(state: "failed")
-        OutboundEvent.emit!(payment, "refund.failed", "refund" => RefundSerializer.call(refund),
-                                                      "failure_code" => result.failure_code)
+      payment.with_lock do
+        refund.reload
+        next unless refund.state == "pending" # a concurrent run got here first
+
+        Refund.transaction do
+          Ledger.void_refund!(refund) # the reservation goes back to the merchant
+          refund.update!(state: "failed")
+          OutboundEvent.emit!(payment, "refund.failed", "refund" => RefundSerializer.call(refund),
+                                                        "failure_code" => result.failure_code)
+        end
       end
       Rails.logger.warn({ event: "refund.failed", refund_id: refund.id, code: result.failure_code }.to_json)
 
     when PspAdapter::RefundResult::Status::Pending, PspAdapter::RefundResult::Status::NotFound
-      # Not resolved yet. Leave the row pending; its reservation still holds.
+      # Not resolved yet. Leave the row pending; its ledger reservation still holds.
       nil
 
     else

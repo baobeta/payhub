@@ -122,13 +122,14 @@ class ChaosRun
     # Per payment: our books against the PSP's. Refunds are asked of the PSP
     # one by one, whatever state we think they are in.
     rows = all.map do |p|
-      { id: p.id, captured: Ledger.captured_minor(p), refunded: Ledger.refunded_minor(p),
+      { id: p.id, captured: Ledger.captured_minor(p), refunded: Ledger.refunded_minor(p), reserved: Ledger.reserved_minor(p),
         psp_captured: charges.dig(p.psp_reference, "captured_minor").to_i,
         psp_refunded: p.refunds.sum { |r| psp_refund(r) } }
     end
     per_payment("money taken by the PSP == money captured in our ledger", rows) { |r| r[:captured] == r[:psp_captured] }
     per_payment("refunded ≤ captured", rows) { |r| r[:refunded] <= r[:captured] }
     per_payment("money refunded by the PSP == refunds in our ledger", rows) { |r| r[:refunded] == r[:psp_refunded] }
+    per_payment("no refund reservation left once refunds settle", rows) { |r| r[:reserved].zero? }
     ours = LedgerEntry.where(payment: all).distinct.pluck(:transfer_id)
     check("every ledger transfer nets to zero (#{ours.size} transfers)", (Ledger.unbalanced_transfer_ids & ours).empty?)
 

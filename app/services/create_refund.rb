@@ -4,9 +4,10 @@
 # POST /v1/payments/:id/refunds — the synchronous half.
 #
 # THE over-refund guard (DECISIONS #6): lock the payment row FOR UPDATE, then
-# compute what is refundable from the LEDGER (captured − refunded) minus what
-# is already reserved by pending refunds, then insert the refund row. Two
-# concurrent requests serialize on the lock; the second sees the first's row.
+# compute what is refundable from the LEDGER — captured − refunded − reserved —
+# then insert the refund row AND its reservation transfer (DECISIONS #16).
+# Two concurrent requests serialize on the lock; the second sees the first's
+# reservation in the ledger.
 class CreateRefund
   extend T::Sig
 
@@ -22,7 +23,7 @@ class CreateRefund
 
       captured = Ledger.captured_minor(payment)
       refunded = Ledger.refunded_minor(payment)
-      reserved = payment.refunds.where(state: "pending").sum(:amount_minor).to_i
+      reserved = Ledger.reserved_minor(payment)
       refundable = captured - refunded - reserved
       amount = amount_minor || refundable
 
@@ -41,6 +42,7 @@ class CreateRefund
         payment: payment, amount_minor: amount, currency: payment.currency, reason: reason,
         psp_reference: Refund.generate_psp_reference # reserved BEFORE the PSP call, as for payments
       )
+      Ledger.reserve_refund!(refund)
     end
 
     RefundPaymentJob.perform_later(T.must(refund).id)

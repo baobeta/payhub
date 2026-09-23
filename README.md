@@ -78,7 +78,7 @@ Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16. Both PSP simulators are s
 4. Every `POST` carries an **Idempotency-Key**; the claim is an `INSERT` into a unique index, and the unique index — not a `SELECT` — decides who wins.
 5. Money is integer **minor units** next to an ISO-4217 code; `Currency` is the only place that knows VND has none. The FX rate is copied onto the payment at creation, never joined.
 6. The **ledger** is append-only double-entry: every movement is legs that sum to zero, a trigger rejects `UPDATE`/`DELETE`, and balances, captured and refunded totals are `SUM`s over rows.
-7. Refunds are guarded by `FOR UPDATE` on the payment plus `captured − refunded (ledger) − pending (reservations)`; two racing refunds serialize on the lock.
+7. Refunds are guarded by `FOR UPDATE` on the payment plus `captured − refunded − reserved`, all three ledger sums: a refund request writes a pending transfer that the PSP's answer later posts or voids; two racing refunds serialize on the lock.
 8. **Adapters** (`Nordpay`, `Kiripay`) satisfy one abstract, Sorbet-checked contract and declare what they support; the domain never branches on a PSP's name.
 9. Inbound **webhooks** are signature-verified with `secure_compare`, deduplicated by a unique index on the PSP's event id, and applied by PSP timestamp so out-of-order delivery cannot walk a payment backwards.
 10. Outbound events are a **transactional outbox** written in the same transaction as the state change; a minute-sweeper delivers them with backoff, and a second sweeper polls anything stuck and pages after 15 minutes.
@@ -181,7 +181,7 @@ waits for the sweepers to settle everything, and checks — against the **simula
 
 - N keys produced exactly N payments, and the PSP holds no charge that isn't one of our payments,
 - money the PSP captured == money captured in our ledger, per payment,
-- money the PSP refunded == refunds in our ledger, and refunded ≤ captured, per payment,
+- money the PSP refunded == refunds in our ledger, refunded ≤ captured, and no refund reservation left over, per payment,
 - every ledger transfer nets to zero.
 
 It exits non-zero on any violation and restores the simulator's config afterwards.

@@ -46,8 +46,8 @@ RSpec.describe Ledger do
   describe "sums" do
     it "derives captured, refunded and balance from rows" do
       described_class.record_capture!(payment, 2500)
-      refund = create(:refund, payment: payment, amount_minor: 500, state: "succeeded")
-      described_class.record_refund!(refund)
+      refund = create(:refund, payment: payment, amount_minor: 500) # reserves
+      described_class.post_refund!(refund)
 
       expect(described_class.captured_minor(payment)).to eq(2500)
       expect(described_class.refunded_minor(payment)).to eq(500)

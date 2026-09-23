@@ -154,6 +154,17 @@ RSpec.describe "V1 capture / cancel / refunds / balance", type: :request do
         { "currency" => "EUR", "amount_minor" => 2500, "display_amount" => "25.00" },
         { "currency" => "VND", "amount_minor" => 500_000, "display_amount" => "500000" }
       )
+      expect(json_body["pending"]).to eq([])
+    end
+
+    it "moves a requested refund from available to pending until the PSP confirms it" do
+      payment = captured_payment(2500)
+      post "/v1/payments/#{payment.id}/refunds", params: { amount_minor: 500 }.to_json, headers: auth_headers(key)
+
+      get "/v1/balance", headers: auth_headers(key)
+
+      expect(json_body["available"]).to eq([{ "currency" => "EUR", "amount_minor" => 2000, "display_amount" => "20.00" }])
+      expect(json_body["pending"]).to eq([{ "currency" => "EUR", "amount_minor" => 500, "display_amount" => "5.00" }])
     end
   end
 end

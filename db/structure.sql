@@ -134,7 +134,7 @@ CREATE TABLE public.ledger_accounts (
     kind character varying NOT NULL,
     currency character varying(3) NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_ledger_accounts_kind CHECK (((kind)::text = ANY ((ARRAY['psp_receivable'::character varying, 'merchant_payable'::character varying, 'refunds_paid'::character varying])::text[])))
+    CONSTRAINT chk_ledger_accounts_kind CHECK (((kind)::text = ANY ((ARRAY['psp_receivable'::character varying, 'merchant_payable'::character varying, 'refunds_reserved'::character varying, 'refunds_paid'::character varying])::text[])))
 );
 
 
@@ -454,6 +454,13 @@ CREATE INDEX idx_ledger_entries_balance ON public.ledger_entries USING btree (ac
 
 
 --
+-- Name: idx_ledger_entries_refund_leg; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_ledger_entries_refund_leg ON public.ledger_entries USING btree (refund_id, account_id, direction) WHERE (refund_id IS NOT NULL);
+
+
+--
 -- Name: idx_ledger_entries_transfer; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -653,6 +660,7 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260924000003'),
 ('20260924000002'),
 ('20260924000001'),
 ('20260922000010'),

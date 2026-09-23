@@ -52,7 +52,7 @@ Each entry: what we chose, what we rejected, and why. Ordered roughly by how muc
 
 **Reason:** Two concurrent refunds must be serialized, and the number they check must be true. The lock gives order; the ledger sum gives truth. Either alone is insufficient — the lock with a cached column checks a possibly stale number; the sum without a lock has a gap between check and write.
 
-**Refinement:** a refund's ledger legs are written only when the PSP confirms it, so between request and confirmation the money is *reserved*, not yet *refunded*. The guard therefore computes `refundable = captured − refunded (ledger) − pending (refunds table)`, all under the same lock. Without the reservation term, two €20 refunds on a €25 capture would both pass the check while the first is still in flight at the PSP. The real-threads test in `spec/services/create_refund_spec.rb` is the proof.
+**Refinement:** a refund's ledger legs are written only when the PSP confirms it, so between request and confirmation the money is *reserved*, not yet *refunded*. The guard therefore computes `refundable = captured − refunded (ledger) − pending (refunds table)`, all under the same lock. Without the reservation term, two €20 refunds on a €25 capture would both pass the check while the first is still in flight at the PSP. The real-threads test in `spec/services/create_refund_spec.rb` is the proof. *(The reservation now lives in the ledger rather than the refunds table — see #16.)*
 
 ## 7. Sweeper uses optimistic locking (`lock_version`) for stuck-payment recovery
 
@@ -144,3 +144,15 @@ Voiding the moment `unknown → authorized` lands would be wrong the other way: 
 Every candidate pair is compared with `secure_compare` and no early exit, so timing shows neither which secret matched nor how close a forgery came.
 
 We do not "fix" Nordpay by signing a timestamp: its signature scheme is the PSP's wire format, and a real PSP doesn't change it because we'd like it to. A replay there is stopped by the unique index on the PSP's event id (#4) — a replayed event is a duplicate — and a forged new event needs the secret. The timestamp window matters where we control the format: Kiripay's, and our own to merchants, where it stops a captured delivery being replayed later.
+
+## 16. Refund reservations are two-phase ledger transfers
+
+**Decision:** A refund request writes, in the same transaction as the refund row, a *reserve* transfer: debit `merchant_payable`, credit `refunds_reserved`. The PSP's answer settles it with a second transfer — *post* (debit `refunds_reserved`, credit `refunds_paid`) or *void* (debit `refunds_reserved`, credit `merchant_payable`). The guard's reservation term is now `Ledger.reserved_minor`, a ledger sum like the other two. A unique index on `(refund_id, account_id, direction)` makes a second post, or a post after a void, a database error. `GET /v1/balance` shows `pending` beside `available`. The migration backfills a reservation for every refund in flight at deploy.
+
+**Rejected:** keeping the reservation as `SUM(refunds.amount_minor) WHERE state = 'pending'` (what we had); a `status` column on ledger entries that flips pending → posted; reserving in Redis.
+
+**Reason:** #5 says balances come from the ledger and nothing else, but the refund guard had one term that didn't: pending refunds were counted from the refunds table. That worked, but it meant the money a merchant was actually owed at any moment existed nowhere as a balance — `GET /v1/balance` over-reported by every refund in flight, and reconciliation had no row to check a reservation against. Two-phase transfers are how purpose-built ledgers do it: TigerBeetle reserves with a pending transfer and settles with a second transfer that posts or voids it ([TigerBeetle: two-phase transfers](https://docs.tigerbeetle.com/coding/two-phase-transfers/)); Modern Treasury separates pending, posted and available balances ([Modern Treasury: balances](https://docs.moderntreasury.com/ledgers/docs/transaction-status-and-balances)).
+
+We settle with a new transfer rather than flipping a status column, because the ledger is append-only by trigger (#5) and must stay that way: every step is a row, so the history of a refund is readable from the books alone. The unique index is the ledger-level answer to "what if the job runs twice?" — the job already checks the refund's state under a lock, and now the database refuses the second settlement even if that check were wrong. Reconciliation adds one question it couldn't ask before: does every pending refund hold exactly its amount, and every settled one nothing?
+
+**Cost:** `available` now drops when a refund is *requested*, not when it succeeds, and comes back if the PSP refuses it. That is the honest number — the money is spoken for — and `pending` shows where it went.

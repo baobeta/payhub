@@ -52,6 +52,38 @@ RSpec.describe RefundPaymentJob do
     expect(refund.reload.state).to eq("failed")
     expect(Ledger.refunded_minor(payment)).to eq(0)
     expect(payment.reload.state).to eq("captured")
+    # the reservation is voided: the merchant's money is available again
+    expect(Ledger.reserved_minor(payment)).to eq(0)
+    expect(Ledger.balances(payment.merchant)).to eq("EUR" => 2500)
+  end
+
+  describe "two-phase settlement (DECISIONS #16)" do
+    it "holds the amount as reserved until the PSP answers, then posts it" do
+      refund = create(:refund, payment: payment, amount_minor: 500)
+      expect(Ledger.reserved_minor(payment)).to eq(500)
+      expect(Ledger.balances(payment.merchant)).to eq("EUR" => 2000)
+      expect(Ledger.reserved_balances(payment.merchant)).to eq("EUR" => 500)
+
+      adapter.script(:refund, outcome(:succeeded, refund.psp_reference))
+      described_class.perform_now(refund.id)
+
+      expect(reserved: Ledger.reserved_minor(payment), refunded: Ledger.refunded_minor(payment)).to eq(reserved: 0, refunded: 500)
+      expect(Ledger.balances(payment.merchant)).to eq("EUR" => 2000)
+      expect(Ledger.unbalanced_transfer_ids).to be_empty
+    end
+
+    it "is refused by the database if a refund is settled twice, or posted after a void" do
+      refund = create(:refund, payment: payment, amount_minor: 500)
+      Ledger.post_refund!(refund)
+
+      expect { Ledger.post_refund!(refund) }.to raise_error(ActiveRecord::RecordNotUnique)
+      expect { Ledger.void_refund!(refund) }.to raise_error(ActiveRecord::RecordNotUnique)
+    end
+
+    it "refuses to settle a refund that never reserved" do
+      refund = create(:refund, payment: payment, amount_minor: 500, state: "succeeded") # no reservation
+      expect { Ledger.post_refund!(refund) }.to raise_error(Ledger::NoReservation)
+    end
   end
 
   it "is idempotent: a second run finds the refund resolved and never calls the PSP (perform-twice test)" do
