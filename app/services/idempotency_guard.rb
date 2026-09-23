@@ -25,31 +25,40 @@ class IdempotencyGuard
     params(action: T.proc.returns([Integer, T::Hash[String, T.untyped]])).returns(Outcome)
   end
   def call(&action)
-    record, won = IdempotencyKey.claim!(@merchant, @key, @fingerprint)
-    return run(record, &action) if won
+    Tracing.in_span("payhub.idempotency.claim", attributes: {
+      "payhub.merchant_id" => @merchant.id,
+      "payhub.operation" => "claim"
+    }) do |span|
+      record, won = IdempotencyKey.claim!(@merchant, @key, @fingerprint)
+      span.set_attribute("payhub.idempotency_outcome", won ? "won" : "existing") if span.respond_to?(:set_attribute)
+      return run(record, &action) if won
 
-    # Lost the race. Everything below reads a row someone else wrote.
-    if record.expired? || record.abandoned?
-      # Dead claim. Remove it and go again; a concurrent contender may beat
-      # us to the re-claim, in which case the recursion takes the loser path.
-      record.destroy!
-      return call(&action)
+      # Lost the race. Everything below reads a row someone else wrote.
+      if record.expired? || record.abandoned?
+        # Dead claim. Remove it and go again; a concurrent contender may beat
+        # us to the re-claim, in which case the recursion takes the loser path.
+        record.destroy!
+        return call(&action)
+      end
+
+      if record.request_fingerprint != @fingerprint
+        span.set_attribute("payhub.idempotency_outcome", "fingerprint_mismatch") if span.respond_to?(:set_attribute)
+        raise ApiError.new(type: ApiError::Type::IdempotencyError, http_status: 422, code: "idempotency_key_reused",
+                           message: "Idempotency-Key #{@key} was already used with a different request body",
+                           param: "Idempotency-Key")
+      end
+
+      if record.in_flight?
+        span.set_attribute("payhub.idempotency_outcome", "in_flight") if span.respond_to?(:set_attribute)
+        raise ApiError.new(type: ApiError::Type::IdempotencyError, http_status: 409, code: "idempotency_key_in_flight",
+                           message: "A request with Idempotency-Key #{@key} is still being processed; retry shortly",
+                           param: "Idempotency-Key", retriable: true)
+      end
+
+      span.set_attribute("payhub.idempotency_outcome", "replayed") if span.respond_to?(:set_attribute)
+      Outcome.new(status: record.response_status,
+                  body: T.cast(record.response_body, T::Hash[String, T.untyped]), replayed: true)
     end
-
-    if record.request_fingerprint != @fingerprint
-      raise ApiError.new(type: ApiError::Type::IdempotencyError, http_status: 422, code: "idempotency_key_reused",
-                         message: "Idempotency-Key #{@key} was already used with a different request body",
-                         param: "Idempotency-Key")
-    end
-
-    if record.in_flight?
-      raise ApiError.new(type: ApiError::Type::IdempotencyError, http_status: 409, code: "idempotency_key_in_flight",
-                         message: "A request with Idempotency-Key #{@key} is still being processed; retry shortly",
-                         param: "Idempotency-Key", retriable: true)
-    end
-
-    Outcome.new(status: record.response_status,
-                body: T.cast(record.response_body, T::Hash[String, T.untyped]), replayed: true)
   end
 
   private

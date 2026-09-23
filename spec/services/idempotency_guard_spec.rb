@@ -7,6 +7,17 @@ RSpec.describe IdempotencyGuard do
     described_class.new(merchant: merchant, key: key, request_method: "POST", path: "/v1/payments", raw_body: body)
   end
 
+  it "traces the idempotency claim decision" do
+    allow(Tracing).to receive(:in_span).and_call_original
+
+    guard.call { [202, { "id" => "pay_1" }] }
+
+    expect(Tracing).to have_received(:in_span).with(
+      "payhub.idempotency.claim",
+      attributes: hash_including("payhub.merchant_id" => merchant.id, "payhub.operation" => "claim")
+    )
+  end
+
   it "runs the action once and replays the stored response for the same key + body" do
     runs = 0
     action = -> { runs += 1; [202, { "id" => "pay_1" }] }
