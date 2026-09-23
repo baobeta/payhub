@@ -30,6 +30,19 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
     expect(response.body).to match(/payhub_outbound_events_pending \d+/)
   end
 
+  it "traces the synchronous payment creation boundary" do
+    allow(Tracing).to receive(:in_span).and_call_original
+
+    post "/v1/payments", params: { amount_minor: 2500, currency: "EUR", payment_method_token: "tok" }.to_json,
+                         headers: auth_headers(key)
+
+    expect(Tracing).to have_received(:in_span).with(
+      "payhub.payment.create",
+      attributes: hash_including("payhub.merchant_id" => merchant.id, "payhub.psp_name" => "nordpay",
+                                 "payhub.operation" => "create_payment")
+    )
+  end
+
   it "logs one JSON line per request carrying correlation IDs and payment context" do
     payment = create(:payment, merchant: merchant)
     log = capture_log { get "/v1/payments/#{payment.id}", headers: auth_headers(key) }
