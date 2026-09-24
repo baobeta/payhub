@@ -9,7 +9,7 @@
 
 A payment orchestration API. Merchants integrate once; PayHub routes each payment to one of two deliberately unreliable PSP simulators and keeps one consistent view of money movement.
 
-**The one rule:** no customer is ever charged twice, and no merchant is ever refunded more than they captured — under timeouts, duplicate webhooks, concurrent requests, worker crashes and PSP outages. Every design choice serves it; [DECISIONS.md](DECISIONS.md) records the twelve that mattered, and [RUNBOOK.md](RUNBOOK.md) is what you read at 3am.
+**The one rule:** no customer is ever charged twice, and no merchant is ever refunded more than they captured — under timeouts, duplicate webhooks, concurrent requests, worker crashes and PSP outages. Every design choice serves it; [DECISIONS.md](DECISIONS.md) records the twenty that mattered, and [RUNBOOK.md](RUNBOOK.md) is what you read at 3am.
 
 ### What's worth a look
 
@@ -20,6 +20,8 @@ A payment orchestration API. Merchants integrate once; PayHub routes each paymen
 - **[`bin/rails chaos:run`](#chaos-run-the-one-rule-live)** turns them up and checks the ledger against the PSP's own records; a **seeded deterministic simulation** does the same in-process, replayably, and found two bugs the specs had missed.
 - **Settlement-file reconciliation**: the PSP's daily payout report is matched line by line to the ledger — fees booked, receivables cleared, and anything the PSP paid that we never booked flagged.
 - **Keyset pagination proven at 1M rows**, OpenTelemetry traces across HTTP → Sidekiq → PSP, Sorbet-typed adapters.
+
+<p align="center"><img src="docs/chaos-run.svg" alt="bin/rails chaos:run output: every invariant holds against a hostile PSP simulator" width="760"></p>
 
 ```mermaid
 flowchart LR
