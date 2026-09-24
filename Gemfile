@@ -9,7 +9,7 @@ gem "bootsnap", require: false
 gem "tzinfo-data", platforms: %i[ windows jruby ]
 
 # Background jobs — the PSP calls, status poller, and webhook sweepers all run here.
-gem "sidekiq", "~> 7.3"
+gem "sidekiq", "~> 8.0"
 # Periodic jobs (sweepers) scheduled from config/schedule.yml.
 gem "sidekiq-cron", "~> 2.0"
 # Sidekiq 7.3 calls ConnectionPool::TimedStack#pop(timeout); connection_pool 3.x removed that
