@@ -36,7 +36,10 @@ RSpec.describe "A PAN never reaches the log", type: :request do
     end
 
     expect(log).not_to include(pan)
-    expect(log).not_to include(cvv)
+    # A CVV is three digits, and every log line carries random hex (trace and
+    # span ids) that contains any three digits sooner or later. A leaked CVV
+    # stands alone ("cvv":"737", cvv=737); inside a run of hex it is chance.
+    expect(log).not_to match(/(?<![[:xdigit:]])#{cvv}(?![[:xdigit:]])/)
     expect(log).not_to match(/\b\d{13,19}\b/) # no PAN-shaped number of any kind
   end
 
