@@ -1170,6 +1170,9 @@ class OutboundEvent
     def restore_state!; end
 
     sig { void }
+    def restore_traceparent!; end
+
+    sig { void }
     def restore_updated_at!; end
 
     sig { returns(T.nilable([::Integer, ::Integer])) }
@@ -1244,6 +1247,12 @@ class OutboundEvent
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def saved_change_to_state?(from: T.unsafe(nil), to: T.unsafe(nil)); end
 
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def saved_change_to_traceparent; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def saved_change_to_traceparent?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
     sig { returns(T.nilable([::ActiveSupport::TimeWithZone, ::ActiveSupport::TimeWithZone])) }
     def saved_change_to_updated_at; end
 
@@ -1294,6 +1303,51 @@ class OutboundEvent
 
     sig { void }
     def state_will_change!; end
+
+    sig { returns(T.nilable(::String)) }
+    def traceparent; end
+
+    sig { params(value: T.nilable(::String)).returns(T.nilable(::String)) }
+    def traceparent=(value); end
+
+    sig { returns(T::Boolean) }
+    def traceparent?; end
+
+    sig { returns(T.nilable(::String)) }
+    def traceparent_before_last_save; end
+
+    sig { returns(T.untyped) }
+    def traceparent_before_type_cast; end
+
+    sig { returns(T::Boolean) }
+    def traceparent_came_from_user?; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def traceparent_change; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def traceparent_change_to_be_saved; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def traceparent_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::String)) }
+    def traceparent_in_database; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def traceparent_previous_change; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def traceparent_previously_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::String)) }
+    def traceparent_previously_was; end
+
+    sig { returns(T.nilable(::String)) }
+    def traceparent_was; end
+
+    sig { void }
+    def traceparent_will_change!; end
 
     sig { returns(::ActiveSupport::TimeWithZone) }
     def updated_at; end
@@ -1375,6 +1429,9 @@ class OutboundEvent
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def will_save_change_to_state?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def will_save_change_to_traceparent?(from: T.unsafe(nil), to: T.unsafe(nil)); end
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def will_save_change_to_updated_at?(from: T.unsafe(nil), to: T.unsafe(nil)); end

@@ -30,7 +30,8 @@ class OutboundEvent < ApplicationRecord
       payload: PaymentSerializer.call(payment).merge(extra),
       state: deliverable ? "pending" : "delivered",
       delivered_at: deliverable ? nil : Time.current,
-      next_attempt_at: Time.current
+      next_attempt_at: Time.current,
+      traceparent: Tracing.current_traceparent
     )
   end
 

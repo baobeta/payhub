@@ -17,6 +17,9 @@ class ApplicationJob < ActiveJob::Base
   around_perform do |job, block|
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     ctx = job.log_context
+    # Same keys on the job span, so a payment's traces can be found by attribute
+    # whatever their shape (request child, sweeper, webhook, retry).
+    Tracing.add_attributes(ctx.transform_keys { |k| "payhub.#{k}" })
     error = nil
     begin
       block.call

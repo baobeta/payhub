@@ -37,25 +37,42 @@ class DeliverOutboundEventsJob < ApplicationJob
       event = OutboundEvent.lock("FOR UPDATE SKIP LOCKED").find_by(id: event_id, state: "pending")
       return unless event # another sweeper has it, or it was delivered meanwhile
 
-      attempt_number = event.attempts + 1
-      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      status, error = post(event)
-      duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round
-
-      OutboundDeliveryAttempt.create!(outbound_event: event, attempt_number: attempt_number,
-                                      response_status: status, error: error, duration_ms: duration_ms)
-      Metrics.increment(:webhook_deliveries, attempt: attempt_number.to_s)
-
-      if status && status.between?(200, 299)
-        event.update!(state: "delivered", attempts: attempt_number, delivered_at: Time.current, last_error: nil)
-      elsif attempt_number >= OutboundEvent::MAX_ATTEMPTS
-        event.update!(state: "dead", attempts: attempt_number, last_error: error || "HTTP #{status}")
-        Rails.logger.error({ event: "outbound.dead_letter", outbound_event_id: event.id, merchant_id: event.merchant_id,
-                             type: event.event_type, attempts: attempt_number }.to_json)
-      else
-        event.update!(attempts: attempt_number, last_error: error || "HTTP #{status}",
-                      next_attempt_at: Time.current + OutboundEvent::BACKOFF.call(attempt_number))
+      # One span per delivery, linked (not parented) to the trace that emitted
+      # the event: this batch serves many origins, and a span has one parent.
+      Tracing.in_span("payhub.webhook.deliver", links: Tracing.links_from(event.traceparent), attributes: {
+        "payhub.outbound_event_id" => event.id, "payhub.event_type" => event.event_type,
+        "payhub.merchant_id" => event.merchant_id, "payhub.payment_id" => event.payment_id,
+        "payhub.attempt" => event.attempts + 1
+      }) do |span|
+        span.set_attribute("payhub.outcome", attempt_delivery(event))
       end
+    end
+  end
+
+  # Returns the outcome: "delivered", "retry", or "dead".
+  sig { params(event: OutboundEvent).returns(String) }
+  def attempt_delivery(event)
+    attempt_number = event.attempts + 1
+    started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    status, error = post(event)
+    duration_ms = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round
+
+    OutboundDeliveryAttempt.create!(outbound_event: event, attempt_number: attempt_number,
+                                    response_status: status, error: error, duration_ms: duration_ms)
+    Metrics.increment(:webhook_deliveries, attempt: attempt_number.to_s)
+
+    if status && status.between?(200, 299)
+      event.update!(state: "delivered", attempts: attempt_number, delivered_at: Time.current, last_error: nil)
+      "delivered"
+    elsif attempt_number >= OutboundEvent::MAX_ATTEMPTS
+      event.update!(state: "dead", attempts: attempt_number, last_error: error || "HTTP #{status}")
+      Rails.logger.error({ event: "outbound.dead_letter", outbound_event_id: event.id, merchant_id: event.merchant_id,
+                           type: event.event_type, attempts: attempt_number }.to_json)
+      "dead"
+    else
+      event.update!(attempts: attempt_number, last_error: error || "HTTP #{status}",
+                    next_attempt_at: Time.current + OutboundEvent::BACKOFF.call(attempt_number))
+      "retry"
     end
   end
 

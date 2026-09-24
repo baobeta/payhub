@@ -117,4 +117,19 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
     expect(children).not_to be_empty
     expect(children.map(&:hex_trace_id).uniq).to eq([request_span.hex_trace_id])
   end
+
+  it "tags job spans with the payment they act on, so any trace shape can be found by payment" do
+    payment = create(:payment, merchant: merchant)
+    allow(PspRouter).to receive(:adapter).and_return(FakePspAdapter.new.tap do |a|
+      a.script(:authorize, PspAdapter::Result.new(status: PspAdapter::Result::Status::Authorized,
+                                                  psp_reference: payment.psp_reference, psp_charge_id: "ch",
+                                                  decline_code: nil, psp_timestamp: payment.created_at + 1))
+    end)
+
+    AuthorizePaymentJob.perform_now(payment.id)
+
+    job_span = SPAN_EXPORTER.finished_spans.find { |s| s.kind == :consumer && s.attributes["code.namespace"] == "AuthorizePaymentJob" }
+    expect(job_span.attributes).to include("payhub.payment_id" => payment.id, "payhub.merchant_id" => merchant.id,
+                                           "payhub.psp_name" => "nordpay")
+  end
 end

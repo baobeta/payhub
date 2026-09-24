@@ -32,6 +32,46 @@ RSpec.describe "Outbound events: outbox, delivery, GET /v1/events, redeliver", t
     end
   end
 
+  describe "delivery tracing" do
+    let(:tracer) { OpenTelemetry.tracer_provider.tracer("spec") }
+
+    it "records the trace an event was emitted in" do
+      origin = tracer.in_span("origin") do |span|
+        create(:payment, merchant: merchant)
+        span.context
+      end
+      expect(merchant.outbound_events.first.traceparent).to include(origin.hex_trace_id)
+    end
+
+    it "delivers each event in its own span, linked back to the trace that emitted it" do
+      origin = tracer.in_span("origin") do |span|
+        create(:payment, merchant: merchant)
+        span.context
+      end
+      stub_request(:post, "https://merchant.test/hooks").to_return(status: 200)
+
+      DeliverOutboundEventsJob.perform_now
+
+      span = SPAN_EXPORTER.finished_spans.find { |s| s.name == "payhub.webhook.deliver" }
+      expect(span.links.map { |l| l.span_context.hex_trace_id }).to eq([origin.hex_trace_id])
+      expect(span.hex_trace_id).not_to eq(origin.hex_trace_id) # its own trace, not the emitter's
+      expect(span.attributes).to include("payhub.outbound_event_id" => merchant.outbound_events.first.id,
+                                         "payhub.merchant_id" => merchant.id, "payhub.attempt" => 1,
+                                         "payhub.outcome" => "delivered")
+    end
+
+    it "still delivers events stored before traceparent existed, without a link" do
+      create(:payment, merchant: merchant)
+      merchant.outbound_events.update_all(traceparent: nil)
+      stub_request(:post, "https://merchant.test/hooks").to_return(status: 200)
+
+      DeliverOutboundEventsJob.perform_now
+
+      span = SPAN_EXPORTER.finished_spans.find { |s| s.name == "payhub.webhook.deliver" }
+      expect(span.links).to be_blank
+    end
+  end
+
   describe DeliverOutboundEventsJob do
     before { create(:payment, merchant: merchant) } # emits payment.created into the outbox
 

@@ -15,5 +15,7 @@ module OpenTelemetry
     end
   end
 
-  module Trace; end
+  module Trace
+    class Link; end
+  end
 end
