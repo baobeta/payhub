@@ -48,5 +48,4 @@ Thumbs.db
 
 # Sorbet
 /sorbet/rbi/hidden-definitions/
-/sorbet/rbi/todo.rbi
 .omx/
