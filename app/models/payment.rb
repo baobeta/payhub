@@ -5,6 +5,7 @@ class Payment < ApplicationRecord
   has_many :transitions, -> { order(:sort_key, :created_at) },
            class_name: "PaymentTransition", dependent: :restrict_with_exception
   has_many :refunds, dependent: :restrict_with_exception
+  has_many :captures, dependent: :restrict_with_exception
   has_many :ledger_entries, dependent: :restrict_with_exception
 
   PSPS = %w[nordpay kiripay].freeze
@@ -21,9 +22,30 @@ class Payment < ApplicationRecord
     where(state: PaymentStateMachine::STUCK_CANDIDATES).where(updated_at: ..older_than)
   }
 
+  # When the sweeper should next poll a stuck candidate: its scheduled check,
+  # or two minutes after its last state change if it has never been polled.
+  # Must match the expression index in AddNextCheckAtToPayments (DECISIONS #13).
+  DUE_AT_SQL = "COALESCE(next_check_at, updated_at + interval '2 minutes')"
+
+  scope :due_for_check, ->(now) {
+    where(state: PaymentStateMachine::STUCK_CANDIDATES).where("#{DUE_AT_SQL} <= ?", now)
+  }
+
   # The psp_reference is OURS and exists before any network call, so a timed-out
   # charge can always be looked up (DECISIONS #2).
   def self.generate_psp_reference = "ph_#{SecureRandom.hex(12)}"
+
+  # Records that an authorize for this reference is about to be sent, and
+  # returns the FIRST such moment — whoever sent first, job or sweeper. Written
+  # before the call, keep-earliest in one statement, so two racing senders both
+  # get the earlier time. A PSP cannot record a charge before it first receives
+  # the reference, so every verdict it reports is at or after this (#11).
+  def mark_sent!(at = Time.current)
+    self.class.where(id: id).update_all(["first_sent_at = COALESCE(first_sent_at, ?)", at])
+    self.first_sent_at = self.class.where(id: id).pick(:first_sent_at)
+    clear_attribute_changes([:first_sent_at]) # already persisted; with_lock refuses dirty records
+    first_sent_at
+  end
 
   # Every new payment starts life with a `pending` transition row so the
   # history is complete from the first moment.
@@ -65,6 +87,10 @@ class Payment < ApplicationRecord
       )
       # write_attribute + save! so lock_version bumps and validations run
       write_attribute(:state, to_state)
+      # A new state is a new question for the PSP: the sweeper's backoff
+      # starts over (DECISIONS #13).
+      self.next_check_at = nil
+      self.check_attempts = 0
       save!
 
       # Transactional outbox: the merchant-facing event is written in the SAME

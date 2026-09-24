@@ -19,6 +19,7 @@ class ResolveUnknownPayment
     # 404: the PSP never saw our request. The ONLY case where re-sending the
     # authorize is safe — and only with the SAME psp_reference, so that if the
     # 404 was a lie (replica lag), the PSP's own idempotency catches it.
+    payment.mark_sent!
     adapter.authorize(payment)
   rescue PspAdapter::TimedOut => e
     Rails.logger.warn({ event: "resolve_unknown.timeout", payment_id: payment.id, detail: e.message }.to_json)

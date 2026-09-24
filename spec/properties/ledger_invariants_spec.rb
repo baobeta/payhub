@@ -18,6 +18,12 @@ RSpec.describe "Ledger invariants", type: :property do
       # Answer every capture with the PSP's running total (what a real PSP does),
       # and every refund with success. Lazy procs read live state.
       running_total = 0
+      # CapturePaymentJob reads before it writes (DECISIONS #20): report the total.
+      a.define_singleton_method(:fetch) do |_ref|
+        PspAdapter::Result.new(status: PspAdapter::Result::Status::Authorized, psp_reference: payment.psp_reference,
+                               psp_charge_id: "ch", decline_code: nil, psp_timestamp: Time.current,
+                               raw: { "captured_minor" => running_total })
+      end
       a.define_singleton_method(:capture) do |_p, amount|
         running_total += amount
         PspAdapter::Result.new(status: PspAdapter::Result::Status::Captured, psp_reference: payment.psp_reference,

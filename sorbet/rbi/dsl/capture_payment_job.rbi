@@ -9,14 +9,14 @@ class CapturePaymentJob
   class << self
     sig do
       params(
-        payment_id: ::String,
-        amount_minor: ::Integer,
+        capture_id: ::String,
+        legacy_amount: T.nilable(::Integer),
         block: T.nilable(T.proc.params(job: CapturePaymentJob).void)
       ).returns(T.any(CapturePaymentJob, FalseClass))
     end
-    def perform_later(payment_id, amount_minor, &block); end
+    def perform_later(capture_id, legacy_amount = T.unsafe(nil), &block); end
 
-    sig { params(payment_id: ::String, amount_minor: ::Integer).void }
-    def perform_now(payment_id, amount_minor); end
+    sig { params(capture_id: ::String, legacy_amount: T.nilable(::Integer)).void }
+    def perform_now(capture_id, legacy_amount = T.unsafe(nil)); end
   end
 end

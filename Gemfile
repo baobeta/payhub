@@ -20,6 +20,7 @@ gem "connection_pool", "< 3"
 # and a retry middleware that we control (we must NOT retry blindly).
 gem "faraday", "~> 2.12"
 gem "faraday-retry", "~> 2.2"
+gem "csv", "~> 3.2" # settlement reports (DECISIONS #18); no longer a default gem from Ruby 3.4
 
 # Per-merchant rate limiting -> 429 + Retry-After.
 gem "rack-attack", "~> 6.7"

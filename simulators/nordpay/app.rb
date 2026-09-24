@@ -7,6 +7,7 @@ require "securerandom"
 require "openssl"
 require "net/http"
 require "time"
+require "csv"
 
 # Nordpay simulator: EU cards, separate authorize then capture, synchronous
 # confirmation, partial refunds, honours X-Request-Id for idempotency.
@@ -39,12 +40,13 @@ module Nordpay
       end
     end
 
-    attr_reader :refunds, :sent_webhooks
+    attr_reader :refunds, :sent_webhooks, :settlements
 
     def initialize
       @charges = {}
       @refunds = {}
       @sent_webhooks = []
+      @settlements = []
       @mutex = Mutex.new
     end
 
@@ -56,6 +58,18 @@ module Nordpay
       @charges.clear
       @refunds.clear
       @sent_webhooks.clear
+      @settlements.clear
+    end
+
+    # What Nordpay pays the merchant for: one line per capture (net of its
+    # fee) and one per succeeded refund (deducted). Published per day as CSV.
+    # Fee: 25 minor units + 1.4% of the captured amount, rounded half up.
+    def settle!(kind, charge_reference:, amount_minor:, currency:, refund_reference: nil, at: Time.now)
+      fee = kind == "capture" ? 25 + (((amount_minor * 14) + 500) / 1000) : 0
+      net = kind == "capture" ? amount_minor - fee : -amount_minor
+      @settlements << { line_id: "stl_#{SecureRandom.hex(8)}", type: kind, reference: charge_reference,
+                        refund_reference: refund_reference, gross_minor: amount_minor, fee_minor: fee,
+                        net_minor: net, currency: currency, booked_at: at.utc }
     end
 
     def find_or_create(reference)
@@ -259,6 +273,8 @@ module Nordpay
       store.sync do
         charge.captured_minor += amount
         charge.status = "captured" if charge.captured_minor == charge.amount_minor
+        store.settle!("capture", charge_reference: charge.reference, amount_minor: amount, currency: charge.currency,
+                                 at: captured_at)
       end
 
       # charge.captured, honestly timestamped. Out-of-order injection resends
@@ -310,11 +326,37 @@ module Nordpay
             id: "re_#{SecureRandom.hex(8)}", reference: ref, charge_reference: charge.reference,
             status: status, code: code, amount_minor: amount, created_at: Time.now
           )
+          if status == "succeeded"
+            store.settle!("refund", charge_reference: charge.reference, refund_reference: ref,
+                                    amount_minor: amount, currency: charge.currency, at: refund.created_at)
+          end
         end
       end
 
       sleep(config.fetch("timeout_seconds", 5).to_f) if inject?("timeout")
       json!(refund.to_h)
+    end
+
+    # GET /settlements?date=YYYY-MM-DD — the settlement report: every line
+    # booked that UTC day, as CSV (like Adyen's Settlement Details Report).
+    # `settlement_drop_rate` leaves a line out, as a real report sometimes does.
+    SETTLEMENT_COLUMNS = %w[line_id type reference refund_reference gross_minor fee_minor net_minor currency booked_at].freeze
+
+    get "/settlements" do
+      authenticate!
+      date = begin
+        Date.iso8601(params[:date].to_s)
+      rescue Date::Error
+        error!(400, "invalid_date", "date must be YYYY-MM-DD")
+      end
+
+      lines = store.sync { store.settlements.select { |l| l[:booked_at].to_date == date } }
+      lines = lines.reject { inject?("settlement_drop") }
+      csv = CSV.generate do |out|
+        out << SETTLEMENT_COLUMNS
+        lines.each { |l| out << SETTLEMENT_COLUMNS.map { |c| c == "booked_at" ? l[:booked_at].iso8601(3) : l[c.to_sym] } }
+      end
+      [200, { "Content-Type" => "text/csv" }, [csv]]
     end
 
     get "/refunds/:reference" do

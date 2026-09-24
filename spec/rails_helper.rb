@@ -23,6 +23,10 @@ RSpec.configure do |config|
   # `concurrency: true` use real threads + real connections, which cannot see
   # an uncommitted transaction, so they run without and clean up manually.
   config.use_transactional_fixtures = true
+
+  # Circuit-breaker state is per process in the test suite; no example may
+  # inherit an open circuit from another (DECISIONS #17).
+  config.before { T.cast(PspCircuit.store, PspCircuit::MemoryStore).clear! }
   config.around(:each, :concurrency) do |example|
     self.use_transactional_tests = false
     example.run

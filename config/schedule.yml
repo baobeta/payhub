@@ -13,8 +13,20 @@ deliver_outbound_events:
   queue: sweepers
   description: "Deliver due outbound webhooks with backoff; dead-letter after 8 attempts"
 
+expire_authorizations:
+  cron: "7 * * * *"
+  class: ExpireAuthorizationsJob
+  queue: sweepers
+  description: "Void authorization holds nobody captured within 6 days; merchant gets payment.canceled (authorization_expired)"
+
 daily_reconciliation:
   cron: "15 2 * * *"
   class: ReconciliationJob
   queue: sweepers
   description: "Compare ledger and PSP views; flag unbalanced transfers and drifted payments"
+
+settlement_reconciliation:
+  cron: "45 3 * * *"
+  class: SettlementReconciliationJob
+  queue: sweepers
+  description: "Ingest yesterday's PSP settlement reports; match every line to the ledger, book matched ones, flag the rest and unsettled captures"

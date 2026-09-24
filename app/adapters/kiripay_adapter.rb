@@ -12,11 +12,12 @@ class KiripayAdapter < PspAdapter
   # Reject webhooks whose signature timestamp is too old: replay protection.
   SIGNATURE_TOLERANCE = T.let(5.minutes, ActiveSupport::Duration)
 
-  sig { params(base_url: String, api_key: String, webhook_secret: String).void }
+  # webhook_secrets: current first; more than one only while rotating (#15).
+  sig { params(base_url: String, api_key: String, webhook_secrets: T::Array[String]).void }
   def initialize(base_url: ENV.fetch("KIRIPAY_URL", "http://localhost:4002"),
                  api_key: ENV.fetch("KIRIPAY_API_KEY", "kp_test_key"),
-                 webhook_secret: ENV.fetch("KIRIPAY_WEBHOOK_SECRET", "kp_whsec_test"))
-    @webhook_secret = webhook_secret
+                 webhook_secrets: WebhookSignature.secrets_from_env("KIRIPAY_WEBHOOK_SECRETS", "KIRIPAY_WEBHOOK_SECRET", "kp_whsec_test"))
+    @webhook_secrets = webhook_secrets
     @conn = T.let(
       Faraday.new(url: base_url) do |f|
         f.request :json
@@ -115,24 +116,18 @@ class KiripayAdapter < PspAdapter
                      psp_timestamp: Time.current, raw: charge.raw)
   end
 
-  # Signature: X-Kiripay-Signature: t=<unix>,v1=<hex HMAC-SHA256 of "<t>.<body>">
+  # Kiripay publishes no settlement report we can fetch (DECISIONS #18).
+  sig { override.params(date: Date).returns(T.nilable(T::Array[SettlementReportLine])) }
+  def settlement_report(date) = nil
+
+  # Signature: X-Kiripay-Signature: t=<unix>,v1=<hex HMAC-SHA256 of "<t>.<body>">[,v1=…]
   sig { override.params(raw_body: String, headers: T::Hash[String, String]).returns(WebhookEvent) }
   def verify_webhook(raw_body, headers)
-    header = headers["X-Kiripay-Signature"].to_s
-    parts = T.let({}, T::Hash[String, String])
-    header.split(",").each do |kv|
-      k, v = kv.split("=", 2)
-      parts[k.to_s] = v.to_s
-    end
-    ts = parts["t"].to_s
-    given = parts["v1"].to_s
-    raise InvalidSignature, "missing signature" if ts.empty? || given.empty?
-
-    expected = OpenSSL::HMAC.hexdigest("SHA256", @webhook_secret, "#{ts}.#{raw_body}")
-    raise InvalidSignature, "signature mismatch" unless ActiveSupport::SecurityUtils.secure_compare(expected, given)
-    raise InvalidSignature, "signature too old" if (Time.current.to_i - ts.to_i).abs > SIGNATURE_TOLERANCE
-
+    WebhookSignature.verify_timestamped!(raw_body, headers["X-Kiripay-Signature"].to_s,
+                                         secrets: @webhook_secrets, tolerance: SIGNATURE_TOLERANCE)
     parse_webhook(JSON.parse(raw_body))
+  rescue WebhookSignature::Invalid => e
+    raise InvalidSignature, e.message
   rescue JSON::ParserError => e
     raise MalformedWebhook, e.message
   end
@@ -156,11 +151,21 @@ class KiripayAdapter < PspAdapter
 
   private
 
+  # Every call goes through the PSP's circuit breaker (DECISIONS #17). An open
+  # circuit raises PspCircuit::Open — an Unavailable — before anything is sent.
   sig do
     params(method: Symbol, path: String, body: T.nilable(T::Hash[Symbol, T.untyped]),
            params: T::Hash[String, String]).returns(Faraday::Response)
   end
   def request(method, path, body: nil, params: {})
+    PspCircuit.call("kiripay") { send_request(method, path, body: body, params: params) }
+  end
+
+  sig do
+    params(method: Symbol, path: String, body: T.nilable(T::Hash[Symbol, T.untyped]),
+           params: T::Hash[String, String]).returns(Faraday::Response)
+  end
+  def send_request(method, path, body: nil, params: {})
     operation = "#{method.upcase} #{path.sub(%r{/kp_[a-f0-9]+}, '/:id')}"
     response = @conn.run_request(method, path, body, {}) { |req| req.params.update(params) }
     outcome = response.status.between?(200, 299) ? "ok" : "http_#{response.status}"

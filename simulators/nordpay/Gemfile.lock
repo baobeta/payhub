@@ -2,6 +2,7 @@ GEM
   remote: https://rubygems.org/
   specs:
     base64 (0.3.0)
+    csv (3.2.8)
     diff-lcs (1.6.2)
     logger (1.7.0)
     mustermann (3.1.1)
@@ -47,6 +48,7 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
+  csv (~> 3.2)
   puma (~> 6.5)
   rack-test (~> 2.2)
   rackup (~> 2.2)
@@ -56,6 +58,7 @@ DEPENDENCIES
 CHECKSUMS
   base64 (0.3.0) sha256=27337aeabad6ffae05c265c450490628ef3ebd4b67be58257393227588f5a97b
   bundler (4.0.21) sha256=7cbf5499b426076aa16c8d28a59e4c2c3aad5a438402abcd961f0119f29f1dd0
+  csv (3.2.8)
   diff-lcs (1.6.2) sha256=9ae0d2cba7d4df3075fe8cd8602a8604993efc0dfa934cff568969efb1909962
   logger (1.7.0) sha256=196edec7cc44b66cfb40f9755ce11b392f21f7967696af15d274dde7edff0203
   mustermann (3.1.1) sha256=4c6170c7234d5499c345562ba7c7dfe73e1754286dcc1abb053064d66a127198

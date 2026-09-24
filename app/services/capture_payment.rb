@@ -2,7 +2,9 @@
 # frozen_string_literal: true
 
 # POST /v1/payments/:id/capture — the synchronous half. Validates against the
-# ledger under a row lock, then enqueues the PSP call. 202.
+# ledger under a row lock, records the request as a Capture, then enqueues the
+# PSP call. 202. One capture may be in flight per payment (DECISIONS #20); a
+# second gets a retriable 409 until the first is settled.
 class CapturePayment
   extend T::Sig
 
@@ -28,7 +30,17 @@ class CapturePayment
                                        code: "partial_capture_unsupported", param: "amount_minor")
       end
 
-      CapturePaymentJob.perform_later(payment.id, amount)
+      if payment.captures.pending.exists?
+        raise ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "capture_in_progress",
+                           message: "A capture for this payment is still in flight; retry when it settles",
+                           param: "id", retriable: true)
+      end
+
+      capture = payment.captures.create!(amount_minor: amount, base_captured_minor: already)
+      # A capture request restarts the hold clock, so ExpireAuthorizationsJob
+      # cannot void a payment whose capture job is still queued (DECISIONS #14).
+      payment.touch
+      CapturePaymentJob.perform_later(capture.id)
     end
     payment
   end

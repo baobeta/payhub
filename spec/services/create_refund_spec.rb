@@ -39,8 +39,8 @@ RSpec.describe CreateRefund do
     expect(rejected.map(&:http_status).uniq).to eq([422])
     expect(rejected.first.details["amount_minor"].first).to include("pending 2000")
 
-    # The invariant, checked from the rows: reserved + refunded never exceeds captured.
-    reserved = Refund.where(payment: payment, state: "pending").sum(:amount_minor)
-    expect(reserved + Ledger.refunded_minor(payment)).to be <= Ledger.captured_minor(payment)
+    # The invariant, checked from the ledger rows: reserved + refunded never exceeds captured.
+    expect(Ledger.reserved_minor(payment)).to eq(2000)
+    expect(Ledger.reserved_minor(payment) + Ledger.refunded_minor(payment)).to be <= Ledger.captured_minor(payment)
   end
 end

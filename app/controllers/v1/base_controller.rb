@@ -37,6 +37,15 @@ module V1
                                     message: e.message, param: "currency", retriable: true))
     end
 
+    # A synchronous PSP call (cancel) that could not complete: the PSP is down,
+    # its circuit is open (DECISIONS #17), or even the follow-up read timed
+    # out. Nothing was changed on our side; the merchant may simply retry.
+    rescue_from PspAdapter::Unavailable, PspAdapter::TimedOut do |e|
+      T.bind(self, V1::BaseController)
+      render_api_error(ApiError.new(type: ApiError::Type::ApiErrorType, http_status: 503, code: "psp_unavailable",
+                                    message: e.message, retriable: true))
+    end
+
     private
 
     sig { returns(Merchant) }

@@ -4,7 +4,7 @@ class LedgerAccount < ApplicationRecord
   belongs_to :merchant
   has_many :entries, class_name: "LedgerEntry", foreign_key: :account_id, dependent: :restrict_with_exception
 
-  KINDS = %w[psp_receivable merchant_payable refunds_paid].freeze
+  KINDS = %w[psp_receivable merchant_payable refunds_reserved refunds_paid psp_payouts psp_fees].freeze
 
   validates :kind, inclusion: { in: KINDS }
   validates :currency, inclusion: { in: Currency::SUPPORTED }

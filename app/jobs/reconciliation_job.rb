@@ -9,6 +9,8 @@
 #   2. Cache drift: payments.captured_minor (display cache) vs the ledger sum.
 #   3. State drift: for each payment that moved money yesterday, ask the PSP
 #      and compare its view of captured/refunded with ours.
+#   4. Reservation drift: a pending refund must hold exactly its amount in
+#      refunds_reserved, a settled one nothing (DECISIONS #16).
 class ReconciliationJob < ApplicationJob
   extend T::Sig
 
@@ -17,12 +19,17 @@ class ReconciliationJob < ApplicationJob
   sig { params(since: T.nilable(String)).void }
   def perform(since = nil)
     window_start = since ? Time.iso8601(since) : 1.day.ago
-    report = { "unbalanced_transfers" => 0, "cache_drift" => 0, "psp_drift" => 0, "checked" => 0 }
+    report = { "unbalanced_transfers" => 0, "cache_drift" => 0, "psp_drift" => 0, "reservation_drift" => 0, "checked" => 0 }
 
     Ledger.unbalanced_transfer_ids.each do |transfer_id|
       report["unbalanced_transfers"] += 1
       Metrics.increment(:ledger_imbalance_detected)
       Rails.logger.error({ event: "reconciliation.unbalanced_transfer", transfer_id: transfer_id }.to_json)
+    end
+
+    Ledger.reservation_drift_refund_ids.each do |refund_id|
+      report["reservation_drift"] += 1
+      Rails.logger.error({ event: "reconciliation.reservation_drift", refund_id: refund_id }.to_json)
     end
 
     Payment.where(updated_at: window_start..).find_each do |payment|

@@ -23,7 +23,7 @@ class ChaosRun
     "webhook_late_rate" => 0.1, "webhook_never_rate" => 0.1, "webhook_bad_signature_rate" => 0.1
   }.freeze
   COPIES = 3             # each Idempotency-Key is sent this many times, concurrently
-  SETTLE_TIMEOUT = 180   # seconds; unknowns wait for the one-minute sweeper
+  SETTLE_TIMEOUT = 300   # seconds; an unknown is first polled 2 min after it appears, by a once-a-minute sweeper
   UNSETTLED = %w[pending unknown requires_action].freeze
 
   def initialize(payments:)
@@ -122,13 +122,21 @@ class ChaosRun
     # Per payment: our books against the PSP's. Refunds are asked of the PSP
     # one by one, whatever state we think they are in.
     rows = all.map do |p|
-      { id: p.id, captured: Ledger.captured_minor(p), refunded: Ledger.refunded_minor(p),
+      { id: p.id, captured: Ledger.captured_minor(p), refunded: Ledger.refunded_minor(p), reserved: Ledger.reserved_minor(p),
         psp_captured: charges.dig(p.psp_reference, "captured_minor").to_i,
         psp_refunded: p.refunds.sum { |r| psp_refund(r) } }
     end
     per_payment("money taken by the PSP == money captured in our ledger", rows) { |r| r[:captured] == r[:psp_captured] }
     per_payment("refunded ≤ captured", rows) { |r| r[:refunded] <= r[:captured] }
     per_payment("money refunded by the PSP == refunds in our ledger", rows) { |r| r[:refunded] == r[:psp_refunded] }
+    per_payment("no refund reservation left once refunds settle", rows) { |r| r[:reserved].zero? }
+    # What the PSP actually paid out: reconcile today's settlement report and
+    # hold every line for these payments to the ledger (DECISIONS #18).
+    SettlementReconciliationJob.perform_now(Time.current.utc.to_date.iso8601)
+    lines = SettlementLine.where(psp_name: "nordpay", psp_reference: all.map(&:psp_reference))
+    check("settlement report: #{lines.count} lines, #{lines.discrepancies.count} not matching the ledger", lines.discrepancies.none?)
+    per_payment("every capture fully settled by the PSP", rows) { |r| Ledger.settled_minor(Payment.find(r[:id])) == r[:captured] }
+
     ours = LedgerEntry.where(payment: all).distinct.pluck(:transfer_id)
     check("every ledger transfer nets to zero (#{ours.size} transfers)", (Ledger.unbalanced_transfer_ids & ours).empty?)
 

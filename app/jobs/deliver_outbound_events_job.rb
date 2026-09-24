@@ -83,7 +83,7 @@ class DeliverOutboundEventsJob < ApplicationJob
     merchant = T.must(event.merchant)
     body = JSON.generate(event.envelope)
     ts = Time.current.to_i
-    signature = "t=#{ts},v1=#{OpenSSL::HMAC.hexdigest('SHA256', merchant.webhook_secret, "#{ts}.#{body}")}"
+    signature = WebhookSignature.header(body, secrets: merchant.webhook_signing_secrets, at: ts)
 
     response = Faraday.new(url: T.must(merchant.webhook_url)) do |f|
       f.options.open_timeout = OPEN_TIMEOUT

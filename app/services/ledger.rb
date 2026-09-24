@@ -5,12 +5,25 @@
 # to zero per currency, appended inside one transaction and never edited
 # (DECISIONS #5). All balances and per-payment totals are SUMs over rows.
 #
-#   capture X:  debit psp_receivable X   / credit merchant_payable X
-#   refund  Y:  debit merchant_payable Y / credit refunds_paid Y
+#   capture X:        debit psp_receivable X     / credit merchant_payable X
+#   refund Y, two-phase (DECISIONS #16):
+#     reserve (asked): debit merchant_payable Y   / credit refunds_reserved Y
+#     post (PSP ok):   debit refunds_reserved Y   / credit refunds_paid Y
+#     void (PSP no):   debit refunds_reserved Y   / credit merchant_payable Y
+#   settle, from the PSP's settlement report (DECISIONS #18):
+#     capture G, fee F: debit psp_payouts G−F, debit psp_fees F / credit psp_receivable G
+#     refund R:         debit refunds_paid R            / credit psp_payouts R
+#
+# A reservation is money no longer available to the merchant but not yet
+# returned to the customer. It is a real balance, not a side calculation.
+# psp_receivable is what the PSP owes us for captures; settlement clears it,
+# so a payment whose receivable never reaches zero was never paid out.
 module Ledger
   extend T::Sig
 
   class Unbalanced < StandardError; end
+  # Posting or voiding a refund whose reservation is missing: a bug upstream.
+  class NoReservation < StandardError; end
 
   class Leg < T::Struct
     const :account_kind, String # LedgerAccount::KINDS
@@ -57,16 +70,47 @@ module Ledger
       )
     end
 
+    # Phase 1, in the same transaction as the refund row: the money is spoken for.
     sig { params(refund: Refund).returns(String) }
-    def record_refund!(refund)
-      payment = T.must(refund.payment)
-      record!(
-        merchant: T.must(payment.merchant), currency: refund.currency, payment: payment, refund: refund,
-        legs: [
-          Leg.new(account_kind: "merchant_payable", direction: "debit", amount_minor: refund.amount_minor),
-          Leg.new(account_kind: "refunds_paid", direction: "credit", amount_minor: refund.amount_minor)
-        ]
-      )
+    def reserve_refund!(refund)
+      refund_transfer!(refund, from: "merchant_payable", to: "refunds_reserved")
+    end
+
+    # Phase 2a: the PSP returned the money to the customer.
+    sig { params(refund: Refund).returns(String) }
+    def post_refund!(refund)
+      require_reservation!(refund)
+      refund_transfer!(refund, from: "refunds_reserved", to: "refunds_paid")
+    end
+
+    # Phase 2b: the PSP refused; the reservation goes back to the merchant.
+    sig { params(refund: Refund).returns(String) }
+    def void_refund!(refund)
+      require_reservation!(refund)
+      refund_transfer!(refund, from: "refunds_reserved", to: "merchant_payable")
+    end
+
+    # A matched settlement line: money the PSP actually paid out or took back.
+    # Zero-amount legs are omitted (a fee-free line has no fee leg); a capture
+    # smaller than its fee pays out a negative net, booked as a credit.
+    sig { params(line: SettlementLine).returns(String) }
+    def record_settlement!(line)
+      payment = T.must(line.payment)
+      signed = if line.kind == "capture"
+        { "psp_receivable" => -line.gross_minor, "psp_fees" => line.fee_minor, "psp_payouts" => line.net_minor }
+      else
+        { "refunds_paid" => line.gross_minor, "psp_payouts" => -line.gross_minor }
+      end
+      legs = signed.reject { |_, amount| amount.zero? }.map do |kind, amount|
+        Leg.new(account_kind: kind, direction: amount.positive? ? "debit" : "credit", amount_minor: amount.abs)
+      end
+      record!(merchant: T.must(payment.merchant), currency: line.currency, payment: payment, refund: line.refund, legs: legs)
+    end
+
+    # What the PSP has settled for this payment's captures so far.
+    sig { params(payment: Payment).returns(Integer) }
+    def settled_minor(payment)
+      sum_for(payment, kind: "psp_receivable", direction: "credit")
     end
 
     # ── Sums. Always from rows, never from a cached column. ─────────────────
@@ -84,12 +128,24 @@ module Ledger
       sum_for(payment, kind: "refunds_paid", direction: "credit")
     end
 
-    # GET /v1/balance: what we owe the merchant, per currency.
+    # Money spoken for by refunds still in flight at the PSP.
+    sig { params(payment: Payment).returns(Integer) }
+    def reserved_minor(payment)
+      sum_for(payment, kind: "refunds_reserved", direction: "credit") -
+        sum_for(payment, kind: "refunds_reserved", direction: "debit")
+    end
+
+    # GET /v1/balance "available": what we owe the merchant, per currency,
+    # net of refunds already reserved.
     sig { params(merchant: Merchant).returns(T::Hash[String, Integer]) }
     def balances(merchant)
-      merchant.ledger_accounts.where(kind: "merchant_payable").to_h do |account|
-        [account.currency, account.balance_minor]
-      end
+      balances_of(merchant, "merchant_payable")
+    end
+
+    # GET /v1/balance "pending": refunds reserved but not yet confirmed.
+    sig { params(merchant: Merchant).returns(T::Hash[String, Integer]) }
+    def reserved_balances(merchant)
+      balances_of(merchant, "refunds_reserved")
     end
 
     # Reconciliation: any transfer whose legs do not net to zero. Empty is healthy.
@@ -101,7 +157,43 @@ module Ledger
         .pluck(:transfer_id)
     end
 
+    # Reconciliation: refunds whose reservation disagrees with their state —
+    # a pending refund must hold exactly its amount, a settled one nothing.
+    sig { returns(T::Array[String]) }
+    def reservation_drift_refund_ids
+      held = LedgerEntry.joins(:account).where(ledger_accounts: { kind: "refunds_reserved" })
+                        .group(:refund_id)
+                        .sum(Arel.sql("CASE direction WHEN 'credit' THEN amount_minor ELSE -amount_minor END"))
+      Refund.where(id: held.keys).or(Refund.where(state: "pending")).pluck(:id, :state, :amount_minor)
+            .reject { |id, state, amount| held.fetch(id, 0).to_i == (state == "pending" ? amount : 0) }
+            .map(&:first)
+    end
+
     private
+
+    sig { params(refund: Refund, from: String, to: String).returns(String) }
+    def refund_transfer!(refund, from:, to:)
+      payment = T.must(refund.payment)
+      record!(
+        merchant: T.must(payment.merchant), currency: refund.currency, payment: payment, refund: refund,
+        legs: [
+          Leg.new(account_kind: from, direction: "debit", amount_minor: refund.amount_minor),
+          Leg.new(account_kind: to, direction: "credit", amount_minor: refund.amount_minor)
+        ]
+      )
+    end
+
+    sig { params(refund: Refund).void }
+    def require_reservation!(refund)
+      held = LedgerEntry.joins(:account)
+                        .where(refund: refund, direction: "credit", ledger_accounts: { kind: "refunds_reserved" }).exists?
+      raise NoReservation, "refund #{refund.id} has no reservation to settle" unless held
+    end
+
+    sig { params(merchant: Merchant, kind: String).returns(T::Hash[String, Integer]) }
+    def balances_of(merchant, kind)
+      merchant.ledger_accounts.where(kind: kind).to_h { |account| [account.currency, account.balance_minor] }
+    end
 
     sig { params(payment: Payment, kind: String, direction: String).returns(Integer) }
     def sum_for(payment, kind:, direction:)

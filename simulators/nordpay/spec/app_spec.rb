@@ -17,7 +17,8 @@ RSpec.describe Nordpay::App do
     described_class.failure.merge!("timeout_rate" => 0, "flaky_500_rate" => 0, "duplicate_response_rate" => 0,
                                    "decline_rate" => 0, "timeout_seconds" => 0.05,
                                    "webhook_duplicate_rate" => 0, "webhook_out_of_order_rate" => 0, "webhook_late_rate" => 0,
-                                   "webhook_never_rate" => 0, "webhook_bad_signature_rate" => 0)
+                                   "webhook_never_rate" => 0, "webhook_bad_signature_rate" => 0,
+                                   "settlement_drop_rate" => 0)
     post "/_sim/reset"
   end
 
@@ -173,5 +174,46 @@ RSpec.describe Nordpay::App do
     expect(JSON.parse(last_response.body)).to include("status" => "captured", "captured_minor" => 2500)
     post "/charges/ref_cap/capture", "{}", headers
     expect(last_response.status).to eq(409)
+  end
+
+  describe "GET /settlements" do
+    def report(date = Time.now.utc.to_date.iso8601)
+      get "/settlements", { date: date }, headers
+      CSV.parse(last_response.body, headers: true).map(&:to_h)
+    end
+
+    it "lists each capture net of its fee and each succeeded refund, for the day, as CSV" do
+      charge!("st_1", amount_minor: 10_000)
+      post "/charges/st_1/capture", JSON.generate(amount_minor: 6000), headers
+      post "/charges/st_1/capture", JSON.generate(amount_minor: 4000), headers
+      post "/charges/st_1/refunds", JSON.generate(amount_minor: 2500), headers.merge("HTTP_X_REQUEST_ID" => "rf_1")
+      post "/charges/st_1/refunds", JSON.generate(amount_minor: 2500), headers.merge("HTTP_X_REQUEST_ID" => "rf_1") # replay
+
+      lines = report
+      expect(last_response.headers["Content-Type"]).to include("text/csv")
+      expect(lines.map { |l| l.values_at("type", "gross_minor", "fee_minor", "net_minor") }).to eq([
+        ["capture", "6000", "109", "5891"],   # 25 + 1.4% of 6000 = 25 + 84
+        ["capture", "4000", "81", "3919"],    # 25 + 56
+        ["refund", "2500", "0", "-2500"]      # the replayed refund settles once
+      ])
+      expect(lines.map { |l| l["reference"] }.uniq).to eq(["st_1"])
+      expect(lines.last["refund_reference"]).to eq("rf_1")
+    end
+
+    it "settles nothing for a declined charge or a failed refund, and nothing on other days" do
+      charge!("st_2", force: "decline")
+      charge!("st_3")
+      post "/charges/st_3/refunds", JSON.generate(amount_minor: 100), headers.merge("HTTP_X_REQUEST_ID" => "rf_2") # not captured → failed
+
+      expect(report).to be_empty
+      expect(report("2000-01-01")).to be_empty
+    end
+
+    it "rejects a bad date and an unauthenticated caller" do
+      get "/settlements", { date: "yesterday" }, headers
+      expect(last_response.status).to eq(400)
+      get "/settlements", { date: "2026-01-01" }
+      expect(last_response.status).to eq(401)
+    end
   end
 end

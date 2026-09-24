@@ -31,13 +31,26 @@ RSpec.describe "V1 capture / cancel / refunds / balance", type: :request do
   end
 
   describe "POST /v1/payments/:id/capture" do
-    it "202s and enqueues a capture for the full authorized amount by default" do
+    it "202s, records the capture request for the full authorized amount by default, and enqueues it" do
       payment = authorized_payment
 
-      expect do
-        post "/v1/payments/#{payment.id}/capture", params: "{}", headers: auth_headers(key)
-      end.to have_enqueued_job(CapturePaymentJob).with(payment.id, 2500)
+      post "/v1/payments/#{payment.id}/capture", params: "{}", headers: auth_headers(key)
+
       expect(response).to have_http_status(:accepted)
+      capture = payment.captures.sole
+      expect(capture).to have_attributes(amount_minor: 2500, base_captured_minor: 0, state: "pending")
+      expect(CapturePaymentJob).to have_been_enqueued.with(capture.id)
+    end
+
+    it "allows one capture in flight per payment: a second gets a retriable 409 (DECISIONS #20)" do
+      payment = authorized_payment
+      post "/v1/payments/#{payment.id}/capture", params: { amount_minor: 1000 }.to_json, headers: auth_headers(key)
+
+      post "/v1/payments/#{payment.id}/capture", params: { amount_minor: 500 }.to_json, headers: auth_headers(key)
+
+      expect(response).to have_http_status(:conflict)
+      expect(json_body["error"]).to include("code" => "capture_in_progress", "retriable" => true)
+      expect(payment.captures.count).to eq(1)
     end
 
     it "allows a partial capture and rejects one beyond the authorized amount" do
@@ -141,6 +154,19 @@ RSpec.describe "V1 capture / cancel / refunds / balance", type: :request do
     end
   end
 
+  describe "when the PSP cannot be reached" do
+    it "answers a synchronous cancel with a retriable 503, not a 500, and leaves the payment untouched" do
+      payment = authorized_payment
+      adapter.script(:cancel, PspCircuit::Open.new("nordpay circuit open"))
+
+      post "/v1/payments/#{payment.id}/cancel", params: "{}", headers: auth_headers(key)
+
+      expect(response).to have_http_status(:service_unavailable)
+      expect(json_body["error"]).to include("code" => "psp_unavailable", "retriable" => true)
+      expect(payment.reload.state).to eq("authorized")
+    end
+  end
+
   describe "GET /v1/balance" do
     it "derives per-currency balances from the ledger" do
       captured_payment(2500)
@@ -154,6 +180,17 @@ RSpec.describe "V1 capture / cancel / refunds / balance", type: :request do
         { "currency" => "EUR", "amount_minor" => 2500, "display_amount" => "25.00" },
         { "currency" => "VND", "amount_minor" => 500_000, "display_amount" => "500000" }
       )
+      expect(json_body["pending"]).to eq([])
+    end
+
+    it "moves a requested refund from available to pending until the PSP confirms it" do
+      payment = captured_payment(2500)
+      post "/v1/payments/#{payment.id}/refunds", params: { amount_minor: 500 }.to_json, headers: auth_headers(key)
+
+      get "/v1/balance", headers: auth_headers(key)
+
+      expect(json_body["available"]).to eq([{ "currency" => "EUR", "amount_minor" => 2000, "display_amount" => "20.00" }])
+      expect(json_body["pending"]).to eq([{ "currency" => "EUR", "amount_minor" => 500, "display_amount" => "5.00" }])
     end
   end
 end

@@ -73,6 +73,24 @@ CREATE TABLE public.ar_internal_metadata (
 
 
 --
+-- Name: captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.captures (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    payment_id uuid NOT NULL,
+    amount_minor bigint NOT NULL,
+    base_captured_minor bigint NOT NULL,
+    state character varying DEFAULT 'pending'::character varying NOT NULL,
+    failure_code character varying,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_captures_amount_positive CHECK ((amount_minor > 0)),
+    CONSTRAINT chk_captures_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying])::text[])))
+);
+
+
+--
 -- Name: fx_rates; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -134,7 +152,7 @@ CREATE TABLE public.ledger_accounts (
     kind character varying NOT NULL,
     currency character varying(3) NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_ledger_accounts_kind CHECK (((kind)::text = ANY ((ARRAY['psp_receivable'::character varying, 'merchant_payable'::character varying, 'refunds_paid'::character varying])::text[])))
+    CONSTRAINT chk_ledger_accounts_kind CHECK (((kind)::text = ANY ((ARRAY['psp_receivable'::character varying, 'merchant_payable'::character varying, 'refunds_reserved'::character varying, 'refunds_paid'::character varying, 'psp_payouts'::character varying, 'psp_fees'::character varying])::text[])))
 );
 
 
@@ -169,7 +187,9 @@ CREATE TABLE public.merchants (
     webhook_url character varying,
     default_currency character varying(3) NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
-    updated_at timestamp(6) without time zone NOT NULL
+    updated_at timestamp(6) without time zone NOT NULL,
+    previous_webhook_secret character varying,
+    previous_webhook_secret_expires_at timestamp(6) without time zone
 );
 
 
@@ -248,6 +268,9 @@ CREATE TABLE public.payments (
     lock_version integer DEFAULT 0 NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
+    next_check_at timestamp(6) without time zone,
+    check_attempts integer DEFAULT 0 NOT NULL,
+    first_sent_at timestamp(6) without time zone,
     CONSTRAINT chk_payments_amount_positive CHECK ((amount_minor > 0)),
     CONSTRAINT chk_payments_captured_non_negative CHECK ((captured_minor >= 0)),
     CONSTRAINT chk_payments_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'requires_action'::character varying, 'authorized'::character varying, 'unknown'::character varying, 'captured'::character varying, 'canceled'::character varying, 'failed'::character varying, 'part_refunded'::character varying, 'refunded'::character varying])::text[])))
@@ -284,11 +307,46 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: settlement_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.settlement_lines (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    psp_name character varying NOT NULL,
+    external_id character varying NOT NULL,
+    settled_on date NOT NULL,
+    kind character varying NOT NULL,
+    psp_reference character varying NOT NULL,
+    refund_reference character varying,
+    payment_id uuid,
+    refund_id uuid,
+    gross_minor bigint NOT NULL,
+    fee_minor bigint NOT NULL,
+    net_minor bigint NOT NULL,
+    currency character varying(3) NOT NULL,
+    booked_at timestamp(6) without time zone NOT NULL,
+    status character varying NOT NULL,
+    problem character varying,
+    created_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_settlement_lines_kind CHECK (((kind)::text = ANY ((ARRAY['capture'::character varying, 'refund'::character varying])::text[]))),
+    CONSTRAINT chk_settlement_lines_status CHECK (((status)::text = ANY ((ARRAY['matched'::character varying, 'unmatched'::character varying, 'mismatch'::character varying])::text[])))
+);
+
+
+--
 -- Name: ar_internal_metadata ar_internal_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.ar_internal_metadata
     ADD CONSTRAINT ar_internal_metadata_pkey PRIMARY KEY (key);
+
+
+--
+-- Name: captures captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.captures
+    ADD CONSTRAINT captures_pkey PRIMARY KEY (id);
 
 
 --
@@ -388,6 +446,21 @@ ALTER TABLE ONLY public.schema_migrations
 
 
 --
+-- Name: settlement_lines settlement_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.settlement_lines
+    ADD CONSTRAINT settlement_lines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: idx_captures_one_pending_per_payment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_captures_one_pending_per_payment ON public.captures USING btree (payment_id) WHERE ((state)::text = 'pending'::text);
+
+
+--
 -- Name: idx_delivery_attempts_unique; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -448,6 +521,13 @@ CREATE UNIQUE INDEX idx_ledger_accounts_unique ON public.ledger_accounts USING b
 --
 
 CREATE INDEX idx_ledger_entries_balance ON public.ledger_entries USING btree (account_id, currency);
+
+
+--
+-- Name: idx_ledger_entries_refund_leg; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_ledger_entries_refund_leg ON public.ledger_entries USING btree (refund_id, account_id, direction) WHERE (refund_id IS NOT NULL);
 
 
 --
@@ -514,6 +594,13 @@ CREATE UNIQUE INDEX idx_transitions_most_recent ON public.payment_transitions US
 
 
 --
+-- Name: index_captures_on_payment_id_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_captures_on_payment_id_and_created_at ON public.captures USING btree (payment_id, created_at);
+
+
+--
 -- Name: index_ledger_entries_on_payment_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -535,10 +622,45 @@ CREATE INDEX index_outbound_events_on_payment_id ON public.outbound_events USING
 
 
 --
+-- Name: index_payments_on_sweeper_due_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_payments_on_sweeper_due_at ON public.payments USING btree (COALESCE(next_check_at, (updated_at + '00:02:00'::interval))) WHERE ((state)::text = ANY ((ARRAY['pending'::character varying, 'unknown'::character varying])::text[]));
+
+
+--
 -- Name: index_refunds_on_payment_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX index_refunds_on_payment_id ON public.refunds USING btree (payment_id);
+
+
+--
+-- Name: index_settlement_lines_on_payment_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_settlement_lines_on_payment_id ON public.settlement_lines USING btree (payment_id);
+
+
+--
+-- Name: index_settlement_lines_on_psp_name_and_external_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX index_settlement_lines_on_psp_name_and_external_id ON public.settlement_lines USING btree (psp_name, external_id);
+
+
+--
+-- Name: index_settlement_lines_on_refund_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_settlement_lines_on_refund_id ON public.settlement_lines USING btree (refund_id);
+
+
+--
+-- Name: index_settlement_lines_on_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_settlement_lines_on_status ON public.settlement_lines USING btree (status) WHERE ((status)::text <> 'matched'::text);
 
 
 --
@@ -554,6 +676,14 @@ CREATE TRIGGER trg_ledger_entries_immutable BEFORE DELETE OR UPDATE ON public.le
 
 ALTER TABLE ONLY public.refunds
     ADD CONSTRAINT fk_rails_25267b0e17 FOREIGN KEY (payment_id) REFERENCES public.payments(id);
+
+
+--
+-- Name: settlement_lines fk_rails_2ee98b6baf; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.settlement_lines
+    ADD CONSTRAINT fk_rails_2ee98b6baf FOREIGN KEY (refund_id) REFERENCES public.refunds(id);
 
 
 --
@@ -581,6 +711,14 @@ ALTER TABLE ONLY public.ledger_entries
 
 
 --
+-- Name: settlement_lines fk_rails_48aaaf96e9; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.settlement_lines
+    ADD CONSTRAINT fk_rails_48aaaf96e9 FOREIGN KEY (payment_id) REFERENCES public.payments(id);
+
+
+--
 -- Name: payment_transitions fk_rails_6a81222e13; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -594,6 +732,14 @@ ALTER TABLE ONLY public.payment_transitions
 
 ALTER TABLE ONLY public.outbound_events
     ADD CONSTRAINT fk_rails_7005a6a59c FOREIGN KEY (merchant_id) REFERENCES public.merchants(id);
+
+
+--
+-- Name: captures fk_rails_835edaeb47; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.captures
+    ADD CONSTRAINT fk_rails_835edaeb47 FOREIGN KEY (payment_id) REFERENCES public.payments(id);
 
 
 --
@@ -643,6 +789,12 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260924000006'),
+('20260924000005'),
+('20260924000004'),
+('20260924000003'),
+('20260924000002'),
+('20260924000001'),
 ('20260923000001'),
 ('20260922000010'),
 ('20260922000009'),

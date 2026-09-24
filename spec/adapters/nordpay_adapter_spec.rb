@@ -92,4 +92,59 @@ RSpec.describe NordpayAdapter do
     expect(adapter.supports_partial_refund?).to be true
     expect(adapter.separate_authorize_and_capture?).to be true
   end
+
+  describe "#verify_webhook" do
+    let(:body) { { "id" => "evt_1", "type" => "charge.captured", "created_at" => "2026-01-01T10:01:00.000Z", "data" => charge.merge("status" => "captured") }.to_json }
+
+    def signed(secret) = { "X-Nordpay-Signature" => OpenSSL::HMAC.hexdigest("SHA256", secret, body) }
+
+    it "accepts a body signed with the configured secret and normalises it" do
+      event = adapter.verify_webhook(body, signed("np_whsec_test"))
+      expect(event).to have_attributes(external_id: "evt_1", status: PspAdapter::Result::Status::Captured)
+    end
+
+    it "rejects a wrong secret and a missing header" do
+      expect { adapter.verify_webhook(body, signed("wrong")) }.to raise_error(PspAdapter::InvalidSignature, /mismatch/)
+      expect { adapter.verify_webhook(body, {}) }.to raise_error(PspAdapter::InvalidSignature, /missing/)
+    end
+
+    it "accepts both secrets while rotating (DECISIONS #15)" do
+      rotating = described_class.new(base_url: "http://nordpay.test", api_key: "np_test_key", webhook_secrets: %w[np_new np_whsec_test])
+      expect(rotating.verify_webhook(body, signed("np_whsec_test")).external_id).to eq("evt_1")
+      expect(rotating.verify_webhook(body, signed("np_new")).external_id).to eq("evt_1")
+    end
+  end
+
+  describe "circuit breaker (DECISIONS #17)" do
+    it "refuses before sending once the PSP keeps failing, so a refused authorize can never be ambiguous" do
+      stub = stub_request(:get, %r{nordpay.test/charges/}).to_return(status: 503, body: "{}")
+      10.times { adapter.fetch("ph_x") rescue PspAdapter::Unavailable }
+      expect(stub).to have_been_requested.times(10)
+
+      charge_stub = stub_request(:post, "http://nordpay.test/charges")
+      expect { adapter.authorize(create(:payment)) }.to raise_error(PspCircuit::Open)
+      expect(charge_stub).not_to have_been_requested
+    end
+  end
+
+  describe "#settlement_report" do
+    it "parses the day's CSV into settlement lines keyed by our references" do
+      csv = <<~CSV
+        line_id,type,reference,refund_reference,gross_minor,fee_minor,net_minor,currency,booked_at
+        stl_1,capture,ph_a,,6000,109,5891,EUR,2026-09-23T10:00:00.000Z
+        stl_2,refund,ph_a,phr_b,2500,0,-2500,EUR,2026-09-23T11:00:00.000Z
+      CSV
+      stub_request(:get, "http://nordpay.test/settlements?date=2026-09-23").to_return(status: 200, body: csv, headers: { "Content-Type" => "text/csv" })
+
+      lines = adapter.settlement_report(Date.new(2026, 9, 23))
+
+      expect(lines.map { |l| [l.kind, l.psp_reference, l.refund_reference, l.gross_minor, l.fee_minor, l.net_minor] })
+        .to eq([["capture", "ph_a", nil, 6000, 109, 5891], ["refund", "ph_a", "phr_b", 2500, 0, -2500]])
+    end
+
+    it "treats an unreadable report as the PSP's error, not ours to guess at" do
+      stub_request(:get, %r{nordpay.test/settlements}).to_return(status: 200, body: "line_id\nstl_1\n", headers: { "Content-Type" => "text/csv" })
+      expect { adapter.settlement_report(Date.new(2026, 9, 23)) }.to raise_error(PspAdapter::Rejected, /unreadable/)
+    end
+  end
 end

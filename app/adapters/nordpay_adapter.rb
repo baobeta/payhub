@@ -12,11 +12,12 @@ class NordpayAdapter < PspAdapter
   OPEN_TIMEOUT = 1
   READ_TIMEOUT = 3
 
-  sig { params(base_url: String, api_key: String, webhook_secret: String).void }
+  # webhook_secrets: current first; more than one only while rotating (#15).
+  sig { params(base_url: String, api_key: String, webhook_secrets: T::Array[String]).void }
   def initialize(base_url: ENV.fetch("NORDPAY_URL", "http://localhost:4001"),
                  api_key: ENV.fetch("NORDPAY_API_KEY", "np_test_key"),
-                 webhook_secret: ENV.fetch("NORDPAY_WEBHOOK_SECRET", "np_whsec_test"))
-    @webhook_secret = webhook_secret
+                 webhook_secrets: WebhookSignature.secrets_from_env("NORDPAY_WEBHOOK_SECRETS", "NORDPAY_WEBHOOK_SECRET", "np_whsec_test"))
+    @webhook_secrets = webhook_secrets
     @conn = T.let(
       Faraday.new(url: base_url) do |f|
         f.request :json
@@ -101,17 +102,32 @@ class NordpayAdapter < PspAdapter
     to_refund_result(T.cast(response.body, T::Hash[String, T.untyped]))
   end
 
-  # Signature: X-Nordpay-Signature: <hex HMAC-SHA256 of the raw body>.
+  # GET /settlements?date= — a CSV, one row per capture (net of fee) or refund.
+  sig { override.params(date: Date).returns(T.nilable(T::Array[SettlementReportLine])) }
+  def settlement_report(date)
+    response = request(:get, "/settlements?date=#{date.iso8601}")
+    CSV.parse(response.body.to_s, headers: true).map do |parsed|
+      row = T.cast(parsed, CSV::Row) # headers: true always yields rows, never arrays
+      SettlementReportLine.new(
+        external_id: row.fetch("line_id"), kind: row.fetch("type"), psp_reference: row.fetch("reference"),
+        refund_reference: row["refund_reference"].presence, gross_minor: Integer(row.fetch("gross_minor")),
+        fee_minor: Integer(row.fetch("fee_minor")), net_minor: Integer(row.fetch("net_minor")),
+        currency: row.fetch("currency"), booked_at: Time.iso8601(row.fetch("booked_at"))
+      )
+    end
+  rescue KeyError, ArgumentError, CSV::MalformedCSVError => e
+    raise Rejected.new(200, "nordpay settlement report unreadable: #{e.message}")
+  end
+
+  # Signature: X-Nordpay-Signature: <hex HMAC-SHA256 of the raw body>. Nordpay
+  # signs no timestamp; that is its wire format, and we don't invent one (#15).
   # Events: { id, type: charge.authorized|charge.captured|charge.declined, created_at, data: <charge> }
   sig { override.params(raw_body: String, headers: T::Hash[String, String]).returns(WebhookEvent) }
   def verify_webhook(raw_body, headers)
-    given = headers["X-Nordpay-Signature"].to_s
-    raise InvalidSignature, "missing signature" if given.empty?
-
-    expected = OpenSSL::HMAC.hexdigest("SHA256", @webhook_secret, raw_body)
-    raise InvalidSignature, "signature mismatch" unless ActiveSupport::SecurityUtils.secure_compare(expected, given)
-
+    WebhookSignature.verify_body!(raw_body, headers["X-Nordpay-Signature"].to_s, secrets: @webhook_secrets)
     parse_webhook(JSON.parse(raw_body))
+  rescue WebhookSignature::Invalid => e
+    raise InvalidSignature, e.message
   rescue JSON::ParserError => e
     raise MalformedWebhook, e.message
   end
@@ -136,11 +152,21 @@ class NordpayAdapter < PspAdapter
 
   private
 
+  # Every call goes through the PSP's circuit breaker (DECISIONS #17). An open
+  # circuit raises PspCircuit::Open — an Unavailable — before anything is sent.
   sig do
     params(method: Symbol, path: String, body: T.nilable(T::Hash[Symbol, T.untyped]),
            headers: T::Hash[String, String]).returns(Faraday::Response)
   end
   def request(method, path, body: nil, headers: {})
+    PspCircuit.call("nordpay") { send_request(method, path, body: body, headers: headers) }
+  end
+
+  sig do
+    params(method: Symbol, path: String, body: T.nilable(T::Hash[Symbol, T.untyped]),
+           headers: T::Hash[String, String]).returns(Faraday::Response)
+  end
+  def send_request(method, path, body: nil, headers: {})
     operation = "#{method.upcase} #{path.sub(%r{/ph_[a-f0-9]+}, '/:ref')}"
     response = @conn.run_request(method, path, body, headers)
     outcome = response.status.between?(200, 299) ? "ok" : "http_#{response.status}"

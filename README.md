@@ -17,7 +17,8 @@ A payment orchestration API. Merchants integrate once; PayHub routes each paymen
 - **Idempotency decided by a unique index**, not a `SELECT`: three concurrent copies of one request make exactly one payment.
 - **An append-only double-entry ledger** — a trigger rejects `UPDATE`/`DELETE`; every balance is a `SUM` over rows.
 - **Two hostile PSP simulators** that time out, 500, duplicate responses and send webhooks late, twice, out of order, badly signed or never.
-- **[`bin/rails chaos:run`](#chaos-run-the-one-rule-live)** turns them up and checks the ledger against the PSP's own records.
+- **[`bin/rails chaos:run`](#chaos-run-the-one-rule-live)** turns them up and checks the ledger against the PSP's own records; a **seeded deterministic simulation** does the same in-process, replayably, and found two bugs the specs had missed.
+- **Settlement-file reconciliation**: the PSP's daily payout report is matched line by line to the ledger — fees booked, receivables cleared, and anything the PSP paid that we never booked flagged.
 - **Keyset pagination proven at 1M rows**, OpenTelemetry traces across HTTP → Sidekiq → PSP, Sorbet-typed adapters.
 
 ```mermaid
@@ -78,7 +79,7 @@ Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16. Both PSP simulators are s
 4. Every `POST` carries an **Idempotency-Key**; the claim is an `INSERT` into a unique index, and the unique index — not a `SELECT` — decides who wins.
 5. Money is integer **minor units** next to an ISO-4217 code; `Currency` is the only place that knows VND has none. The FX rate is copied onto the payment at creation, never joined.
 6. The **ledger** is append-only double-entry: every movement is legs that sum to zero, a trigger rejects `UPDATE`/`DELETE`, and balances, captured and refunded totals are `SUM`s over rows.
-7. Refunds are guarded by `FOR UPDATE` on the payment plus `captured − refunded (ledger) − pending (reservations)`; two racing refunds serialize on the lock.
+7. Refunds are guarded by `FOR UPDATE` on the payment plus `captured − refunded − reserved`, all three ledger sums: a refund request writes a pending transfer that the PSP's answer later posts or voids; two racing refunds serialize on the lock.
 8. **Adapters** (`Nordpay`, `Kiripay`) satisfy one abstract, Sorbet-checked contract and declare what they support; the domain never branches on a PSP's name.
 9. Inbound **webhooks** are signature-verified with `secure_compare`, deduplicated by a unique index on the PSP's event id, and applied by PSP timestamp so out-of-order delivery cannot walk a payment backwards.
 10. Outbound events are a **transactional outbox** written in the same transaction as the state change; a minute-sweeper delivers them with backoff, and a second sweeper polls anything stuck and pages after 15 minutes.
@@ -181,8 +182,9 @@ waits for the sweepers to settle everything, and checks — against the **simula
 
 - N keys produced exactly N payments, and the PSP holds no charge that isn't one of our payments,
 - money the PSP captured == money captured in our ledger, per payment,
-- money the PSP refunded == refunds in our ledger, and refunded ≤ captured, per payment,
-- every ledger transfer nets to zero.
+- money the PSP refunded == refunds in our ledger, refunded ≤ captured, and no refund reservation left over, per payment,
+- every ledger transfer nets to zero,
+- and, from the simulator's settlement report for the day, every line matches the ledger and every capture was paid out in full.
 
 It exits non-zero on any violation and restores the simulator's config afterwards.
 
@@ -193,6 +195,7 @@ It exits non-zero on any violation and restores the simulator's config afterward
 - **Request specs for every endpoint**, including the unhappy paths.
 - **Job specs that call `perform` twice** and assert the ledger is unchanged (`capture_payment_job_spec`, `refund_payment_job_spec`).
 - **Real-thread concurrency tests** with real connections and no transactional fixture: N identical idempotency keys (one wins), N simultaneous refunds on one capture (one wins), three outbox sweepers over one queue (no double-send).
+- **A deterministic simulation** (`spec/simulation`, DECISIONS #19): one seed drives PSP faults, job order and duplication, webhook loss and reordering, merchant actions and a virtual clock; invariants after every step, and books equal to the PSP's truth once it settles. A failure prints its seed and replays exactly. Its first runs found two real bugs (#11's refinement, #20).
 - **A property test**: 25 random capture/refund sequences against a PSP that always says yes — the ledger stays balanced, `refunded ≤ captured ≤ authorized`, balance = captured − refunded.
 - **The state-machine spec parses the Mermaid diagram in this README** and fails if code and diagram drift beyond the one declared extra edge.
 - **A PAN never reaches the log**, proven by capturing everything Rails logs during a request that carries one.
@@ -221,7 +224,7 @@ Plus one edge the diagram omits and the code adds deliberately: `pending → fai
 
 ## Out of scope, on purpose
 
-No UI. No real PSP credentials or card numbers. No chargebacks, disputes, payouts or settlement. No Kubernetes — `docker compose up` is the deployment. The production `Dockerfile` hardening (multi-stage, non-root, precompiled bootsnap) is noted, not done.
+No UI. No real PSP credentials or card numbers. No chargebacks or disputes, and no matching of payouts against bank deposits — settlement reports are reconciled against the ledger (DECISIONS #18), the bank statement is not. No Kubernetes — `docker compose up` is the deployment. The production `Dockerfile` hardening (multi-stage, non-root, precompiled bootsnap) is noted, not done.
 
 ---
 

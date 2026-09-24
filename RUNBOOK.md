@@ -28,7 +28,7 @@ Read the last row's `metadata`. It usually tells you the story: `"error":"... Re
 
 | You see | Situation | Go to |
 |---|---|---|
-| `state=unknown`, sweeper log lines `resolve_unknown.timeout` every minute | **PSP is unreachable** — we keep asking, it keeps not answering | §3 |
+| `state=unknown`, sweeper log lines `resolve_unknown.timeout`, further apart each time | **PSP is unreachable** — we keep asking, it keeps not answering | §3 |
 | `state=unknown`, sweeper lines `sweeper.skip` with `Rejected` | **Our bug** — the PSP answers, we cannot interpret it | §5 |
 | `state=pending`, no `authorize` log line at all | **Job never ran** — Sidekiq down or queue backed up | §6 |
 | `state=pending` or `unknown` but the PSP simulator/dashboard shows the charge `captured` | **Webhook lost** and the sweeper has not caught up yet | §4 |
@@ -41,7 +41,9 @@ curl -s localhost:4002/healthz   # kiripay
 docker compose ps
 ```
 
-If the PSP is down: **there is nothing to do to the payment.** It is in a safe state — the customer is not being charged twice, the merchant knows it is `pending`/`unknown` via `GET /v1/payments/:id` and the outbound event stream. The sweeper polls every minute and will resolve it the moment the PSP answers. Silence the page for the PSP outage, not the payment.
+If the PSP is down: **there is nothing to do to the payment.** It is in a safe state — the customer is not being charged twice, the merchant knows it is `pending`/`unknown` via `GET /v1/payments/:id` and the outbound event stream. The sweeper keeps polling with backoff (1, 2, 4, 8, 16, then every 30 minutes — DECISIONS #13) and resolves it on the first poll after the PSP answers. When the PSP comes back, don't wait for the backoff: poll the affected payments now with the command in §4. Silence the page for the PSP outage, not the payment.
+
+`psp_circuit.opened` in the log (and `payhub_psp_circuit_opened_total`) means PayHub has stopped calling that PSP for 30 seconds at a time: new payments stay `pending`, sweeps skip it, `POST /cancel` answers a retriable 503. That is the breaker doing its job (DECISIONS #17) — nothing was sent, so nothing is ambiguous. It closes itself on the first successful probe after the PSP recovers.
 
 If the PSP is *up* and we still time out, check `NORDPAY_URL` / `KIRIPAY_URL` in the worker's environment, then go to §5.
 
@@ -56,9 +58,9 @@ curl -s localhost:4001/charges/<PSP_REFERENCE> -H 'Authorization: Bearer np_test
 curl -s 'localhost:4002/charges?merchant_reference=<PSP_REFERENCE>' -H 'Authorization: Bearer kp_test_key'
 ```
 
-- **Charge exists and is `authorized`/`captured`/`declined`:** run the sweeper by hand — it applies exactly what the PSP says, with the PSP's timestamp, and books the ledger through the same code path as the worker:
+- **Charge exists and is `authorized`/`captured`/`declined`:** poll it now — this applies exactly what the PSP says, with the PSP's timestamp, and books the ledger through the same code path as the worker. (Running the whole sweeper would not do: it only polls payments whose backoff has elapsed.)
   ```bash
-  bin/rails runner 'StuckPaymentSweeperJob.perform_now'
+  bin/rails runner 'StuckPaymentSweeperJob.poll_now(Payment.find("<PAYMENT_ID>"))'
   ```
   Re-read the transitions (§1). It should now be resolved. If it is still stuck, go to §5.
 - **404 — the PSP has never seen it:** the request never landed. The sweeper will re-send **with the same `psp_reference`** on its next pass (this is the only re-send in the system, and only after a confirmed 404). Let it.
@@ -107,6 +109,26 @@ WHERE e.payment_id = '<PAYMENT_ID>' ORDER BY e.created_at;
 - If the payment resolved by itself once the PSP came back: no action, the design worked.
 - If you used `source: "operator"`: it is in the history forever, with your reason. Reconciliation at 02:15 will compare it against the PSP and flag any disagreement as `reconciliation.psp_drift`.
 - If a webhook was never sent by the PSP: the sweeper caught it; consider raising the PSP's webhook reliability with them, with the `inbound_events` gap as evidence.
+
+## Settlement discrepancies (the morning after)
+
+`settlement.discrepancy` at ERROR comes from the 03:45 settlement run (DECISIONS #18). Never "fix" the ledger to match; read the line first:
+
+```bash
+bin/rails runner 'pp SettlementLine.discrepancies.where(settled_on: Date.yesterday).pluck(:status, :kind, :psp_reference, :gross_minor, :problem)'
+```
+
+- **`unmatched`** — the PSP paid out for a reference we have no payment for. Money moved outside our books: escalate to the day team with the line.
+- **`mismatch`, "ledger captured only …"** — the PSP settled more than we captured. This is the double-charge signal: compare the PSP's charge (§4) with our transitions before anything else.
+- **`mismatch`, "refund is pending in our books"** — the PSP refunded, we haven't heard yet. Poll the refund (`RefundPaymentJob.perform_now(<REFUND_ID>)`); the line stays a mismatch as a record that we were late.
+- **`settlement.unsettled_capture`** (WARN) — captured more than 3 days ago and not in any report. Ask the PSP; a capture they never pay is money we are owed.
+
+## Rotating a webhook secret (not a page — planned work)
+
+Every verifier accepts a list of secrets, so no step below drops a webhook (DECISIONS #15).
+
+- **A PSP's secret (inbound).** Set `NORDPAY_WEBHOOK_SECRETS=<new>,<old>` (or `KIRIPAY_…`) on web and restart; the single-secret variable is ignored while the list is set. Switch the secret in the PSP's dashboard. Once `inbound_events` shows no `signature_valid=false` rows for an hour, set the list to `<new>` alone.
+- **A merchant's secret (outbound).** `bin/rails "merchants:rotate_webhook_secret[<MERCHANT_ID>]"` prints the new secret once. For 24 hours every webhook carries two `v1=` signatures, new and old, so the merchant can deploy the new secret whenever suits them in that window.
 
 ## Quick reference
 
