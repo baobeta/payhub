@@ -77,4 +77,14 @@ RSpec.describe MerchantUser do
         .to raise_error(ArgumentError, /owner/)
     end
   end
+
+  describe ".invite_first_owner!" do
+    it "invites an owner when the merchant has none, and refuses a second" do
+      user, token = described_class.invite_first_owner!(merchant:, email: "boss@example.com")
+      expect(user.role).to eq("owner")
+      expect(described_class.find_by_invitation_token(token)).to eq(user)
+      expect { described_class.invite_first_owner!(merchant:, email: "boss2@example.com") }
+        .to raise_error(ArgumentError, /already has an owner/)
+    end
+  end
 end

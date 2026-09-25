@@ -26,6 +26,19 @@ class MerchantUser < ApplicationRecord
     [user, token]
   end
 
+  # The only other way an owner is created (invite! refuses owners): the very
+  # first one, from `merchants:invite_owner` or the seed.
+  def self.invite_first_owner!(merchant:, email:)
+    if merchant.merchant_users.active.exists?(role: "owner") # authz-allow-role-check
+      raise ArgumentError, "#{merchant.name} already has an owner"
+    end
+
+    token = SecureRandom.urlsafe_base64(32)
+    user = create!(merchant:, email:, role: "owner", otp_secret: Otp.generate_secret,
+                   invitation_digest: Digest::SHA256.hexdigest(token), invitation_expires_at: INVITATION_TTL.from_now)
+    [user, token]
+  end
+
   private
 
   def merchant_is_live
