@@ -10,6 +10,11 @@ class AddTestTwinsToMerchants < ActiveRecord::Migration[8.1]
   end
 
   def down
+    # Dropping the columns would turn every twin into an ordinary live merchant.
+    if select_value("SELECT 1 FROM merchants WHERE NOT livemode LIMIT 1")
+      raise ActiveRecord::IrreversibleMigration, "test-mode twins exist; remove them before rolling back"
+    end
+
     remove_check_constraint :merchants, name: "chk_merchants_twin_shape"
     remove_reference :merchants, :live_merchant
     remove_column :merchants, :livemode
