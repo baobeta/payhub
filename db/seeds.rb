@@ -48,4 +48,6 @@ else
         -H "Idempotency-Key: $(uuidgen)" -H "Content-Type: application/json" \\
         -d '{"amount_minor":2500,"currency":"EUR","payment_method_token":"tok_visa"}'
   MSG
+  _test_key, test_raw = ApiKey.issue!(merchant:, livemode: false, name: "Default test key")
+  puts "Demo merchant TEST key (shown once): #{test_raw}"
 end

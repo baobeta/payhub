@@ -6,6 +6,9 @@ class Merchant < ApplicationRecord
   has_many :idempotency_keys, dependent: :restrict_with_exception
   has_many :outbound_events, dependent: :restrict_with_exception
   has_many :api_keys, dependent: :restrict_with_exception
+  belongs_to :live_merchant, class_name: "Merchant", optional: true
+  has_one :test_twin, class_name: "Merchant", foreign_key: :live_merchant_id,
+                      inverse_of: :live_merchant, dependent: :restrict_with_exception
 
   validates :name, presence: true
   validates :api_key_digest, presence: true, uniqueness: true
@@ -28,7 +31,21 @@ class Merchant < ApplicationRecord
   # Constant-time lookup, now through api_keys so revoked and expired keys stop
   # working and many keys can be active at once.
   def self.authenticate(raw_key)
-    ApiKey.authenticate(raw_key)&.merchant
+    ApiKey.authenticate(raw_key)&.merchant_for_mode
+  end
+
+  # The test-mode twin, created on first use. The unique index makes a
+  # concurrent second create fail, and we then read the winner's row.
+  def test_twin!
+    raise ArgumentError, "a test twin has no twin" unless livemode
+
+    test_twin || Merchant.create!(
+      name: "#{name} (test)", livemode: false, live_merchant: self, default_currency:, webhook_url:,
+      # Placeholder until api_key_digest is dropped: nobody holds this key.
+      api_key_digest: Merchant.digest(SecureRandom.hex(32)), webhook_secret: SecureRandom.hex(32)
+    )
+  rescue ActiveRecord::RecordNotUnique
+    reload.test_twin || raise
   end
 
   def self.digest(raw) = Digest::SHA256.hexdigest(raw)

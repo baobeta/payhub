@@ -46,4 +46,14 @@ RSpec.describe Merchant do
       expect(described_class.authenticate(second)).to eq(merchant)
     end
   end
+
+  describe "#test_twin!" do
+    it "creates one test-mode twin linked to the live merchant" do
+      merchant = create(:merchant)
+      twin = merchant.test_twin!
+      expect(twin).to have_attributes(livemode: false, live_merchant_id: merchant.id,
+                                      default_currency: merchant.default_currency)
+      expect(merchant.test_twin!).to eq(twin)
+    end
+  end
 end

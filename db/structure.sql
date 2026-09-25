@@ -253,7 +253,10 @@ CREATE TABLE public.merchants (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     previous_webhook_secret character varying,
-    previous_webhook_secret_expires_at timestamp(6) without time zone
+    previous_webhook_secret_expires_at timestamp(6) without time zone,
+    livemode boolean DEFAULT true NOT NULL,
+    live_merchant_id uuid,
+    CONSTRAINT chk_merchants_twin_shape CHECK ((livemode = (live_merchant_id IS NULL)))
 );
 
 
@@ -618,6 +621,13 @@ CREATE INDEX idx_ledger_entries_transfer ON public.ledger_entries USING btree (t
 
 
 --
+-- Name: idx_merchants_one_test_twin; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_merchants_one_test_twin ON public.merchants USING btree (live_merchant_id);
+
+
+--
 -- Name: idx_outbound_events_list; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -889,6 +899,14 @@ ALTER TABLE ONLY public.ledger_entries
 
 
 --
+-- Name: merchants fk_rails_a387bf8734; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merchants
+    ADD CONSTRAINT fk_rails_a387bf8734 FOREIGN KEY (live_merchant_id) REFERENCES public.merchants(id);
+
+
+--
 -- Name: idempotency_keys fk_rails_c7488e5117; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -919,6 +937,7 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260925000003'),
 ('20260925000002'),
 ('20260925000001'),
 ('20260924000006'),

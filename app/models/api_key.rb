@@ -14,6 +14,7 @@ class ApiKey < ApplicationRecord
   scope :active, -> { where(revoked_at: nil).where("expires_at IS NULL OR expires_at > ?", Time.current) }
 
   validates :name, presence: true
+  validate :belongs_to_live_merchant
 
   # Returns [key, raw]. Show raw to the person exactly once.
   def self.issue!(merchant:, livemode:, name:, note: nil, created_by_id: nil)
@@ -39,5 +40,14 @@ class ApiKey < ApplicationRecord
     return if last && last > LAST_USED_RESOLUTION.ago
 
     update_column(:last_used_at, Time.current) # rubocop:disable Rails/SkipsModelValidations -- hot path, no validations to run
+  end
+
+  # Which data space this key opens: the live merchant or its test twin.
+  def merchant_for_mode = livemode ? merchant : T.must(merchant).test_twin!
+
+  private
+
+  def belongs_to_live_merchant
+    errors.add(:merchant, "must be the live merchant; test keys open its twin") unless merchant&.livemode
   end
 end
