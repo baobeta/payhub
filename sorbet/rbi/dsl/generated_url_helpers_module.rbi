@@ -34,6 +34,9 @@ module GeneratedUrlHelpersModule
   def rails_info_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def rails_mailers_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def redeliver_v1_event_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
