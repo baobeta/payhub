@@ -37,6 +37,11 @@ Rails.application.routes.draw do
       end
       get "otp/setup", to: "otp#setup"
       post "otp/confirm", to: "otp#confirm"
+      resource :me, only: [], controller: "me" do
+        patch :password
+        post :recovery_codes
+      end
+      put "mode", to: "modes#update"
 
       # Keep last in this namespace.
       match "*path", to: "fallback#show", via: :all

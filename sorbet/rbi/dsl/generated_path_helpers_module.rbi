@@ -28,6 +28,9 @@ module GeneratedPathHelpersModule
   def dashboard_api_me_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_mode_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_otp_confirm_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -49,6 +52,9 @@ module GeneratedPathHelpersModule
   def otp_dashboard_api_session_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def password_dashboard_api_me_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def rails_info_notes_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -62,6 +68,9 @@ module GeneratedPathHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def rails_mailers_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def recovery_codes_dashboard_api_me_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def recovery_dashboard_api_session_path(*args); end
