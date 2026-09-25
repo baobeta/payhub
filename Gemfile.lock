@@ -408,7 +408,7 @@ GEM
     prism (1.9.0)
     prometheus-client (4.2.5)
       base64
-    prosopite (1.4.2)
+    prosopite (2.2.0)
     public_suffix (7.0.5)
     puma (8.0.2)
       nio4r (~> 2.0)
@@ -633,7 +633,7 @@ DEPENDENCIES
   pg (~> 1.1)
   pg_query (~> 6.0)
   prometheus-client (~> 4.2)
-  prosopite (~> 1.4)
+  prosopite (~> 2.2)
   puma (>= 5.0)
   rack-attack (~> 6.7)
   rails (~> 8.1.3)
