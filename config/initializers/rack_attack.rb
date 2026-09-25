@@ -34,7 +34,7 @@ class Rack::Attack
   # Password and code guessing. The per-account lockout (10 failures) is the
   # real control; this one stops one IP spraying many accounts.
   throttle("ui/sign-in-ip", limit: 20, period: 1.minute) do |req|
-    req.ip if req.post? && req.path.match?(%r{\A/(dashboard|ops)/api/session(/otp|/recovery)?\z})
+    req.ip if req.post? && req.path.match?(%r{\A/(dashboard|ops)/api/(session(/otp|/recovery|/step_up)?|otp/confirm)\z})
   end
 
   self.throttled_responder = lambda do |req|

@@ -40,18 +40,27 @@ module TwoFactorPrincipal
 
   # True once per valid code: the matched time step must be newer than the
   # last one used, so a code read off a shoulder cannot be replayed.
+  # The step is claimed with a conditional UPDATE, so two concurrent requests
+  # carrying the same code cannot both succeed.
   def verify_otp!(code)
     step = Otp.verify(otp_secret, code, after_step: otp_last_used_step)
     return false unless step
 
-    update_columns(otp_last_used_step: step, updated_at: Time.current) # rubocop:disable Rails/SkipsModelValidations
-    true
+    claimed = self.class.where(id:).where("otp_last_used_step IS NULL OR otp_last_used_step < ?", step)
+                  .update_all(otp_last_used_step: step, updated_at: Time.current) # rubocop:disable Rails/SkipsModelValidations
+    self.otp_last_used_step = step if claimed == 1
+    claimed == 1
   end
 
+  # Returns true when this failure is the one that locked the account. After
+  # a lock expires counting starts again, so one typo does not re-lock.
   def register_failure!
-    attempts = failed_attempts + 1
+    expired = locked_until&.past?
+    attempts = (expired ? 0 : failed_attempts) + 1
+    now_locked = attempts >= MAX_FAILURES
     update_columns(failed_attempts: attempts, # rubocop:disable Rails/SkipsModelValidations
-                   locked_until: attempts >= MAX_FAILURES ? LOCK_FOR.from_now : locked_until)
+                   locked_until: now_locked ? LOCK_FOR.from_now : (expired ? nil : locked_until))
+    now_locked
   end
 
   def reset_failures!

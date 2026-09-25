@@ -60,6 +60,22 @@ RSpec.describe "Dashboard sign-in", type: :request do
     expect(session.reload.stepped_up_at).to be_present
   end
 
+  it "locks after 10 wrong step-up codes, ends the session, and refuses the right code" do
+    session = sign_in_as(user)
+    10.times { post "/dashboard/api/session/step_up", params: { code: "000000" }.to_json, headers: ui_headers }
+    expect(session.reload.revoked_at).to be_present
+    sign_in_as(user)
+    post "/dashboard/api/session/step_up", params: { code: }.to_json, headers: ui_headers
+    expect(response).to have_http_status(423)
+  end
+
+  it "audits failed and locked attempts against the merchant" do
+    sign_in_password("wrong-password-123")
+    expect(AuditEvent.last).to have_attributes(action: "session.failed", result: "failure", merchant_id: user.merchant_id)
+    9.times { sign_in_password("wrong-password-123") }
+    expect(AuditEvent.where(action: "account.locked").count).to eq(1)
+  end
+
   it "signs out and revokes the session row" do
     session = sign_in_as(user)
     delete "/dashboard/api/session", headers: ui_headers

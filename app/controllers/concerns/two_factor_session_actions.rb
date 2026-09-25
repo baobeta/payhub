@@ -12,10 +12,13 @@ module TwoFactorSessionActions
   PENDING_TTL = 5.minutes
 
   def create
-    result = SignIn.password(principal_scope, email: params.require(:email), password: params.require(:password))
-    case result.status
-    when :locked then raise ApiError.locked(result.principal&.locked_until || SignIn::LOCKED_FALLBACK.from_now)
-    when :invalid then raise ApiError.unauthenticated(code: "invalid_credentials", message: "Email or password is wrong")
+    email = params.require(:email).to_s
+    result = SignIn.password(principal_scope, email:, password: params.require(:password))
+    unless result.status == :ok
+      audit_auth_failure(result.principal, factor: "password", just_locked: result.just_locked, email:)
+      raise ApiError.locked(result.principal&.locked_until || SignIn::LOCKED_FALLBACK.from_now) if result.status == :locked
+
+      raise ApiError.unauthenticated(code: "invalid_credentials", message: "Email or password is wrong")
     end
 
     cookies.encrypted[pending_cookie] = { value: { "id" => result.principal.id, "exp" => PENDING_TTL.from_now.to_i },
@@ -27,9 +30,15 @@ module TwoFactorSessionActions
   def otp = second_factor { |principal| principal.verify_otp!(params.require(:code)) }
   def recovery = second_factor { |principal| RecoveryCode.consume!(principal, params.require(:code)) }
 
+  # Step-up guards a live session; a stolen cookie must not get unlimited
+  # guesses. Ten wrong codes lock the account and end every session.
   def step_up
+    raise ApiError.locked(current_user.locked_until) if current_user.locked?
+
     unless current_user.verify_otp!(params.require(:code))
-      current_user.register_failure!
+      just_locked = current_user.register_failure!
+      audit_auth_failure(current_user, factor: "step_up", just_locked:)
+      current_user.revoke_sessions! if just_locked
       raise ApiError.unauthenticated(code: "invalid_code", message: "That code is not valid")
     end
     current_session.step_up!
@@ -61,7 +70,7 @@ module TwoFactorSessionActions
     raise ApiError.locked(principal.locked_until) if principal.locked?
 
     unless yield(principal)
-      principal.register_failure!
+      audit_auth_failure(principal, factor: action_name, just_locked: principal.register_failure!)
       raise ApiError.unauthenticated(code: "invalid_code", message: "That code is not valid")
     end
 
@@ -74,6 +83,18 @@ module TwoFactorSessionActions
     @current_user = principal
     audit!("session.created")
     render json: session_payload(principal, session_row)
+  end
+
+  # PCI DSS 10.2.1.4: invalid access attempts are logged. Against the
+  # principal's merchant when the account exists, so the merchant's security
+  # history shows someone guessing.
+  def audit_auth_failure(principal, factor:, just_locked:, email: nil)
+    Metrics.increment(:auth_failed, area: session_cookie_path.delete_prefix("/"), factor:)
+    context = { actor: principal, actor_label: principal&.email || email.to_s.first(254),
+                merchant_id: principal.try(:merchant_id), ip: request.remote_ip,
+                user_agent: request.user_agent, request_id: request.request_id }
+    AuditEvent.record!(action: "session.failed", result: "failure", metadata: { "factor" => factor }, **context)
+    AuditEvent.record!(action: "account.locked", result: "denied", metadata: { "factor" => factor }, **context) if just_locked
   end
 
   def notify_if_new_device(principal, session_row)

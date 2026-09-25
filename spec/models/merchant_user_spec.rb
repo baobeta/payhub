@@ -41,6 +41,12 @@ RSpec.describe MerchantUser do
       expect(user.verify_otp!(code)).to be(false)
     end
 
+    it "refuses a code another request already used, even from a stale copy of the row" do
+      stale = described_class.find(user.id)
+      expect(user.verify_otp!(code)).to be(true)
+      expect(stale.verify_otp!(code)).to be(false)
+    end
+
     it "refuses a malformed code without raising" do
       expect(user.verify_otp!("12ab56")).to be(false)
     end
@@ -54,6 +60,14 @@ RSpec.describe MerchantUser do
       expect(user).to be_locked
       travel 31.minutes
       expect(user).not_to be_locked
+    end
+
+    it "starts counting afresh once a lock has expired, so one typo does not re-lock" do
+      10.times { user.register_failure! }
+      travel 31.minutes
+      user.register_failure!
+      expect(user).not_to be_locked
+      expect(user.reload.failed_attempts).to eq(1)
     end
 
     it "resets the counter on success" do
