@@ -26,7 +26,7 @@ gem "csv", "~> 3.2" # settlement reports (DECISIONS #18); no longer a default ge
 gem "rack-attack", "~> 6.7"
 
 # Prometheus-style counters for /metrics.
-gem "prometheus-client", "~> 4.2"
+gem "prometheus-client", "~> 5.0"
 
 # JSON log lines: one per request and per job.
 gem "lograge", "~> 0.14"
