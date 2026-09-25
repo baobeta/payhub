@@ -55,5 +55,22 @@ RSpec.describe Merchant do
                                       default_currency: merchant.default_currency)
       expect(merchant.test_twin!).to eq(twin)
     end
+
+    it "never inherits the live webhook endpoint, so test events cannot reach production" do
+      merchant = create(:merchant, webhook_url: "https://merchant.example/hooks")
+      expect(merchant.test_twin!.webhook_url).to be_nil
+    end
+
+    it "returns the winner's twin after losing a creation race inside a transaction" do
+      merchant = create(:merchant)
+      winner = merchant.test_twin!
+      loser = described_class.find(merchant.id)
+      allow(loser).to receive(:test_twin).and_return(nil, winner) # stale read, then the reload
+
+      described_class.transaction do
+        expect(loser.test_twin!).to eq(winner)
+        expect(described_class.count).to be_positive # the transaction is still usable
+      end
+    end
   end
 end

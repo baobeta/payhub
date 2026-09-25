@@ -35,15 +35,21 @@ class Merchant < ApplicationRecord
   end
 
   # The test-mode twin, created on first use. The unique index makes a
-  # concurrent second create fail, and we then read the winner's row.
+  # concurrent second create fail, and we then read the winner's row; the
+  # savepoint keeps that failure from aborting a caller's transaction.
+  #
+  # No webhook_url: the live endpoint is production, and test events must
+  # never reach it. The twin gets its own endpoint in phase 1.
   def test_twin!
     raise ArgumentError, "a test twin has no twin" unless livemode
 
-    test_twin || Merchant.create!(
-      name: "#{name} (test)", livemode: false, live_merchant: self, default_currency:, webhook_url:,
-      # Placeholder until api_key_digest is dropped: nobody holds this key.
-      api_key_digest: Merchant.digest(SecureRandom.hex(32)), webhook_secret: SecureRandom.hex(32)
-    )
+    test_twin || Merchant.transaction(requires_new: true) do
+      Merchant.create!(
+        name: "#{name} (test)", livemode: false, live_merchant: self, default_currency:,
+        # Placeholder until api_key_digest is dropped: nobody holds this key.
+        api_key_digest: Merchant.digest(SecureRandom.hex(32)), webhook_secret: SecureRandom.hex(32)
+      )
+    end
   rescue ActiveRecord::RecordNotUnique
     reload.test_twin || raise
   end

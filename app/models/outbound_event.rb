@@ -47,7 +47,7 @@ class OutboundEvent < ApplicationRecord
 
   # The envelope the merchant receives. `id` lets them dedupe on their side.
   def envelope
-    { "id" => id, "type" => event_type, "created_at" => created_at.utc.iso8601(3), "attempt" => attempts + 1,
-      "data" => payload }
+    { "id" => id, "type" => event_type, "livemode" => T.must(merchant).livemode,
+      "created_at" => created_at.utc.iso8601(3), "attempt" => attempts + 1, "data" => payload }
   end
 end
