@@ -73,7 +73,7 @@ curl -s localhost:3000/v1/payments/<id> -H "Authorization: Bearer $KEY"
 
 A Kiripay (SEA wallet) payment stops at `requires_action` with a redirect URL until the "customer" approves — simulate that with `curl -X POST localhost:4002/_sim/charges/<kp_id>/approve`; the simulator then delivers signed webhooks and the payment becomes `captured`.
 
-**Port 3000 taken?** `WEB_PORT=3100 docker compose up`. **Kiripay webhooks not arriving when Rails runs outside compose?** set `PAYHUB_WEBHOOK_URL=http://host.docker.internal:3000/v1/webhooks/kiripay` on the simulator. **Puma says "a server is already running"?** the compose command already removes the stale pid; if you run `bin/rails s` yourself, `rm tmp/pids/server.pid`.
+**Port 3000 taken?** `WEB_PORT=3100 docker compose up`. **Changed `package.json`?** `docker compose up -d --build -V`: the containers keep `node_modules` in an anonymous volume, and without `-V` (renew anonymous volumes) a rebuilt image's new packages never reach them. **Kiripay webhooks not arriving when Rails runs outside compose?** set `PAYHUB_WEBHOOK_URL=http://host.docker.internal:3000/v1/webhooks/kiripay` on the simulator. **Puma says "a server is already running"?** the compose command already removes the stale pid; if you run `bin/rails s` yourself, `rm tmp/pids/server.pid`.
 
 ### Local development (Rails on the host, databases in Docker)
 

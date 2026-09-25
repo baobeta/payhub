@@ -14,9 +14,11 @@ Rails.application.configure do
     policy.form_action :self
 
     if Rails.env.development?
-      vite = ViteRuby.config.host_with_port
-      policy.script_src(*policy.script_src, :unsafe_eval, "http://#{vite}")
-      policy.connect_src(*policy.connect_src, "http://#{vite}", "ws://#{vite}")
+      # The dev server as Rails sees it (vite:3036 under compose) and as the
+      # browser sees it (localhost:3036, where hot reload connects).
+      hosts = [ViteRuby.config.host_with_port, "localhost:#{ViteRuby.config.port}"].uniq
+      policy.script_src(*policy.script_src, :unsafe_eval, *hosts.map { "http://#{_1}" })
+      policy.connect_src(*policy.connect_src, *hosts.flat_map { ["http://#{_1}", "ws://#{_1}"] })
     end
   end
 end

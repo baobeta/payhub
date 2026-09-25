@@ -26,8 +26,10 @@ const nav = computed(() => NAV.filter((n) => allowed(n.permission)));
 
 async function setMode(livemode: boolean) {
   const updated = await api.put<Me>("/mode", { livemode });
-  queryClient.removeQueries(); // every cached page belongs to the old mode
   queryClient.setQueryData(["me"], updated);
+  // Every other cached page belongs to the old mode. reset (not remove) keeps
+  // mounted pages subscribed, clears their data and refetches them.
+  await queryClient.resetQueries({ predicate: (q) => q.queryKey[0] !== "me" });
 }
 
 async function signOut() {
