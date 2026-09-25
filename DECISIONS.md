@@ -238,3 +238,11 @@ Serializing captures per payment is what makes the read sufficient: with one cap
 **Rejected:** Pundit/CanCanCan, a policy engine (OPA, Cedar), permissions in the database.
 
 **Reason:** Nine fixed roles do not need them. Each deferred option has a written trigger in design §3 (custom roles → database; per-record rules → policy objects). The matrix is hand-written on purpose: expectations derived from the code under test cannot disagree with it.
+
+## 25. Merchant sign-in: database sessions, mandatory TOTP, step-up for sensitive actions
+
+**Decision:** A browser session is a row in `sessions` (polymorphic, shared with operators in phase 2) behind a signed, path-scoped, `HttpOnly`, `SameSite=Strict` cookie that holds only the row id. Sign-in is password, then a TOTP code (or a single-use recovery code). The password step alone creates no session: it sets a 5-minute encrypted cookie that only the code step accepts. Enrolling an authenticator is part of accepting an invitation, and a user cannot sign in until it is done. Every permission marked sensitive in the catalogue also needs a code entered in the last 10 minutes (step-up), answered as `401 step_up_required` so the UI can ask and retry the same request with the same idempotency key. Ten failures, of the password or the code, lock the account for 30 minutes. Sessions end after 15 idle minutes and at most 12 hours. TOTP secrets are encrypted at rest, and a code is accepted once (the time step is remembered).
+
+**Rejected:** Devise (a large surface for fixed roles, invitations only and no self-sign-up); cookie-only sessions (cannot be revoked when a role changes or a person is removed); SMS codes (SIM swapping); passkeys for now (enterprise tier in the use cases).
+
+**Reason:** PCI DSS 8.2.8 (idle timeout), 8.3.4 (lockout) and 8.4 (MFA for access to the cardholder-data environment's admin functions), and use cases A-01 to A-07. Revocation is the deciding property: removing a teammate or changing a role must take effect on their very next request, which needs a server-side session row and the role read from the database every time.
