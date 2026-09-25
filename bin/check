@@ -14,10 +14,10 @@ step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 step "zeitwerk (autoload layout)"
 bin/rails zeitwerk:check
 
-step "permissions (generated files are current)"
-bin/rails permissions:export >/dev/null
-git diff --exit-code -- docs/permissions.md app/frontend/shared/permissions.ts \
-  || { echo "Run bin/rails permissions:export and commit the result."; exit 1; }
+step "generated files are current (permissions, currencies)"
+bin/rails exports:all >/dev/null
+git diff --exit-code -- docs/permissions.md app/frontend/shared/permissions.ts app/frontend/shared/currencies.ts \
+  || { echo "Run bin/rails exports:all and commit the result."; exit 1; }
 
 step "authorization (permissions, not role names)"
 if grep -rnE "role ?==|\.(owner|admin|developer|support|viewer|approver)\?" app --include='*.rb' \
