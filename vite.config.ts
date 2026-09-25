@@ -5,4 +5,6 @@ import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
   plugins: [RubyPlugin(), vue(), tailwindcss()],
+  // Under docker compose, Rails proxies /vite-dev to this server as "vite".
+  server: { allowedHosts: ["vite"] },
 });

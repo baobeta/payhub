@@ -43,6 +43,9 @@ services:
       KIRIPAY_WEBHOOK_SECRET: kp_whsec_test
       RAILS_ENV: development
       VITE_RUBY_HOST: vite
+      # Proxy /vite-dev through Rails: "vite" only resolves inside compose, so
+      # the browser must never be sent to http://vite:3036 directly.
+      VITE_RUBY_SKIP_PROXY: "false"
       SMTP_HOST: mailcatcher
       SMTP_PORT: "1025"
     depends_on:
