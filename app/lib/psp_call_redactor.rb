@@ -6,10 +6,17 @@
 module PspCallRedactor
   MASK = "[REDACTED]"
 
-  # A key is sensitive when one of its words (split on _ and -) is one of these.
-  # Whole words, so "reference" and "decline_code" survive while
-  # "payment_method_token" and "webhook_secret" do not.
-  SENSITIVE_WORDS = %w[token secret signature authorization password cvc cvv pan number apikey].freeze
+  # A key is sensitive when one of its words is one of these. Keys are split on
+  # _, -, spaces and camelCase humps, and matched as whole words, so
+  # "reference" and "decline_code" survive while "payment_method_token" and
+  # "clientSecret" do not.
+  SENSITIVE_WORDS = %w[token secret signature authorization password cvc cvv pan number apikey
+                       credential credentials pin iban].freeze
+  # "key" alone is too common (idempotency_key, sort_key); after these it is a secret.
+  KEY_QUALIFIERS = %w[private secret access api].freeze
+
+  # name=value pairs in a URL query string, e.g. a redirect URL carrying a token.
+  QUERY_PARAM = /([?&])([^=&#\s]+)=([^&#\s]*)/
 
   # 13-19 digits, optionally grouped by spaces or dashes: the shape of a PAN.
   CARD_LIKE = /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/
@@ -28,16 +35,26 @@ module PspCallRedactor
     case value
     when Hash then value.to_h { |k, v| [k, sensitive_key?(k) ? MASK : walk(v)] }
     when Array then value.map { |v| walk(v) }
-    when String then value.gsub(CARD_LIKE) { |m| luhn?(m) ? MASK : m }
+    when String then redact_string(value)
     when Integer then luhn?(value.to_s) && value.to_s.length.between?(13, 19) ? MASK : value
     else value
     end
   end
   private_class_method :walk
 
+  def self.redact_string(value)
+    masked = value.gsub(QUERY_PARAM) do |pair|
+      sep, name = Regexp.last_match(1), Regexp.last_match(2)
+      sensitive_key?(name) ? "#{sep}#{name}=#{MASK}" : pair
+    end
+    masked.gsub(CARD_LIKE) { |m| luhn?(m) ? MASK : m }
+  end
+  private_class_method :redact_string
+
   def self.sensitive_key?(key)
-    words = key.to_s.downcase.split(/[_\-\s]+/)
-    words.any? { |w| SENSITIVE_WORDS.include?(w) } || words.each_cons(2).any? { |pair| pair.join == "apikey" }
+    words = key.to_s.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase.split(/[^a-z0-9]+/)
+    words.any? { |w| SENSITIVE_WORDS.include?(w) } ||
+      words.each_cons(2).any? { |before, word| word == "key" && KEY_QUALIFIERS.include?(before) }
   end
   private_class_method :sensitive_key?
 

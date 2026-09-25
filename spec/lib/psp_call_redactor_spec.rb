@@ -52,4 +52,25 @@ RSpec.describe PspCallRedactor do
     def evil.to_s = raise("boom")
     expect(described_class.redact({ evil => 1 })).to eq("[REDACTED]")
   end
+
+  it "splits camelCase keys, so PSPs that use JSON camelCase are covered" do
+    body = { "paymentMethodToken" => "tok_x", "cardNumber" => "4111", "clientSecret" => "s" }
+    expect(described_class.redact(body).values.uniq).to eq(["[REDACTED]"])
+  end
+
+  it "redacts private and access keys, credentials, PINs and IBANs" do
+    body = { "private_key" => "k", "accessKey" => "k", "credentials" => "c", "pin" => "1234",
+             "iban" => "DE89370400440532013000" }
+    expect(described_class.redact(body).values.uniq).to eq(["[REDACTED]"])
+  end
+
+  it "keeps ordinary *_key fields such as an idempotency key" do
+    body = { "idempotency_key" => "abc", "sort_key" => "2026" }
+    expect(described_class.redact(body)).to eq(body)
+  end
+
+  it "masks secrets in URL query strings but keeps the URL" do
+    redacted = described_class.redact({ "redirect_url" => "https://psp.test/pay?token=abc123&lang=en" })
+    expect(redacted).to eq({ "redirect_url" => "https://psp.test/pay?token=[REDACTED]&lang=en" })
+  end
 end
