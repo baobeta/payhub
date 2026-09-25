@@ -25,6 +25,9 @@ module GeneratedUrlHelpersModule
   def capture_v1_payment_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_balance_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_home_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -56,6 +59,9 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_session_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_settlements_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_url(*args); end

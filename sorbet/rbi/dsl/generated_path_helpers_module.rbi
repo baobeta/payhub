@@ -25,6 +25,9 @@ module GeneratedPathHelpersModule
   def capture_v1_payment_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_balance_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_home_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -59,6 +62,9 @@ module GeneratedPathHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_session_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_settlements_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def export_dashboard_api_payments_path(*args); end

@@ -51,6 +51,8 @@ Rails.application.routes.draw do
         end
         resources :refunds, only: :create
       end
+      get "balance", to: "balances#show"
+      get "settlements", to: "settlements#index"
 
       # Keep last in this namespace.
       match "*path", to: "fallback#show", via: :all
