@@ -22,6 +22,8 @@ SELECT to_state, source, most_recent, to_char(sort_key,'HH24:MI:SS.MS') AS psp_t
 FROM payment_transitions WHERE payment_id = '<PAYMENT_ID>' ORDER BY sort_key, created_at;
 ```
 
+`PspCall.where(psp_reference: p.psp_reference).order(:sent_at)` shows every call we made for this payment, including the one that timed out.
+
 Read the last row's `metadata`. It usually tells you the story: `"error":"... ReadTimeout"` and `gave_up_at` for a timeout; `decline_code` for a decline; `stale: true` rows are events we heard about late and correctly ignored.
 
 ## 2. Decide which of four situations you are in (1 minute)
