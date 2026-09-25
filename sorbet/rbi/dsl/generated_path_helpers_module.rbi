@@ -10,13 +10,28 @@ module GeneratedPathHelpersModule
   include ::ActionDispatch::Routing::PolymorphicRoutes
 
   sig { params(args: T.untyped).returns(String) }
+  def accept_dashboard_api_invitation_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def cancel_v1_payment_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def capture_v1_payment_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_invitation_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_invitations_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_me_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_otp_confirm_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_otp_setup_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_path(*args); end

@@ -10,13 +10,28 @@ module GeneratedUrlHelpersModule
   include ::ActionDispatch::Routing::PolymorphicRoutes
 
   sig { params(args: T.untyped).returns(String) }
+  def accept_dashboard_api_invitation_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def cancel_v1_payment_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def capture_v1_payment_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_invitation_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_invitations_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_me_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_otp_confirm_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_otp_setup_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_session_url(*args); end

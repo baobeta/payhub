@@ -32,6 +32,11 @@ Rails.application.routes.draw do
         post :recovery
         post :step_up
       end
+      resources :invitations, only: %i[create show], param: :token do
+        post :accept, on: :member
+      end
+      get "otp/setup", to: "otp#setup"
+      post "otp/confirm", to: "otp#confirm"
 
       # Keep last in this namespace.
       match "*path", to: "fallback#show", via: :all
