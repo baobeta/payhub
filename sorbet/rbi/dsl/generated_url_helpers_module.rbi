@@ -31,6 +31,12 @@ module GeneratedUrlHelpersModule
   def dashboard_api_balance_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_events_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_home_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -70,6 +76,9 @@ module GeneratedUrlHelpersModule
   def dashboard_api_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_webhook_endpoint_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def export_dashboard_api_payments_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -106,13 +115,22 @@ module GeneratedUrlHelpersModule
   def recovery_dashboard_api_session_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def redeliver_dashboard_api_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def redeliver_v1_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def reveal_secret_dashboard_api_webhook_endpoint_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def revoke_dashboard_api_api_key_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def roll_dashboard_api_api_key_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def roll_secret_dashboard_api_webhook_endpoint_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def step_up_dashboard_api_session_url(*args); end

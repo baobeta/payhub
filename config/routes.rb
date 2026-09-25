@@ -59,6 +59,13 @@ Rails.application.routes.draw do
           post :revoke
         end
       end
+      resource :webhook_endpoint, only: %i[show update] do
+        post :reveal_secret
+        post :roll_secret
+      end
+      resources :events, only: %i[index show] do
+        post :redeliver, on: :member
+      end
 
       # Keep last in this namespace.
       match "*path", to: "fallback#show", via: :all
