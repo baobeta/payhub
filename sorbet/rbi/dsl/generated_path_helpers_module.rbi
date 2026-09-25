@@ -79,6 +79,12 @@ module GeneratedPathHelpersModule
   def dashboard_api_payments_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_security_history_export_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_security_history_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_session_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }

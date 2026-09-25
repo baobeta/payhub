@@ -68,6 +68,8 @@ Rails.application.routes.draw do
       end
       resources :members, only: %i[index update destroy]
       post "ownership_transfer", to: "ownership_transfers#create"
+      get "security_history", to: "security_history#index"
+      get "security_history/export", to: "security_history#export"
 
       # Keep last in this namespace.
       match "*path", to: "fallback#show", via: :all

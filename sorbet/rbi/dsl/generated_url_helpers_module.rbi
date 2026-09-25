@@ -76,6 +76,12 @@ module GeneratedUrlHelpersModule
   def dashboard_api_payments_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_security_history_export_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_security_history_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_session_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
