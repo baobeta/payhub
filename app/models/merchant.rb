@@ -12,30 +12,23 @@ class Merchant < ApplicationRecord
   validates :webhook_secret, presence: true
   validates :default_currency, inclusion: { in: Currency::SUPPORTED }
 
-  API_KEY_PREFIX = "sk_live_"
-
   # Returns [merchant, raw_key]. The raw key is shown to the merchant once
-  # and never stored — only its digest is.
+  # and never stored — only its digest is. api_key_digest is still written
+  # until the column is dropped (design §2, two-step migration).
   def self.create_with_api_key!(attrs)
-    raw = "#{API_KEY_PREFIX}#{SecureRandom.hex(24)}"
-    merchant = create!(attrs.merge(
-      api_key_digest: digest(raw),
-      webhook_secret: SecureRandom.hex(32)
-    ))
-    [merchant, raw]
+    transaction do
+      merchant = new(attrs.merge(api_key_digest: digest(SecureRandom.hex(32)), webhook_secret: SecureRandom.hex(32)))
+      merchant.save!
+      key, raw = ApiKey.issue!(merchant:, livemode: true, name: "Default key")
+      merchant.update!(api_key_digest: key.digest)
+      [merchant, raw]
+    end
   end
 
-  # Constant-time authentication. We look up by digest (an indexed equality
-  # query is fine — the digest is not secret) and then secure_compare so the
-  # final check does not leak a byte-by-byte timing signal.
+  # Constant-time lookup, now through api_keys so revoked and expired keys stop
+  # working and many keys can be active at once.
   def self.authenticate(raw_key)
-    return nil if raw_key.blank?
-
-    candidate = digest(raw_key)
-    merchant = find_by(api_key_digest: candidate)
-    return nil unless merchant
-
-    ActiveSupport::SecurityUtils.secure_compare(merchant.api_key_digest, candidate) ? merchant : nil
+    ApiKey.authenticate(raw_key)&.merchant
   end
 
   def self.digest(raw) = Digest::SHA256.hexdigest(raw)

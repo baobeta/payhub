@@ -28,5 +28,22 @@ RSpec.describe Merchant do
 
       expect(ActiveSupport::SecurityUtils).to have_received(:secure_compare).once
     end
+
+    it "stores the key in api_keys" do
+      merchant, raw = described_class.create_with_api_key!(name: "Acme", default_currency: "EUR")
+      expect(merchant.api_keys.sole.digest).to eq(Digest::SHA256.hexdigest(raw))
+    end
+
+    it "stops authenticating once the key is revoked" do
+      merchant, raw = described_class.create_with_api_key!(name: "Acme", default_currency: "EUR")
+      merchant.api_keys.sole.update!(revoked_at: Time.current)
+      expect(described_class.authenticate(raw)).to be_nil
+    end
+
+    it "authenticates a second key issued later" do
+      merchant, _raw = described_class.create_with_api_key!(name: "Acme", default_currency: "EUR")
+      _key, second = ApiKey.issue!(merchant:, livemode: true, name: "Second")
+      expect(described_class.authenticate(second)).to eq(merchant)
+    end
   end
 end
