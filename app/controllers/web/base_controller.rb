@@ -13,6 +13,11 @@ module Web
     layout "web"
 
     rescue_from ApiError, with: :render_api_error
+    rescue_from ActionController::InvalidAuthenticityToken do
+      T.bind(self, Web::BaseController)
+      render_api_error(ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 403, code: "invalid_csrf_token",
+                                    message: "Reload the page and try again"))
+    end
 
     private
 

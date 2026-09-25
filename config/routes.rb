@@ -27,6 +27,11 @@ Rails.application.routes.draw do
   namespace :dashboard do
     namespace :api, defaults: { format: :json } do
       get "me", to: "me#show"
+      resource :session, only: %i[create destroy] do
+        post :otp
+        post :recovery
+        post :step_up
+      end
 
       # Keep last in this namespace.
       match "*path", to: "fallback#show", via: :all

@@ -19,6 +19,9 @@ module GeneratedUrlHelpersModule
   def dashboard_api_me_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_session_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -26,6 +29,9 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def metrics_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def otp_dashboard_api_session_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def rails_info_notes_url(*args); end
@@ -43,7 +49,13 @@ module GeneratedUrlHelpersModule
   def rails_mailers_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def recovery_dashboard_api_session_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def redeliver_v1_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def step_up_dashboard_api_session_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def v1_balance_url(*args); end
