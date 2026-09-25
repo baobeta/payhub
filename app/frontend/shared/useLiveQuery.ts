@@ -9,12 +9,15 @@ export function useLiveQuery<T>(
   fetcher: (poll: boolean) => Promise<T>,
   intervalFor: (data: T) => number | false,
 ) {
-  let first = true;
+  // The first fetch of each key is the person opening the page (activity);
+  // later ones are the page refreshing itself (X-Poll, not activity).
+  const seen = new Set<string>();
   return useQuery({
     queryKey: computed(() => unref(key)),
-    queryFn: () => {
-      const poll = !first;
-      first = false;
+    queryFn: ({ queryKey }) => {
+      const id = JSON.stringify(queryKey);
+      const poll = seen.has(id);
+      seen.add(id);
       return fetcher(poll);
     },
     refetchInterval: (query) => (query.state.data ? intervalFor(query.state.data as T) : false),

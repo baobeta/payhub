@@ -9,7 +9,9 @@ module Dashboard
       skip_before_action :require_session!
       allow_unauthorized only: :show
 
-      def show = raise(ActiveRecord::RecordNotFound)
+      # Rendered directly: an unknown path is not a tenant-scoping miss, so it
+      # must not count towards tenant_not_found.
+      def show = render_api_error(ApiError.not_found("resource"))
     end
   end
 end

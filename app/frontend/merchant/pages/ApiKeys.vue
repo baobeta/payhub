@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
 import { api } from "../api";
 import { useMe } from "../useMe";
@@ -20,6 +20,8 @@ const queryClient = useQueryClient();
 const keys = useQuery({ queryKey: ["api-keys"], queryFn: () => api.get<{ data: Key[] }>("/api_keys") });
 
 const secret = ref<string | null>(null);
+// A secret belongs to the mode it was shown in; never leave it on screen under the other.
+watch(() => me.value?.livemode, () => (secret.value = null));
 const error = ref<string | null>(null);
 const createOpen = ref(false);
 const name = ref("");

@@ -18,9 +18,13 @@ export function formatMoney(minor: number, currency: string): string {
   }).format(minor / 10 ** exp);
 }
 
+// NaN for anything that is not a plain amount with at most the currency's
+// decimals: "10.555" USD is a typo, not 10.56.
 export function toMinor(major: string, currency: string): number {
-  if (!/^\d+(\.\d+)?$/.test(major.trim())) return NaN;
-  return Math.round(Number(major) * 10 ** exponentOf(currency));
+  const exp = exponentOf(currency);
+  const pattern = exp === 0 ? /^\d+$/ : new RegExp(`^\\d+(\\.\\d{1,${exp}})?$`);
+  if (!pattern.test(major.trim())) return NaN;
+  return Math.round(Number(major) * 10 ** exp);
 }
 
 export function minorToInput(minor: number, currency: string): string {

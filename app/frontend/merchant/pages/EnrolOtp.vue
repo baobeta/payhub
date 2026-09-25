@@ -36,6 +36,7 @@ async function confirm() {
 }
 
 function finish() {
+  queryClient.removeQueries({ queryKey: ["otp-setup"] }); // holds the TOTP secret
   if (me) queryClient.setQueryData(["me"], me);
   router.push("/");
 }

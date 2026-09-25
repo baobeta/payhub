@@ -12,6 +12,8 @@ describe("money", () => {
     expect(toMinor("12.34", "EUR")).toBe(1234);
     expect(toMinor("500000", "VND")).toBe(500000);
     expect(toMinor("abc", "EUR")).toBeNaN();
+    expect(toMinor("10.555", "USD")).toBeNaN(); // more decimals than the currency has
+    expect(toMinor("100.4", "VND")).toBeNaN();
   });
 
   it("round-trips a minor amount through the input format", () => {

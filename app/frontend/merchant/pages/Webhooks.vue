@@ -9,13 +9,15 @@ import OneTimeSecret from "../components/OneTimeSecret.vue";
 
 type Endpoint = { url: string | null; livemode: boolean; secret_last4: string; previous_secret_expires_at: string | null };
 
-const { allowed } = useMe();
+const { data: me, allowed } = useMe();
 const queryClient = useQueryClient();
 const endpoint = useQuery({ queryKey: ["webhook-endpoint"], queryFn: () => api.get<Endpoint>("/webhook_endpoint") });
 const url = ref("");
 watch(() => endpoint.data.value?.url, (u) => (url.value = u ?? ""), { immediate: true });
 
 const secret = ref<string | null>(null);
+// A secret belongs to the mode it was shown in; never leave it on screen under the other.
+watch(() => me.value?.livemode, () => (secret.value = null));
 const error = ref<string | null>(null);
 const saved = ref(false);
 
