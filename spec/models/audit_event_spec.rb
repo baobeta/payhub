@@ -48,12 +48,4 @@ RSpec.describe AuditEvent do
     expect { described_class.connection.execute("TRUNCATE audit_events") }
       .to raise_error(ActiveRecord::StatementInvalid, /append-only/)
   end
-
-  def without_triggers
-    connection = described_class.connection
-    connection.execute("SET session_replication_role = replica")
-    yield
-  ensure
-    connection.execute("SET session_replication_role = DEFAULT")
-  end
 end

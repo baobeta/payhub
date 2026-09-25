@@ -64,3 +64,9 @@ group :test do
 end
 
 gem "vite_rails", "~> 3.0"
+
+gem "bcrypt", "~> 3.1"
+
+gem "rotp", "~> 6.3"
+
+gem "rqrcode", "~> 2.2"

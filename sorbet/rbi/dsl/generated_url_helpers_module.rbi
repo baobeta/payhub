@@ -10,16 +10,103 @@ module GeneratedUrlHelpersModule
   include ::ActionDispatch::Routing::PolymorphicRoutes
 
   sig { params(args: T.untyped).returns(String) }
+  def accept_dashboard_api_invitation_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def cancel_dashboard_api_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def cancel_v1_payment_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def capture_dashboard_api_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def capture_v1_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_api_keys_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_balance_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_events_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_home_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_invitation_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_invitations_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_me_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_member_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_members_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_mode_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_otp_confirm_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_otp_setup_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_ownership_transfer_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_payment_refunds_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_payments_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_security_history_export_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_security_history_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_session_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_settlements_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_webhook_endpoint_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def export_dashboard_api_payments_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def healthz_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def metrics_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def otp_dashboard_api_session_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def password_dashboard_api_me_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def rails_info_notes_url(*args); end
@@ -37,7 +124,31 @@ module GeneratedUrlHelpersModule
   def rails_mailers_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def recovery_codes_dashboard_api_me_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def recovery_dashboard_api_session_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def redeliver_dashboard_api_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def redeliver_v1_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def reveal_secret_dashboard_api_webhook_endpoint_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def revoke_dashboard_api_api_key_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def roll_dashboard_api_api_key_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def roll_secret_dashboard_api_webhook_endpoint_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def step_up_dashboard_api_session_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def v1_balance_url(*args); end

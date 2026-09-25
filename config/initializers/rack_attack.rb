@@ -31,6 +31,12 @@ class Rack::Attack
     req.ip if req.path.start_with?("/v1/webhooks/")
   end
 
+  # Password and code guessing. The per-account lockout (10 failures) is the
+  # real control; this one stops one IP spraying many accounts.
+  throttle("ui/sign-in-ip", limit: 20, period: 1.minute) do |req|
+    req.ip if req.post? && req.path.match?(%r{\A/(dashboard|ops)/api/(session(/otp|/recovery|/step_up)?|otp/confirm)\z})
+  end
+
   self.throttled_responder = lambda do |req|
     match = req.env["rack.attack.match_data"]
     retry_after = (match[:period] - (Time.now.to_i % match[:period])).to_s

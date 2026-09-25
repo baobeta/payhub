@@ -47,7 +47,17 @@ docker compose exec web bin/rails db:prepare db:seed   # schema + FX table + a d
 
 The seed prints two keys: `sk_live_…` and `sk_test_…`. A test key opens the merchant's test-mode twin, so its payments never show up for the live key (DECISIONS #22).
 
-UI shells (placeholders until phases 1–3 fill them): <http://localhost:3000/dashboard> (merchant), <http://localhost:3000/ops> (operators), <http://localhost:3000/demo>. All outgoing mail lands in MailCatcher at <http://localhost:1080>; `docker compose exec web bin/rails "mail:smoke[me@example.com]"` sends a test message.
+**Merchant dashboard** at <http://localhost:3000/dashboard>. The seed invites `owner@demo.payhub.local` as the Demo Merchant's owner and prints the link (the email is also in MailCatcher at <http://localhost:1080>). Open it, set a password, scan the QR code with any authenticator app, and save the recovery codes. For another merchant: `bin/rails "merchants:invite_owner[<merchant_id>,<email>]"`. From there the owner invites the team:
+
+| Role | Can |
+|---|---|
+| owner | everything, including transferring ownership |
+| admin | everything except ownership transfer |
+| developer | API keys, webhooks, events; reads payments; cannot move money |
+| support | reads payments; capture, cancel, refund; no secrets, no balances |
+| viewer | reads payments, balance, settlements; exports CSV; changes nothing |
+
+The full matrix is generated in [docs/permissions.md](docs/permissions.md). Money actions and anything touching secrets or the team ask for a fresh authenticator code. The header switches between live and test data (DECISIONS #22, #25). `/ops` and `/demo` are still placeholders (phases 2 and 3). `docker compose exec web bin/rails "mail:smoke[me@example.com]"` sends a test email.
 
 Then, with the key the seed printed:
 
@@ -63,7 +73,7 @@ curl -s localhost:3000/v1/payments/<id> -H "Authorization: Bearer $KEY"
 
 A Kiripay (SEA wallet) payment stops at `requires_action` with a redirect URL until the "customer" approves — simulate that with `curl -X POST localhost:4002/_sim/charges/<kp_id>/approve`; the simulator then delivers signed webhooks and the payment becomes `captured`.
 
-**Port 3000 taken?** `WEB_PORT=3100 docker compose up`. **Kiripay webhooks not arriving when Rails runs outside compose?** set `PAYHUB_WEBHOOK_URL=http://host.docker.internal:3000/v1/webhooks/kiripay` on the simulator. **Puma says "a server is already running"?** the compose command already removes the stale pid; if you run `bin/rails s` yourself, `rm tmp/pids/server.pid`.
+**Production** additionally needs `APP_HOST` (links in emails; boot fails without it) and the three `AR_ENCRYPTION_*` keys (`bin/rails db:encryption:init`). **Port 3000 taken?** `WEB_PORT=3100 docker compose up`. **Changed `package.json`?** `docker compose up -d --build -V`: the containers keep `node_modules` in an anonymous volume, and without `-V` (renew anonymous volumes) a rebuilt image's new packages never reach them. **Kiripay webhooks not arriving when Rails runs outside compose?** set `PAYHUB_WEBHOOK_URL=http://host.docker.internal:3000/v1/webhooks/kiripay` on the simulator. **Puma says "a server is already running"?** the compose command already removes the stale pid; if you run `bin/rails s` yourself, `rm tmp/pids/server.pid`.
 
 ### Local development (Rails on the host, databases in Docker)
 
@@ -75,6 +85,7 @@ bin/rails s                                     # and, in other shells:
 bin/vite dev                                    # UI bundles with hot reload
 bundle exec sidekiq -C config/sidekiq.yml
 bin/check                                       # zeitwerk → generated files → rubocop → sorbet → frontend → rspec → brakeman; CI runs exactly this
+npm run e2e                                     # Playwright: sign in with 2FA, then refund (own database: payhub_e2e)
 ```
 
 Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22 for the UI bundles. Both PSP simulators are standalone Sinatra apps with their own `Gemfile` and specs (`cd simulators/nordpay && bundle exec rspec`).

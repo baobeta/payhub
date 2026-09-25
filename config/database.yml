@@ -15,7 +15,9 @@ development:
 
 test:
   <<: *default
-  database: payhub_test
+  # Playwright runs the app in the test env against its own database
+  # (TEST_DATABASE=payhub_e2e), so its seed never leaks into RSpec's.
+  database: <%= ENV.fetch("TEST_DATABASE") { "payhub_test" } %>
 
 production:
   <<: *default

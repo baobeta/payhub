@@ -81,6 +81,10 @@ class DeliverOutboundEventsJob < ApplicationJob
   sig { params(event: OutboundEvent).returns([T.nilable(Integer), T.nilable(String)]) }
   def post(event)
     merchant = T.must(event.merchant)
+    # Re-checked at delivery: DNS may point the saved host somewhere private now.
+    blocked = WebhookUrlGuard.problem(T.must(merchant.webhook_url))
+    return [nil, "not delivered: webhook URL #{blocked}"] if blocked
+
     body = JSON.generate(event.envelope)
     ts = Time.current.to_i
     signature = WebhookSignature.header(body, secrets: merchant.webhook_signing_secrets, at: ts)

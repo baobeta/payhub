@@ -6,6 +6,7 @@ class Merchant < ApplicationRecord
   has_many :idempotency_keys, dependent: :restrict_with_exception
   has_many :outbound_events, dependent: :restrict_with_exception
   has_many :api_keys, dependent: :restrict_with_exception
+  has_many :merchant_users, dependent: :restrict_with_exception
   belongs_to :live_merchant, class_name: "Merchant", optional: true
   has_one :test_twin, class_name: "Merchant", foreign_key: :live_merchant_id,
                       inverse_of: :live_merchant, dependent: :restrict_with_exception

@@ -25,7 +25,9 @@ module Metrics
       ledger_imbalance_detected: [],
       psp_call_log_failures: [:psp],
       authz_denied: [:area, :permission],
-      authz_undeclared: [:controller]
+      authz_undeclared: [:controller],
+      tenant_not_found: [:area],
+      auth_failed: [:area, :factor]
     }.freeze,
     T::Hash[Symbol, T::Array[Symbol]]
   )

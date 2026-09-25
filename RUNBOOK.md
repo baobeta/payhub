@@ -132,6 +132,19 @@ Every verifier accepts a list of secrets, so no step below drops a webhook (DECI
 - **A PSP's secret (inbound).** Set `NORDPAY_WEBHOOK_SECRETS=<new>,<old>` (or `KIRIPAY_…`) on web and restart; the single-secret variable is ignored while the list is set. Switch the secret in the PSP's dashboard. Once `inbound_events` shows no `signature_valid=false` rows for an hour, set the list to `<new>` alone.
 - **A merchant's secret (outbound).** `bin/rails "merchants:rotate_webhook_secret[<MERCHANT_ID>]"` prints the new secret once. For 24 hours every webhook carries two `v1=` signatures, new and old, so the merchant can deploy the new secret whenever suits them in that window.
 
+## A merchant user is locked out (not a page — a support ticket)
+
+Ten wrong passwords or codes lock an account for 30 minutes; it unlocks by itself. If it cannot wait (confirm who is asking, through the merchant's owner):
+
+```ruby
+u = MerchantUser.find_by!(email: "<email>")
+u.reset_failures!
+AuditEvent.record!(action: "user.unlocked_by_support", result: "success", merchant_id: u.merchant_id,
+                   target: u, metadata: { "ticket" => "<TICKET-ID>" })
+```
+
+Lost phone: they sign in with a recovery code, then regenerate codes on their Profile page. Lost both: an admin or the owner removes them and invites them again (a new invitation means a new authenticator enrolment).
+
 ## Quick reference
 
 | Question | Where |

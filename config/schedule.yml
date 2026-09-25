@@ -30,3 +30,9 @@ settlement_reconciliation:
   class: SettlementReconciliationJob
   queue: sweepers
   description: "Ingest yesterday's PSP settlement reports; match every line to the ledger, book matched ones, flag the rest and unsettled captures"
+
+audit_retention:
+  cron: "30 4 * * *"
+  class: AuditRetentionJob
+  queue: sweepers
+  description: "Delete audit_events and psp_calls older than 12 months (PCI 10.5.1)"

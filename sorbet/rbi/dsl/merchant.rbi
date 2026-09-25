@@ -434,6 +434,20 @@ class Merchant
     def live_merchant_previously_changed?; end
 
     sig { returns(T::Array[T.untyped]) }
+    def merchant_user_ids; end
+
+    sig { params(ids: T::Array[T.untyped]).returns(T::Array[T.untyped]) }
+    def merchant_user_ids=(ids); end
+
+    # This method is created by ActiveRecord on the `Merchant` class because it declared `has_many :merchant_users`.
+    # 🔗 [Rails guide for `has_many` association](https://guides.rubyonrails.org/association_basics.html#the-has-many-association)
+    sig { returns(::MerchantUser::PrivateCollectionProxy) }
+    def merchant_users; end
+
+    sig { params(value: T::Enumerable[::MerchantUser]).void }
+    def merchant_users=(value); end
+
+    sig { returns(T::Array[T.untyped]) }
     def outbound_event_ids; end
 
     sig { params(ids: T::Array[T.untyped]).returns(T::Array[T.untyped]) }
