@@ -23,7 +23,9 @@ module Metrics
       psp_circuit_opened: [:psp],
       settlement_discrepancies: [:psp, :status],
       ledger_imbalance_detected: [],
-      psp_call_log_failures: [:psp]
+      psp_call_log_failures: [:psp],
+      authz_denied: [:area, :permission],
+      authz_undeclared: [:controller]
     }.freeze,
     T::Hash[Symbol, T::Array[Symbol]]
   )

@@ -41,6 +41,13 @@ module Payhub
     # Skip views, helpers and assets when generating a new resource.
     config.api_only = true
 
+    # The UI (Web::BaseController) needs cookies and a session for CSRF tokens.
+    # /v1 never reads the session, so it never sets a cookie. Auth cookies are
+    # separate, path-scoped signed cookies per area (design §1).
+    config.middleware.use ActionDispatch::Cookies
+    config.middleware.use ActionDispatch::Session::CookieStore, key: "_payhub_web", same_site: :strict,
+                                                                secure: Rails.env.production?
+
     # UUID v7 primary keys, generated in Postgres (see the first migration).
     config.generators do |g|
       g.orm :active_record, primary_key_type: :uuid

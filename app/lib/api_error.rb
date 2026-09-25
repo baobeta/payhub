@@ -78,6 +78,12 @@ class ApiError < StandardError
     new(type: Type::InvalidRequest, http_status: 401, code: "unauthorized", message: "Invalid or missing API key")
   end
 
+  sig { params(permission: String).returns(ApiError) }
+  def self.forbidden(permission)
+    new(type: Type::InvalidRequest, http_status: 403, code: "forbidden",
+        message: "Your role does not include #{permission}", param: nil)
+  end
+
   sig { params(resource: String).returns(ApiError) }
   def self.not_found(resource)
     new(type: Type::InvalidRequest, http_status: 404, code: "not_found", message: "No such #{resource}")
