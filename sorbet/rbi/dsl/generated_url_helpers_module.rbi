@@ -13,10 +13,19 @@ module GeneratedUrlHelpersModule
   def accept_dashboard_api_invitation_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def cancel_dashboard_api_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def cancel_v1_payment_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def capture_dashboard_api_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def capture_v1_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_home_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_invitation_url(*args); end
@@ -37,10 +46,22 @@ module GeneratedUrlHelpersModule
   def dashboard_api_otp_setup_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_payment_refunds_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_payments_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_session_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def export_dashboard_api_payments_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def healthz_url(*args); end

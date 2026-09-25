@@ -42,6 +42,15 @@ Rails.application.routes.draw do
         post :recovery_codes
       end
       put "mode", to: "modes#update"
+      get "home", to: "home#show"
+      resources :payments, only: %i[index show] do
+        get :export, on: :collection
+        member do
+          post :capture
+          post :cancel
+        end
+        resources :refunds, only: :create
+      end
 
       # Keep last in this namespace.
       match "*path", to: "fallback#show", via: :all

@@ -13,10 +13,19 @@ module GeneratedPathHelpersModule
   def accept_dashboard_api_invitation_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def cancel_dashboard_api_payment_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def cancel_v1_payment_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def capture_dashboard_api_payment_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def capture_v1_payment_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_home_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_invitation_path(*args); end
@@ -40,7 +49,19 @@ module GeneratedPathHelpersModule
   def dashboard_api_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_payment_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_payment_refunds_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_payments_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_session_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def export_dashboard_api_payments_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def healthz_path(*args); end
