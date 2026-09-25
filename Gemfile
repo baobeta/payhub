@@ -62,3 +62,5 @@ group :test do
   gem "pg_query", "~> 6.0" # prosopite needs it to fingerprint queries
   gem "webmock", "~> 3.24"
 end
+
+gem "vite_rails", "~> 3.0"

@@ -23,4 +23,10 @@ Rails.application.routes.draw do
     # Inbound from the PSP simulators. No merchant auth; signature-verified per PSP.
     post "webhooks/:psp_name", to: "webhooks#create", constraints: { psp_name: /nordpay|kiripay/ }
   end
+
+  # UI shells: the Vue router owns every path below each prefix (design §1).
+  # Keep these LAST so /dashboard/api/* and /ops/api/* routes above them match first.
+  get "dashboard(/*path)", to: "dashboard/shell#show", format: false
+  get "ops(/*path)", to: "ops/shell#show", format: false
+  get "demo(/*path)", to: "demo/shell#show", format: false
 end
