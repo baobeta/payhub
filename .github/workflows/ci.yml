@@ -60,6 +60,56 @@ jobs:
       - name: Quality gate
         run: bin/check
 
+  # Browser flows against the real app in the test env (playwright.config.ts
+  # builds its own payhub_e2e database, seed and Vite bundle).
+  e2e:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: payhub
+          POSTGRES_PASSWORD: payhub
+          POSTGRES_DB: payhub_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U payhub"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: payhub
+      PGPASSWORD: payhub
+      REDIS_URL: redis://localhost:6379/0
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+
   # The one rule, end to end: the real compose stack, a hostile PSP simulator,
   # and bin/rails chaos:run checking the ledger against the simulator's own
   # records and settlement report. Slower than the unit gate, so it runs after it.
