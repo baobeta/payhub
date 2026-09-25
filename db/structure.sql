@@ -78,6 +78,29 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: api_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_keys (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    merchant_id uuid NOT NULL,
+    livemode boolean NOT NULL,
+    name character varying NOT NULL,
+    note character varying,
+    prefix character varying NOT NULL,
+    last4 character varying,
+    digest character varying NOT NULL,
+    created_by_id uuid,
+    last_used_at timestamp(6) without time zone,
+    expires_at timestamp(6) without time zone,
+    revoked_at timestamp(6) without time zone,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_api_keys_prefix CHECK (((prefix)::text = ANY ((ARRAY['sk_live_'::character varying, 'sk_test_'::character varying])::text[])))
+);
+
+
+--
 -- Name: ar_internal_metadata; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -375,6 +398,14 @@ CREATE TABLE public.settlement_lines (
 
 
 --
+-- Name: api_keys api_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: ar_internal_metadata ar_internal_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -643,6 +674,20 @@ CREATE UNIQUE INDEX idx_transitions_most_recent ON public.payment_transitions US
 
 
 --
+-- Name: index_api_keys_on_digest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX index_api_keys_on_digest ON public.api_keys USING btree (digest);
+
+
+--
+-- Name: index_api_keys_on_merchant_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_api_keys_on_merchant_id ON public.api_keys USING btree (merchant_id);
+
+
+--
 -- Name: index_audit_events_on_action_and_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -756,6 +801,14 @@ ALTER TABLE ONLY public.refunds
 
 
 --
+-- Name: api_keys fk_rails_28b436c585; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT fk_rails_28b436c585 FOREIGN KEY (merchant_id) REFERENCES public.merchants(id);
+
+
+--
 -- Name: settlement_lines fk_rails_2ee98b6baf; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -866,6 +919,7 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260925000002'),
 ('20260925000001'),
 ('20260924000006'),
 ('20260924000005'),

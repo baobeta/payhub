@@ -5,6 +5,7 @@ class Merchant < ApplicationRecord
   has_many :ledger_accounts, dependent: :restrict_with_exception
   has_many :idempotency_keys, dependent: :restrict_with_exception
   has_many :outbound_events, dependent: :restrict_with_exception
+  has_many :api_keys, dependent: :restrict_with_exception
 
   validates :name, presence: true
   validates :api_key_digest, presence: true, uniqueness: true
