@@ -34,9 +34,13 @@ RSpec.describe "Rate limiting (Rack::Attack)", type: :request do
   end
 
   it "throttles sign-in attempts per IP across accounts" do
-    21.times do |i|
-      post "/dashboard/api/session", params: { email: "user#{i}@example.com", password: "x" * 12 }.to_json,
-                                     headers: { "Content-Type" => "application/json" }
+    # Each attempt runs a real bcrypt comparison (~0.25s), so 21 of them could
+    # straddle a one-minute throttle window; frozen time keeps them in one.
+    freeze_time do
+      21.times do |i|
+        post "/dashboard/api/session", params: { email: "user#{i}@example.com", password: "x" * 12 }.to_json,
+                                       headers: { "Content-Type" => "application/json" }
+      end
     end
     expect(response).to have_http_status(:too_many_requests)
   end
