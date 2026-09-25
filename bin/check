@@ -19,6 +19,13 @@ bin/rails permissions:export >/dev/null
 git diff --exit-code -- docs/permissions.md app/frontend/shared/permissions.ts \
   || { echo "Run bin/rails permissions:export and commit the result."; exit 1; }
 
+step "authorization (permissions, not role names)"
+if grep -rnE "role ?==|\.(owner|admin|developer|support|viewer|approver)\?" app --include='*.rb' \
+     | grep -v "app/lib/permissions.rb" | grep -v "authz-allow-role-check"; then
+  echo "Check a permission, not a role name (design §3). Role-assignment rules may opt out with # authz-allow-role-check"
+  exit 1
+fi
+
 step "rubocop (style)"
 bundle exec rubocop
 
