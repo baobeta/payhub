@@ -14,6 +14,11 @@ step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 step "zeitwerk (autoload layout)"
 bin/rails zeitwerk:check
 
+step "permissions (generated files are current)"
+bin/rails permissions:export >/dev/null
+git diff --exit-code -- docs/permissions.md app/frontend/shared/permissions.ts \
+  || { echo "Run bin/rails permissions:export and commit the result."; exit 1; }
+
 step "rubocop (style)"
 bundle exec rubocop
 
