@@ -361,14 +361,35 @@ class ApiKey
   end
 
   module GeneratedAssociationMethods
+    sig { params(args: T.untyped, blk: T.untyped).returns(::MerchantUser) }
+    def build_created_by(*args, &blk); end
+
     sig { params(args: T.untyped, blk: T.untyped).returns(::Merchant) }
     def build_merchant(*args, &blk); end
+
+    sig { params(args: T.untyped, blk: T.untyped).returns(::MerchantUser) }
+    def create_created_by(*args, &blk); end
+
+    sig { params(args: T.untyped, blk: T.untyped).returns(::MerchantUser) }
+    def create_created_by!(*args, &blk); end
 
     sig { params(args: T.untyped, blk: T.untyped).returns(::Merchant) }
     def create_merchant(*args, &blk); end
 
     sig { params(args: T.untyped, blk: T.untyped).returns(::Merchant) }
     def create_merchant!(*args, &blk); end
+
+    sig { returns(T.nilable(::MerchantUser)) }
+    def created_by; end
+
+    sig { params(value: T.nilable(::MerchantUser)).void }
+    def created_by=(value); end
+
+    sig { returns(T::Boolean) }
+    def created_by_changed?; end
+
+    sig { returns(T::Boolean) }
+    def created_by_previously_changed?; end
 
     sig { returns(T.nilable(::Merchant)) }
     def merchant; end
@@ -382,8 +403,14 @@ class ApiKey
     sig { returns(T::Boolean) }
     def merchant_previously_changed?; end
 
+    sig { returns(T.nilable(::MerchantUser)) }
+    def reload_created_by; end
+
     sig { returns(T.nilable(::Merchant)) }
     def reload_merchant; end
+
+    sig { void }
+    def reset_created_by; end
 
     sig { void }
     def reset_merchant; end

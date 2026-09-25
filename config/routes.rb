@@ -53,6 +53,12 @@ Rails.application.routes.draw do
       end
       get "balance", to: "balances#show"
       get "settlements", to: "settlements#index"
+      resources :api_keys, only: %i[index create] do
+        member do
+          post :roll
+          post :revoke
+        end
+      end
 
       # Keep last in this namespace.
       match "*path", to: "fallback#show", via: :all

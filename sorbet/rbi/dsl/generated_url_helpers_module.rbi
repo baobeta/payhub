@@ -25,6 +25,9 @@ module GeneratedUrlHelpersModule
   def capture_v1_payment_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_api_keys_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_balance_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -104,6 +107,12 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def redeliver_v1_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def revoke_dashboard_api_api_key_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def roll_dashboard_api_api_key_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def step_up_dashboard_api_session_url(*args); end
