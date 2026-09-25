@@ -49,6 +49,12 @@ module GeneratedUrlHelpersModule
   def dashboard_api_me_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_member_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_members_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_mode_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -56,6 +62,9 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_otp_setup_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_ownership_transfer_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_payment_refunds_url(*args); end

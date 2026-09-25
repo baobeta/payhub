@@ -66,6 +66,8 @@ Rails.application.routes.draw do
       resources :events, only: %i[index show] do
         post :redeliver, on: :member
       end
+      resources :members, only: %i[index update destroy]
+      post "ownership_transfer", to: "ownership_transfers#create"
 
       # Keep last in this namespace.
       match "*path", to: "fallback#show", via: :all

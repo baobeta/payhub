@@ -49,6 +49,12 @@ module GeneratedPathHelpersModule
   def dashboard_api_me_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_member_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_members_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def dashboard_api_mode_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -56,6 +62,9 @@ module GeneratedPathHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_otp_setup_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_ownership_transfer_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def dashboard_api_path(*args); end
