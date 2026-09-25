@@ -21,7 +21,7 @@ module Dashboard
         csv = CSV.generate do |out|
           out << %w[at actor action result target ip livemode]
           scope.order(created_at: :desc).limit(EXPORT_LIMIT).each do |e|
-            out << [e.created_at.utc.iso8601, e.actor_label, e.action, e.result, e.target_type, e.ip, e.metadata["livemode"]]
+            out << CsvSafe.row([e.created_at.utc.iso8601, e.actor_label, e.action, e.result, e.target_type, e.ip, e.metadata["livemode"]])
           end
         end
         send_data csv, type: "text/csv", filename: "security-history-#{Time.current.utc.to_date}.csv"

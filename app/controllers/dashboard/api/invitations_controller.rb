@@ -38,8 +38,6 @@ module Dashboard
                                             httponly: true, same_site: :strict, secure: Rails.env.production?,
                                             path: "/dashboard" }
         render json: { "next" => "enrol_otp" }
-      rescue ActiveRecord::RecordInvalid => e
-        raise ApiError.validation(e.record.errors.to_hash.transform_keys(&:to_s))
       end
 
       private

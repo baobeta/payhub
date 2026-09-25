@@ -20,6 +20,10 @@ module Dashboard
         Metrics.increment(:tenant_not_found, area: "merchant")
         render_api_error(ApiError.not_found("resource"))
       end
+      rescue_from ActiveRecord::RecordInvalid do |e|
+        T.bind(self, Dashboard::Api::BaseController)
+        render_api_error(ApiError.validation(e.record.errors.to_hash.transform_keys(&:to_s)))
+      end
       rescue_from ActionController::ParameterMissing do |e|
         T.bind(self, Dashboard::Api::BaseController)
         render_api_error(ApiError.invalid_request("Missing parameter: #{e.param}", param: e.param.to_s))
@@ -39,7 +43,9 @@ module Dashboard
 
         @current_session = T.let(row, T.nilable(Session))
         @current_user = T.let(user, T.nilable(MerchantUser))
-        row.touch_activity!
+        # A page refreshing itself is not the person being active; otherwise an
+        # open payment page would defeat the idle timeout (PCI 8.2.8).
+        row.touch_activity! unless request.headers["X-Poll"] == "1"
       end
 
       def current_session = T.must(@current_session)

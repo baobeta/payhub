@@ -45,4 +45,15 @@ RSpec.describe "GET /dashboard/api/me", type: :request do
     expect(response).to have_http_status(:not_found)
     expect(json_body.dig("error", "code")).to eq("not_found")
   end
+
+  it "does not let background polling keep an idle session alive" do
+    payment = create(:payment, merchant: user.merchant)
+    sign_in_as(user)
+    travel 10.minutes
+    get "/dashboard/api/payments/#{payment.id}", headers: { "X-Poll" => "1" }
+    expect(response).to have_http_status(:ok)
+    travel 6.minutes
+    get "/dashboard/api/me"
+    expect(response).to have_http_status(:unauthorized)
+  end
 end

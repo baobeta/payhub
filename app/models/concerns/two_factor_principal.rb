@@ -19,6 +19,7 @@ module TwoFactorPrincipal
     has_many :recovery_codes, as: :principal, dependent: :restrict_with_exception
 
     validates :password, length: { minimum: MIN_PASSWORD_LENGTH }, allow_nil: true
+    validates :email, format: { with: URI::MailTo::EMAIL_REGEXP }
     before_validation { self.email = email.to_s.strip.downcase }
 
     scope :active, -> { where(disabled_at: nil) }

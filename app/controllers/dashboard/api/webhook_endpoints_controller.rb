@@ -13,9 +13,8 @@ module Dashboard
 
       def update
         url = params.require(:url).to_s
-        unless valid_url?(url)
-          raise ApiError.validation("url" => ["must be an #{Rails.env.production? ? 'https' : 'http(s)'} URL"])
-        end
+        problem = WebhookUrlGuard.problem(url)
+        raise ApiError.validation("url" => [problem]) if problem
 
         current_merchant.update!(webhook_url: url)
         audit!("webhook.endpoint_updated", metadata: { "url" => url })
@@ -42,14 +41,6 @@ module Dashboard
           "url" => m.webhook_url, "livemode" => m.livemode, "secret_last4" => m.webhook_secret.last(4),
           "previous_secret_expires_at" => expires&.future? ? expires.utc.iso8601 : nil
         }
-      end
-
-      def valid_url?(url)
-        uri = URI.parse(url)
-        allowed = Rails.env.production? ? %w[https] : %w[http https]
-        allowed.include?(uri.scheme) && uri.host.present?
-      rescue URI::InvalidURIError
-        false
       end
     end
   end

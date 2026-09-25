@@ -21,8 +21,6 @@ module Dashboard
                     .update_all(revoked_at: Time.current) # rubocop:disable Rails/SkipsModelValidations
         audit!("user.password_changed")
         head :no_content
-      rescue ActiveRecord::RecordInvalid => e
-        raise ApiError.validation(e.record.errors.to_hash.transform_keys(&:to_s))
       end
 
       def recovery_codes

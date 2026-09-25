@@ -27,8 +27,8 @@ module Dashboard
         csv = CSV.generate do |out|
           out << CSV_COLUMNS
           rows.first(EXPORT_LIMIT).each do |p|
-            out << [p.id, p.created_at.utc.iso8601, p.state, p.amount_minor, p.currency, p.captured_minor,
-                    p.psp_name, p.psp_reference]
+            out << CsvSafe.row([p.id, p.created_at.utc.iso8601, p.state, p.amount_minor, p.currency, p.captured_minor,
+                                p.psp_name, p.psp_reference])
           end
         end
         send_data csv, type: "text/csv", filename: "payments-#{Time.current.utc.to_date}.csv"

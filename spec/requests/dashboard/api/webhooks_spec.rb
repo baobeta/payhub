@@ -19,6 +19,14 @@ RSpec.describe "Dashboard webhooks and events", type: :request do
     expect(merchant.reload.webhook_url).to eq("https://example.com/hook")
   end
 
+  it "refuses an endpoint on a private address in production" do
+    allow(WebhookUrlGuard).to receive(:allow_private?).and_return(false)
+    sign_in_as(developer, stepped_up: true)
+    set_url("https://169.254.169.254/latest/meta-data")
+    expect(response).to have_http_status(:unprocessable_content)
+    expect(json_body.dig("error", "details", "url").first).to include('private or reserved')
+  end
+
   it "keeps the test-mode endpoint separate from live" do
     sign_in_as(developer, livemode: false, stepped_up: true)
     set_url("https://example.com/test-hook")

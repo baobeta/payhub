@@ -33,6 +33,13 @@ RSpec.describe "Invitations and enrolment", type: :request do
     expect(response).to have_http_status(:forbidden)
   end
 
+  it "refuses a malformed email" do
+    sign_in_as(admin, stepped_up: true)
+    invite(email: "=cmd|' /C calc'!A0")
+    expect(response).to have_http_status(:unprocessable_content)
+    expect(json_body.dig("error", "details", "email")).to be_present
+  end
+
   it "refuses an email that already has an account" do
     sign_in_as(admin, stepped_up: true)
     invite(email: admin.email)
