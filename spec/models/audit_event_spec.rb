@@ -29,7 +29,31 @@ RSpec.describe AuditEvent do
   end
 
   it "allows the retention purge to delete rows older than 12 months" do
-    event = travel_to(13.months.ago) { described_class.record!(action: "session.created", result: "success") }
+    # The database stamps created_at itself, so an old row can only be made by
+    # a superuser with triggers off: exactly what the purge must cope with.
+    event = described_class.record!(action: "session.created", result: "success")
+    without_triggers { described_class.where(id: event.id).update_all(created_at: 13.months.ago) }
     expect { described_class.where(id: event.id).delete_all }.to change(described_class, :count).by(-1)
+  end
+
+  it "stamps created_at in the database, so a row cannot be backdated and then purged" do
+    event = travel_to(13.months.ago) { described_class.record!(action: "session.created", result: "success") }
+    expect(event.reload.created_at).to be_within(1.minute).of(Time.current)
+    expect { described_class.where(id: event.id).delete_all }
+      .to raise_error(ActiveRecord::StatementInvalid, /append-only/)
+  end
+
+  it "cannot be truncated" do
+    described_class.record!(action: "session.created", result: "success")
+    expect { described_class.connection.execute("TRUNCATE audit_events") }
+      .to raise_error(ActiveRecord::StatementInvalid, /append-only/)
+  end
+
+  def without_triggers
+    connection = described_class.connection
+    connection.execute("SET session_replication_role = replica")
+    yield
+  ensure
+    connection.execute("SET session_replication_role = DEFAULT")
   end
 end

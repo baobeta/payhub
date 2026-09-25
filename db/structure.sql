@@ -54,6 +54,20 @@ $$;
 
 
 --
+-- Name: stamp_created_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_created_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.created_at := now();
+  RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: uuid_generate_v7(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -96,7 +110,8 @@ CREATE TABLE public.api_keys (
     revoked_at timestamp(6) without time zone,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_api_keys_prefix CHECK (((prefix)::text = ANY ((ARRAY['sk_live_'::character varying, 'sk_test_'::character varying])::text[])))
+    CONSTRAINT chk_api_keys_mode_matches_prefix CHECK (((livemode AND ((prefix)::text = 'sk_live_'::text)) OR ((NOT livemode) AND ((prefix)::text = 'sk_test_'::text)))),
+    CONSTRAINT chk_api_keys_prefix CHECK (((prefix)::text = ANY (ARRAY[('sk_live_'::character varying)::text, ('sk_test_'::character varying)::text])))
 );
 
 
@@ -132,7 +147,7 @@ CREATE TABLE public.audit_events (
     request_id character varying,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_audit_events_result CHECK (((result)::text = ANY ((ARRAY['success'::character varying, 'denied'::character varying, 'failure'::character varying])::text[])))
+    CONSTRAINT chk_audit_events_result CHECK (((result)::text = ANY (ARRAY[('success'::character varying)::text, ('denied'::character varying)::text, ('failure'::character varying)::text])))
 );
 
 
@@ -150,7 +165,7 @@ CREATE TABLE public.captures (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     CONSTRAINT chk_captures_amount_positive CHECK ((amount_minor > 0)),
-    CONSTRAINT chk_captures_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying])::text[])))
+    CONSTRAINT chk_captures_state CHECK (((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('succeeded'::character varying)::text, ('failed'::character varying)::text])))
 );
 
 
@@ -216,7 +231,7 @@ CREATE TABLE public.ledger_accounts (
     kind character varying NOT NULL,
     currency character varying(3) NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_ledger_accounts_kind CHECK (((kind)::text = ANY ((ARRAY['psp_receivable'::character varying, 'merchant_payable'::character varying, 'refunds_reserved'::character varying, 'refunds_paid'::character varying, 'psp_payouts'::character varying, 'psp_fees'::character varying])::text[])))
+    CONSTRAINT chk_ledger_accounts_kind CHECK (((kind)::text = ANY (ARRAY[('psp_receivable'::character varying)::text, ('merchant_payable'::character varying)::text, ('refunds_reserved'::character varying)::text, ('refunds_paid'::character varying)::text, ('psp_payouts'::character varying)::text, ('psp_fees'::character varying)::text])))
 );
 
 
@@ -235,7 +250,7 @@ CREATE TABLE public.ledger_entries (
     currency character varying(3) NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
     CONSTRAINT chk_ledger_entries_amount_positive CHECK ((amount_minor > 0)),
-    CONSTRAINT chk_ledger_entries_direction CHECK (((direction)::text = ANY ((ARRAY['debit'::character varying, 'credit'::character varying])::text[])))
+    CONSTRAINT chk_ledger_entries_direction CHECK (((direction)::text = ANY (ARRAY[('debit'::character varying)::text, ('credit'::character varying)::text])))
 );
 
 
@@ -293,7 +308,7 @@ CREATE TABLE public.outbound_events (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     traceparent character varying,
-    CONSTRAINT chk_outbound_events_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'delivered'::character varying, 'dead'::character varying])::text[])))
+    CONSTRAINT chk_outbound_events_state CHECK (((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('delivered'::character varying)::text, ('dead'::character varying)::text])))
 );
 
 
@@ -340,7 +355,7 @@ CREATE TABLE public.payments (
     first_sent_at timestamp(6) without time zone,
     CONSTRAINT chk_payments_amount_positive CHECK ((amount_minor > 0)),
     CONSTRAINT chk_payments_captured_non_negative CHECK ((captured_minor >= 0)),
-    CONSTRAINT chk_payments_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'requires_action'::character varying, 'authorized'::character varying, 'unknown'::character varying, 'captured'::character varying, 'canceled'::character varying, 'failed'::character varying, 'part_refunded'::character varying, 'refunded'::character varying])::text[])))
+    CONSTRAINT chk_payments_state CHECK (((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('requires_action'::character varying)::text, ('authorized'::character varying)::text, ('unknown'::character varying)::text, ('captured'::character varying)::text, ('canceled'::character varying)::text, ('failed'::character varying)::text, ('part_refunded'::character varying)::text, ('refunded'::character varying)::text])))
 );
 
 
@@ -380,7 +395,7 @@ CREATE TABLE public.refunds (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     CONSTRAINT chk_refunds_amount_positive CHECK ((amount_minor > 0)),
-    CONSTRAINT chk_refunds_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying])::text[])))
+    CONSTRAINT chk_refunds_state CHECK (((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('succeeded'::character varying)::text, ('failed'::character varying)::text])))
 );
 
 
@@ -415,8 +430,8 @@ CREATE TABLE public.settlement_lines (
     status character varying NOT NULL,
     problem character varying,
     created_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_settlement_lines_kind CHECK (((kind)::text = ANY ((ARRAY['capture'::character varying, 'refund'::character varying])::text[]))),
-    CONSTRAINT chk_settlement_lines_status CHECK (((status)::text = ANY ((ARRAY['matched'::character varying, 'unmatched'::character varying, 'mismatch'::character varying])::text[])))
+    CONSTRAINT chk_settlement_lines_kind CHECK (((kind)::text = ANY (ARRAY[('capture'::character varying)::text, ('refund'::character varying)::text]))),
+    CONSTRAINT chk_settlement_lines_status CHECK (((status)::text = ANY (ARRAY[('matched'::character varying)::text, ('unmatched'::character varying)::text, ('mismatch'::character varying)::text])))
 );
 
 
@@ -778,7 +793,7 @@ CREATE INDEX index_outbound_events_on_payment_id ON public.outbound_events USING
 -- Name: index_payments_on_sweeper_due_at; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX index_payments_on_sweeper_due_at ON public.payments USING btree (COALESCE(next_check_at, (updated_at + '00:02:00'::interval))) WHERE ((state)::text = ANY ((ARRAY['pending'::character varying, 'unknown'::character varying])::text[]));
+CREATE INDEX index_payments_on_sweeper_due_at ON public.payments USING btree (COALESCE(next_check_at, (updated_at + '00:02:00'::interval))) WHERE ((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('unknown'::character varying)::text]));
 
 
 --
@@ -831,6 +846,20 @@ CREATE TRIGGER trg_audit_events_append_only BEFORE DELETE OR UPDATE ON public.au
 
 
 --
+-- Name: audit_events trg_audit_events_no_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit_events_no_truncate BEFORE TRUNCATE ON public.audit_events FOR EACH STATEMENT EXECUTE FUNCTION public.append_only_guard();
+
+
+--
+-- Name: audit_events trg_audit_events_stamp_created_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit_events_stamp_created_at BEFORE INSERT ON public.audit_events FOR EACH ROW EXECUTE FUNCTION public.stamp_created_at();
+
+
+--
 -- Name: ledger_entries trg_ledger_entries_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -842,6 +871,20 @@ CREATE TRIGGER trg_ledger_entries_immutable BEFORE DELETE OR UPDATE ON public.le
 --
 
 CREATE TRIGGER trg_psp_calls_append_only BEFORE DELETE OR UPDATE ON public.psp_calls FOR EACH ROW EXECUTE FUNCTION public.append_only_guard('12 months');
+
+
+--
+-- Name: psp_calls trg_psp_calls_no_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_psp_calls_no_truncate BEFORE TRUNCATE ON public.psp_calls FOR EACH STATEMENT EXECUTE FUNCTION public.append_only_guard();
+
+
+--
+-- Name: psp_calls trg_psp_calls_stamp_created_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_psp_calls_stamp_created_at BEFORE INSERT ON public.psp_calls FOR EACH ROW EXECUTE FUNCTION public.stamp_created_at();
 
 
 --
@@ -979,6 +1022,8 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260925000006'),
+('20260925000005'),
 ('20260925000004'),
 ('20260925000003'),
 ('20260925000002'),
