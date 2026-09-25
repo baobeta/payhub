@@ -16,6 +16,12 @@ module GeneratedUrlHelpersModule
   def capture_v1_payment_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_me_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def healthz_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }

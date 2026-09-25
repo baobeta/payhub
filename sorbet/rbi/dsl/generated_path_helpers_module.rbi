@@ -16,6 +16,12 @@ module GeneratedPathHelpersModule
   def capture_v1_payment_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_me_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def dashboard_api_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def healthz_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }

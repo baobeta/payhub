@@ -24,6 +24,15 @@ Rails.application.routes.draw do
     post "webhooks/:psp_name", to: "webhooks#create", constraints: { psp_name: /nordpay|kiripay/ }
   end
 
+  namespace :dashboard do
+    namespace :api, defaults: { format: :json } do
+      get "me", to: "me#show"
+
+      # Keep last in this namespace.
+      match "*path", to: "fallback#show", via: :all
+    end
+  end
+
   # UI shells: the Vue router owns every path below each prefix (design §1).
   # Keep these LAST so /dashboard/api/* and /ops/api/* routes above them match first.
   get "dashboard(/*path)", to: "dashboard/shell#show", format: false
