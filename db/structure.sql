@@ -345,6 +345,26 @@ CREATE TABLE public.payments (
 
 
 --
+-- Name: psp_calls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.psp_calls (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    psp_name character varying NOT NULL,
+    operation character varying NOT NULL,
+    psp_reference character varying,
+    http_status integer,
+    outcome character varying NOT NULL,
+    request_redacted jsonb,
+    response_redacted jsonb,
+    duration_ms integer NOT NULL,
+    sent_at timestamp(6) without time zone NOT NULL,
+    created_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_psp_calls_outcome CHECK (((outcome)::text = ANY ((ARRAY['ok'::character varying, 'http_error'::character varying, 'timeout'::character varying, 'unreachable'::character varying])::text[])))
+);
+
+
+--
 -- Name: refunds; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -510,6 +530,14 @@ ALTER TABLE ONLY public.payment_transitions
 
 ALTER TABLE ONLY public.payments
     ADD CONSTRAINT payments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: psp_calls psp_calls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.psp_calls
+    ADD CONSTRAINT psp_calls_pkey PRIMARY KEY (id);
 
 
 --
@@ -754,6 +782,13 @@ CREATE INDEX index_payments_on_sweeper_due_at ON public.payments USING btree (CO
 
 
 --
+-- Name: index_psp_calls_on_psp_name_and_psp_reference_and_sent_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_psp_calls_on_psp_name_and_psp_reference_and_sent_at ON public.psp_calls USING btree (psp_name, psp_reference, sent_at);
+
+
+--
 -- Name: index_refunds_on_payment_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -800,6 +835,13 @@ CREATE TRIGGER trg_audit_events_append_only BEFORE DELETE OR UPDATE ON public.au
 --
 
 CREATE TRIGGER trg_ledger_entries_immutable BEFORE DELETE OR UPDATE ON public.ledger_entries FOR EACH ROW EXECUTE FUNCTION public.ledger_entries_immutable();
+
+
+--
+-- Name: psp_calls trg_psp_calls_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_psp_calls_append_only BEFORE DELETE OR UPDATE ON public.psp_calls FOR EACH ROW EXECUTE FUNCTION public.append_only_guard('12 months');
 
 
 --
@@ -937,6 +979,7 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260925000004'),
 ('20260925000003'),
 ('20260925000002'),
 ('20260925000001'),
