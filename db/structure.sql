@@ -255,6 +255,33 @@ CREATE TABLE public.ledger_entries (
 
 
 --
+-- Name: merchant_users; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.merchant_users (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    merchant_id uuid NOT NULL,
+    email character varying NOT NULL,
+    name character varying,
+    password_digest character varying,
+    role character varying NOT NULL,
+    otp_secret text,
+    otp_enabled_at timestamp(6) without time zone,
+    otp_last_used_step bigint,
+    failed_attempts integer DEFAULT 0 NOT NULL,
+    locked_until timestamp(6) without time zone,
+    invited_by_id uuid,
+    invitation_digest character varying,
+    invitation_expires_at timestamp(6) without time zone,
+    accepted_at timestamp(6) without time zone,
+    disabled_at timestamp(6) without time zone,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_merchant_users_role CHECK (((role)::text = ANY ((ARRAY['owner'::character varying, 'admin'::character varying, 'developer'::character varying, 'support'::character varying, 'viewer'::character varying])::text[])))
+);
+
+
+--
 -- Name: merchants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -380,6 +407,20 @@ CREATE TABLE public.psp_calls (
 
 
 --
+-- Name: recovery_codes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.recovery_codes (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    principal_type character varying NOT NULL,
+    principal_id uuid NOT NULL,
+    code_digest character varying NOT NULL,
+    used_at timestamp(6) without time zone,
+    created_at timestamp(6) without time zone NOT NULL
+);
+
+
+--
 -- Name: refunds; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -405,6 +446,26 @@ CREATE TABLE public.refunds (
 
 CREATE TABLE public.schema_migrations (
     version character varying NOT NULL
+);
+
+
+--
+-- Name: sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sessions (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    principal_type character varying NOT NULL,
+    principal_id uuid NOT NULL,
+    ip character varying,
+    user_agent character varying,
+    livemode boolean DEFAULT true NOT NULL,
+    last_active_at timestamp(6) without time zone NOT NULL,
+    stepped_up_at timestamp(6) without time zone,
+    revoked_at timestamp(6) without time zone,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_sessions_principal_type CHECK (((principal_type)::text = ANY ((ARRAY['MerchantUser'::character varying, 'Operator'::character varying])::text[])))
 );
 
 
@@ -508,6 +569,14 @@ ALTER TABLE ONLY public.ledger_entries
 
 
 --
+-- Name: merchant_users merchant_users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merchant_users
+    ADD CONSTRAINT merchant_users_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: merchants merchants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -556,6 +625,14 @@ ALTER TABLE ONLY public.psp_calls
 
 
 --
+-- Name: recovery_codes recovery_codes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.recovery_codes
+    ADD CONSTRAINT recovery_codes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: refunds refunds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -569,6 +646,14 @@ ALTER TABLE ONLY public.refunds
 
 ALTER TABLE ONLY public.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: sessions sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sessions
+    ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
 
 
 --
@@ -664,10 +749,31 @@ CREATE INDEX idx_ledger_entries_transfer ON public.ledger_entries USING btree (t
 
 
 --
+-- Name: idx_merchant_users_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_merchant_users_email ON public.merchant_users USING btree (lower((email)::text));
+
+
+--
+-- Name: idx_merchant_users_one_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_merchant_users_one_owner ON public.merchant_users USING btree (merchant_id) WHERE (((role)::text = 'owner'::text) AND (disabled_at IS NULL));
+
+
+--
 -- Name: idx_merchants_one_test_twin; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX idx_merchants_one_test_twin ON public.merchants USING btree (live_merchant_id);
+
+
+--
+-- Name: idx_on_principal_type_principal_id_created_at_3ad1e69451; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_on_principal_type_principal_id_created_at_3ad1e69451 ON public.sessions USING btree (principal_type, principal_id, created_at);
 
 
 --
@@ -776,6 +882,20 @@ CREATE INDEX index_ledger_entries_on_payment_id ON public.ledger_entries USING b
 
 
 --
+-- Name: index_merchant_users_on_invitation_digest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX index_merchant_users_on_invitation_digest ON public.merchant_users USING btree (invitation_digest) WHERE (invitation_digest IS NOT NULL);
+
+
+--
+-- Name: index_merchant_users_on_merchant_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_merchant_users_on_merchant_id ON public.merchant_users USING btree (merchant_id);
+
+
+--
 -- Name: index_merchants_on_api_key_digest; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -801,6 +921,20 @@ CREATE INDEX index_payments_on_sweeper_due_at ON public.payments USING btree (CO
 --
 
 CREATE INDEX index_psp_calls_on_psp_name_and_psp_reference_and_sent_at ON public.psp_calls USING btree (psp_name, psp_reference, sent_at);
+
+
+--
+-- Name: index_recovery_codes_on_code_digest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX index_recovery_codes_on_code_digest ON public.recovery_codes USING btree (code_digest);
+
+
+--
+-- Name: index_recovery_codes_on_principal_type_and_principal_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_recovery_codes_on_principal_type_and_principal_id ON public.recovery_codes USING btree (principal_type, principal_id);
 
 
 --
@@ -992,6 +1126,14 @@ ALTER TABLE ONLY public.merchants
 
 
 --
+-- Name: merchant_users fk_rails_c67696e7c1; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merchant_users
+    ADD CONSTRAINT fk_rails_c67696e7c1 FOREIGN KEY (invited_by_id) REFERENCES public.merchant_users(id);
+
+
+--
 -- Name: idempotency_keys fk_rails_c7488e5117; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1016,12 +1158,29 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 
 
 --
+-- Name: merchant_users fk_rails_f03da6f0e2; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merchant_users
+    ADD CONSTRAINT fk_rails_f03da6f0e2 FOREIGN KEY (merchant_id) REFERENCES public.merchants(id);
+
+
+--
+-- Name: api_keys fk_rails_f435faf77d; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT fk_rails_f435faf77d FOREIGN KEY (created_by_id) REFERENCES public.merchant_users(id);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260926000001'),
 ('20260925000006'),
 ('20260925000005'),
 ('20260925000004'),
