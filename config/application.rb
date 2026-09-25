@@ -45,6 +45,7 @@ module Payhub
     # /v1 never reads the session, so it never sets a cookie. Auth cookies are
     # separate, path-scoped signed cookies per area (design §1).
     config.middleware.use ActionDispatch::Cookies
+    config.middleware.use ActionDispatch::ContentSecurityPolicy::Middleware # see config/initializers/content_security_policy.rb
     config.middleware.use ActionDispatch::Session::CookieStore, key: "_payhub_web", same_site: :strict,
                                                                 secure: Rails.env.production?
 
