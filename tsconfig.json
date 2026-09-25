@@ -7,8 +7,7 @@
     "jsx": "preserve",
     "noEmit": true,
     "types": ["vite/client"],
-    "baseUrl": ".",
-    "paths": { "@/*": ["app/frontend/*"] }
+    "paths": { "@/*": ["./app/frontend/*"] }
   },
   "include": ["app/frontend/**/*.ts", "app/frontend/**/*.vue"]
 }

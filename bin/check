@@ -32,6 +32,18 @@ bundle exec rubocop
 step "sorbet (types)"
 bundle exec srb tc
 
+step "frontend types"
+npm run --silent typecheck
+
+step "frontend lint"
+npm run --silent lint
+
+step "frontend tests"
+npm run --silent test
+
+step "frontend build"
+bin/vite build --clear --mode=test
+
 step "rspec (behaviour)"
 bundle exec rspec
 

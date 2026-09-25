@@ -42,6 +42,12 @@ jobs:
           ruby-version: .ruby-version
           bundler-cache: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
       - name: Postgres client matching the server
         run: |
           sudo apt-get update -qq
@@ -50,7 +56,7 @@ jobs:
       - name: Prepare database
         run: bin/rails db:create db:schema:load
 
-      # Same gate as `bin/check` locally: zeitwerk, rubocop, sorbet, rspec, brakeman.
+      # Same gate as `bin/check` locally: zeitwerk, generated files, rubocop, sorbet, frontend, rspec, brakeman.
       - name: Quality gate
         run: bin/check
 

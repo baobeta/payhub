@@ -42,6 +42,7 @@ services:
       KIRIPAY_API_KEY: kp_test_key
       KIRIPAY_WEBHOOK_SECRET: kp_whsec_test
       RAILS_ENV: development
+      VITE_RUBY_HOST: vite
     depends_on:
       db:
         condition: service_healthy
@@ -49,6 +50,18 @@ services:
         condition: service_healthy
     volumes:
       - .:/rails
+      - /rails/node_modules # keep the image's Linux node_modules, not the host's
+
+  vite:
+    build: .
+    command: bin/vite dev
+    environment:
+      VITE_RUBY_HOST: 0.0.0.0
+    ports:
+      - "3036:3036"
+    volumes:
+      - .:/rails
+      - /rails/node_modules
 
   worker:
     build: .
@@ -61,6 +74,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/rails
+      - /rails/node_modules
 
   # PSP simulators: deliberately unreliable, see simulators/*/failure_config.yml
   nordpay:
