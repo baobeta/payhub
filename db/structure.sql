@@ -24,6 +24,23 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
 
 --
+-- Name: append_only_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.append_only_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'DELETE' AND TG_NARGS > 0
+     AND OLD.created_at < now() - TG_ARGV[0]::interval THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION '% is append-only (attempted %)', TG_TABLE_NAME, TG_OP;
+END
+$$;
+
+
+--
 -- Name: ledger_entries_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -69,6 +86,30 @@ CREATE TABLE public.ar_internal_metadata (
     value character varying,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL
+);
+
+
+--
+-- Name: audit_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.audit_events (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    actor_type character varying,
+    actor_id uuid,
+    actor_label character varying,
+    merchant_id uuid,
+    on_behalf_of_merchant_id uuid,
+    action character varying NOT NULL,
+    target_type character varying,
+    target_id uuid,
+    result character varying NOT NULL,
+    ip character varying,
+    user_agent character varying,
+    request_id character varying,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_audit_events_result CHECK (((result)::text = ANY ((ARRAY['success'::character varying, 'denied'::character varying, 'failure'::character varying])::text[])))
 );
 
 
@@ -342,6 +383,14 @@ ALTER TABLE ONLY public.ar_internal_metadata
 
 
 --
+-- Name: audit_events audit_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_events
+    ADD CONSTRAINT audit_events_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: captures captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -594,6 +643,27 @@ CREATE UNIQUE INDEX idx_transitions_most_recent ON public.payment_transitions US
 
 
 --
+-- Name: index_audit_events_on_action_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_audit_events_on_action_and_created_at ON public.audit_events USING btree (action, created_at);
+
+
+--
+-- Name: index_audit_events_on_actor_type_and_actor_id_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_audit_events_on_actor_type_and_actor_id_and_created_at ON public.audit_events USING btree (actor_type, actor_id, created_at);
+
+
+--
+-- Name: index_audit_events_on_merchant_id_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_audit_events_on_merchant_id_and_created_at ON public.audit_events USING btree (merchant_id, created_at);
+
+
+--
 -- Name: index_captures_on_payment_id_and_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -661,6 +731,13 @@ CREATE INDEX index_settlement_lines_on_refund_id ON public.settlement_lines USIN
 --
 
 CREATE INDEX index_settlement_lines_on_status ON public.settlement_lines USING btree (status) WHERE ((status)::text <> 'matched'::text);
+
+
+--
+-- Name: audit_events trg_audit_events_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit_events_append_only BEFORE DELETE OR UPDATE ON public.audit_events FOR EACH ROW EXECUTE FUNCTION public.append_only_guard('12 months');
 
 
 --
@@ -789,6 +866,7 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260925000001'),
 ('20260924000006'),
 ('20260924000005'),
 ('20260924000004'),
