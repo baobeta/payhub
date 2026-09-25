@@ -42,6 +42,12 @@ services:
       KIRIPAY_API_KEY: kp_test_key
       KIRIPAY_WEBHOOK_SECRET: kp_whsec_test
       RAILS_ENV: development
+      VITE_RUBY_HOST: vite
+      # Proxy /vite-dev through Rails: "vite" only resolves inside compose, so
+      # the browser must never be sent to http://vite:3036 directly.
+      VITE_RUBY_SKIP_PROXY: "false"
+      SMTP_HOST: mailcatcher
+      SMTP_PORT: "1025"
     depends_on:
       db:
         condition: service_healthy
@@ -49,6 +55,18 @@ services:
         condition: service_healthy
     volumes:
       - .:/rails
+      - /rails/node_modules # keep the image's Linux node_modules, not the host's
+
+  vite:
+    build: .
+    command: bin/vite dev
+    environment:
+      VITE_RUBY_HOST: 0.0.0.0
+    ports:
+      - "3036:3036"
+    volumes:
+      - .:/rails
+      - /rails/node_modules
 
   worker:
     build: .
@@ -61,6 +79,13 @@ services:
         condition: service_healthy
     volumes:
       - .:/rails
+      - /rails/node_modules
+
+  mailcatcher:
+    image: sj26/mailcatcher:latest
+    ports:
+      - "1080:1080"   # web inbox
+      - "1025:1025"   # SMTP
 
   # PSP simulators: deliberately unreliable, see simulators/*/failure_config.yml
   nordpay:

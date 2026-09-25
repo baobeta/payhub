@@ -40,3 +40,7 @@
 # Ignore Docker-related files
 /.dockerignore
 /Dockerfile*
+
+# Host node_modules holds native binaries for the host OS; the image runs npm ci.
+/node_modules
+/public/vite*

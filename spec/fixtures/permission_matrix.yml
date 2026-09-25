@@ -1,0 +1,32 @@
+# The intended access boundary, reviewed by a human. Do not generate this file.
+merchant:
+  payments.read:         { owner: true,  admin: true,  developer: true,  support: true,  viewer: true  }
+  payments.export:       { owner: true,  admin: true,  developer: false, support: false, viewer: true  }
+  payments.capture:      { owner: true,  admin: true,  developer: false, support: true,  viewer: false }
+  payments.cancel:       { owner: true,  admin: true,  developer: false, support: true,  viewer: false }
+  payments.refund:       { owner: true,  admin: true,  developer: false, support: true,  viewer: false }
+  balance.read:          { owner: true,  admin: true,  developer: false, support: false, viewer: true  }
+  settlements.read:      { owner: true,  admin: true,  developer: false, support: false, viewer: true  }
+  api_keys.read:         { owner: true,  admin: true,  developer: true,  support: false, viewer: false }
+  api_keys.manage:       { owner: true,  admin: true,  developer: true,  support: false, viewer: false }
+  webhooks.read:         { owner: true,  admin: true,  developer: true,  support: false, viewer: false }
+  webhooks.manage:       { owner: true,  admin: true,  developer: true,  support: false, viewer: false }
+  events.redeliver:      { owner: true,  admin: true,  developer: true,  support: false, viewer: false }
+  team.read:             { owner: true,  admin: true,  developer: false, support: false, viewer: false }
+  team.manage:           { owner: true,  admin: true,  developer: false, support: false, viewer: false }
+  security_history.read: { owner: true,  admin: true,  developer: false, support: false, viewer: false }
+  ownership.transfer:    { owner: true,  admin: false, developer: false, support: false, viewer: false }
+operator:
+  ops.payments.read:         { support: true,  ops: true,  approver: true,  admin: true  }
+  ops.queue.read:            { support: true,  ops: true,  approver: true,  admin: true  }
+  ops.circuits.read:         { support: true,  ops: true,  approver: true,  admin: true  }
+  ops.reconciliation.read:   { support: true,  ops: true,  approver: true,  admin: true  }
+  ops.audit.read:            { support: true,  ops: true,  approver: true,  admin: true  }
+  ops.payments.poll:         { support: true,  ops: true,  approver: false, admin: false }
+  ops.events.redeliver:      { support: true,  ops: true,  approver: false, admin: false }
+  ops.impersonation.start:   { support: true,  ops: true,  approver: false, admin: false }
+  ops.reconciliation.review: { support: false, ops: true,  approver: false, admin: false }
+  ops.proposals.create:      { support: false, ops: true,  approver: false, admin: false }
+  ops.proposals.decide:      { support: false, ops: false, approver: true,  admin: false }
+  ops.operators.manage:      { support: false, ops: false, approver: false, admin: true  }
+  ops.access_review.export:  { support: false, ops: false, approver: false, admin: true  }

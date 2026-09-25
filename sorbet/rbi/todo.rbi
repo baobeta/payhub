@@ -4,8 +4,5 @@
 
 # typed: false
 
-module ActionMailer::Base::Mail::Message; end
-module ActionMailer::Collector; end
-module ActionMailer::TestHelper::Mail::Message; end
 module Sidekiq::Process; end
 module Sidekiq::SortedEntry; end

@@ -24,6 +24,23 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
 
 --
+-- Name: append_only_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.append_only_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'DELETE' AND TG_NARGS > 0
+     AND OLD.created_at < now() - TG_ARGV[0]::interval THEN
+    RETURN OLD;
+  END IF;
+  RAISE EXCEPTION '% is append-only (attempted %)', TG_TABLE_NAME, TG_OP;
+END
+$$;
+
+
+--
 -- Name: ledger_entries_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -32,6 +49,20 @@ CREATE FUNCTION public.ledger_entries_immutable() RETURNS trigger
     AS $$
 BEGIN
   RAISE EXCEPTION 'ledger_entries is append-only (attempted %)', TG_OP;
+END
+$$;
+
+
+--
+-- Name: stamp_created_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_created_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.created_at := now();
+  RETURN NEW;
 END
 $$;
 
@@ -61,6 +92,30 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: api_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_keys (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    merchant_id uuid NOT NULL,
+    livemode boolean NOT NULL,
+    name character varying NOT NULL,
+    note character varying,
+    prefix character varying NOT NULL,
+    last4 character varying,
+    digest character varying NOT NULL,
+    created_by_id uuid,
+    last_used_at timestamp(6) without time zone,
+    expires_at timestamp(6) without time zone,
+    revoked_at timestamp(6) without time zone,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_api_keys_mode_matches_prefix CHECK (((livemode AND ((prefix)::text = 'sk_live_'::text)) OR ((NOT livemode) AND ((prefix)::text = 'sk_test_'::text)))),
+    CONSTRAINT chk_api_keys_prefix CHECK (((prefix)::text = ANY ((ARRAY['sk_live_'::character varying, 'sk_test_'::character varying])::text[])))
+);
+
+
+--
 -- Name: ar_internal_metadata; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69,6 +124,30 @@ CREATE TABLE public.ar_internal_metadata (
     value character varying,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL
+);
+
+
+--
+-- Name: audit_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.audit_events (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    actor_type character varying,
+    actor_id uuid,
+    actor_label character varying,
+    merchant_id uuid,
+    on_behalf_of_merchant_id uuid,
+    action character varying NOT NULL,
+    target_type character varying,
+    target_id uuid,
+    result character varying NOT NULL,
+    ip character varying,
+    user_agent character varying,
+    request_id character varying,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_audit_events_result CHECK (((result)::text = ANY ((ARRAY['success'::character varying, 'denied'::character varying, 'failure'::character varying])::text[])))
 );
 
 
@@ -189,7 +268,10 @@ CREATE TABLE public.merchants (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     previous_webhook_secret character varying,
-    previous_webhook_secret_expires_at timestamp(6) without time zone
+    previous_webhook_secret_expires_at timestamp(6) without time zone,
+    livemode boolean DEFAULT true NOT NULL,
+    live_merchant_id uuid,
+    CONSTRAINT chk_merchants_twin_shape CHECK ((livemode = (live_merchant_id IS NULL)))
 );
 
 
@@ -278,6 +360,26 @@ CREATE TABLE public.payments (
 
 
 --
+-- Name: psp_calls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.psp_calls (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    psp_name character varying NOT NULL,
+    operation character varying NOT NULL,
+    psp_reference character varying,
+    http_status integer,
+    outcome character varying NOT NULL,
+    request_redacted jsonb,
+    response_redacted jsonb,
+    duration_ms integer NOT NULL,
+    sent_at timestamp(6) without time zone NOT NULL,
+    created_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_psp_calls_outcome CHECK (((outcome)::text = ANY ((ARRAY['ok'::character varying, 'http_error'::character varying, 'timeout'::character varying, 'unreachable'::character varying])::text[])))
+);
+
+
+--
 -- Name: refunds; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -334,11 +436,27 @@ CREATE TABLE public.settlement_lines (
 
 
 --
+-- Name: api_keys api_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT api_keys_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: ar_internal_metadata ar_internal_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.ar_internal_metadata
     ADD CONSTRAINT ar_internal_metadata_pkey PRIMARY KEY (key);
+
+
+--
+-- Name: audit_events audit_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.audit_events
+    ADD CONSTRAINT audit_events_pkey PRIMARY KEY (id);
 
 
 --
@@ -427,6 +545,14 @@ ALTER TABLE ONLY public.payment_transitions
 
 ALTER TABLE ONLY public.payments
     ADD CONSTRAINT payments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: psp_calls psp_calls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.psp_calls
+    ADD CONSTRAINT psp_calls_pkey PRIMARY KEY (id);
 
 
 --
@@ -538,6 +664,13 @@ CREATE INDEX idx_ledger_entries_transfer ON public.ledger_entries USING btree (t
 
 
 --
+-- Name: idx_merchants_one_test_twin; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_merchants_one_test_twin ON public.merchants USING btree (live_merchant_id);
+
+
+--
 -- Name: idx_outbound_events_list; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -594,6 +727,41 @@ CREATE UNIQUE INDEX idx_transitions_most_recent ON public.payment_transitions US
 
 
 --
+-- Name: index_api_keys_on_digest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX index_api_keys_on_digest ON public.api_keys USING btree (digest);
+
+
+--
+-- Name: index_api_keys_on_merchant_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_api_keys_on_merchant_id ON public.api_keys USING btree (merchant_id);
+
+
+--
+-- Name: index_audit_events_on_action_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_audit_events_on_action_and_created_at ON public.audit_events USING btree (action, created_at);
+
+
+--
+-- Name: index_audit_events_on_actor_type_and_actor_id_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_audit_events_on_actor_type_and_actor_id_and_created_at ON public.audit_events USING btree (actor_type, actor_id, created_at);
+
+
+--
+-- Name: index_audit_events_on_merchant_id_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_audit_events_on_merchant_id_and_created_at ON public.audit_events USING btree (merchant_id, created_at);
+
+
+--
 -- Name: index_captures_on_payment_id_and_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -626,6 +794,13 @@ CREATE INDEX index_outbound_events_on_payment_id ON public.outbound_events USING
 --
 
 CREATE INDEX index_payments_on_sweeper_due_at ON public.payments USING btree (COALESCE(next_check_at, (updated_at + '00:02:00'::interval))) WHERE ((state)::text = ANY ((ARRAY['pending'::character varying, 'unknown'::character varying])::text[]));
+
+
+--
+-- Name: index_psp_calls_on_psp_name_and_psp_reference_and_sent_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_psp_calls_on_psp_name_and_psp_reference_and_sent_at ON public.psp_calls USING btree (psp_name, psp_reference, sent_at);
 
 
 --
@@ -664,10 +839,52 @@ CREATE INDEX index_settlement_lines_on_status ON public.settlement_lines USING b
 
 
 --
+-- Name: audit_events trg_audit_events_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit_events_append_only BEFORE DELETE OR UPDATE ON public.audit_events FOR EACH ROW EXECUTE FUNCTION public.append_only_guard('12 months');
+
+
+--
+-- Name: audit_events trg_audit_events_no_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit_events_no_truncate BEFORE TRUNCATE ON public.audit_events FOR EACH STATEMENT EXECUTE FUNCTION public.append_only_guard();
+
+
+--
+-- Name: audit_events trg_audit_events_stamp_created_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_audit_events_stamp_created_at BEFORE INSERT ON public.audit_events FOR EACH ROW EXECUTE FUNCTION public.stamp_created_at();
+
+
+--
 -- Name: ledger_entries trg_ledger_entries_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_ledger_entries_immutable BEFORE DELETE OR UPDATE ON public.ledger_entries FOR EACH ROW EXECUTE FUNCTION public.ledger_entries_immutable();
+
+
+--
+-- Name: psp_calls trg_psp_calls_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_psp_calls_append_only BEFORE DELETE OR UPDATE ON public.psp_calls FOR EACH ROW EXECUTE FUNCTION public.append_only_guard('12 months');
+
+
+--
+-- Name: psp_calls trg_psp_calls_no_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_psp_calls_no_truncate BEFORE TRUNCATE ON public.psp_calls FOR EACH STATEMENT EXECUTE FUNCTION public.append_only_guard();
+
+
+--
+-- Name: psp_calls trg_psp_calls_stamp_created_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_psp_calls_stamp_created_at BEFORE INSERT ON public.psp_calls FOR EACH ROW EXECUTE FUNCTION public.stamp_created_at();
 
 
 --
@@ -676,6 +893,14 @@ CREATE TRIGGER trg_ledger_entries_immutable BEFORE DELETE OR UPDATE ON public.le
 
 ALTER TABLE ONLY public.refunds
     ADD CONSTRAINT fk_rails_25267b0e17 FOREIGN KEY (payment_id) REFERENCES public.payments(id);
+
+
+--
+-- Name: api_keys fk_rails_28b436c585; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_keys
+    ADD CONSTRAINT fk_rails_28b436c585 FOREIGN KEY (merchant_id) REFERENCES public.merchants(id);
 
 
 --
@@ -759,6 +984,14 @@ ALTER TABLE ONLY public.ledger_entries
 
 
 --
+-- Name: merchants fk_rails_a387bf8734; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.merchants
+    ADD CONSTRAINT fk_rails_a387bf8734 FOREIGN KEY (live_merchant_id) REFERENCES public.merchants(id);
+
+
+--
 -- Name: idempotency_keys fk_rails_c7488e5117; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -789,6 +1022,12 @@ ALTER TABLE ONLY public.outbound_delivery_attempts
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260925000006'),
+('20260925000005'),
+('20260925000004'),
+('20260925000003'),
+('20260925000002'),
+('20260925000001'),
 ('20260924000006'),
 ('20260924000005'),
 ('20260924000004'),

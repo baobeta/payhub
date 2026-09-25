@@ -41,9 +41,13 @@ flowchart LR
 ## Run it
 
 ```bash
-docker compose up --build          # postgres, redis, web (:3000), worker, nordpay (:4001), kiripay (:4002)
-docker compose exec web bin/rails db:prepare db:seed   # schema + FX table + a demo merchant (prints its API key ONCE)
+docker compose up --build          # postgres, redis, web (:3000), worker, vite (:3036), mailcatcher (:1080), nordpay (:4001), kiripay (:4002)
+docker compose exec web bin/rails db:prepare db:seed   # schema + FX table + a demo merchant (prints its live AND test API keys ONCE)
 ```
+
+The seed prints two keys: `sk_live_…` and `sk_test_…`. A test key opens the merchant's test-mode twin, so its payments never show up for the live key (DECISIONS #22).
+
+UI shells (placeholders until phases 1–3 fill them): <http://localhost:3000/dashboard> (merchant), <http://localhost:3000/ops> (operators), <http://localhost:3000/demo>. All outgoing mail lands in MailCatcher at <http://localhost:1080>; `docker compose exec web bin/rails "mail:smoke[me@example.com]"` sends a test message.
 
 Then, with the key the seed printed:
 
@@ -64,14 +68,16 @@ A Kiripay (SEA wallet) payment stops at `requires_action` with a redirect URL un
 ### Local development (Rails on the host, databases in Docker)
 
 ```bash
-docker compose up -d db redis nordpay kiripay   # postgres is on host port 5434 — 5432 is often taken
+docker compose up -d db redis nordpay kiripay mailcatcher   # postgres is on host port 5434 — 5432 is often taken
+npm install
 bin/rails db:prepare db:seed
-bin/rails s                                     # and, in another shell:
+bin/rails s                                     # and, in other shells:
+bin/vite dev                                    # UI bundles with hot reload
 bundle exec sidekiq -C config/sidekiq.yml
-bin/check                                       # zeitwerk → rubocop → sorbet → rspec → brakeman; CI runs exactly this
+bin/check                                       # zeitwerk → generated files → rubocop → sorbet → frontend → rspec → brakeman; CI runs exactly this
 ```
 
-Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16. Both PSP simulators are standalone Sinatra apps with their own `Gemfile` and specs (`cd simulators/nordpay && bundle exec rspec`).
+Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22 for the UI bundles. Both PSP simulators are standalone Sinatra apps with their own `Gemfile` and specs (`cd simulators/nordpay && bundle exec rspec`).
 
 ## The domain in ten lines
 
@@ -226,7 +232,7 @@ Plus one edge the diagram omits and the code adds deliberately: `pending → fai
 
 ## Out of scope, on purpose
 
-No UI. No real PSP credentials or card numbers. No chargebacks or disputes, and no matching of payouts against bank deposits — settlement reports are reconciled against the ledger (DECISIONS #18), the bank statement is not. No Kubernetes — `docker compose up` is the deployment. The production `Dockerfile` hardening (multi-stage, non-root, precompiled bootsnap) is noted, not done.
+No UI on the API: `/v1` stays JSON-only, and the dashboards are placeholder shells until phases 1–3 (DECISIONS #21). No real PSP credentials or card numbers. No chargebacks or disputes, and no matching of payouts against bank deposits — settlement reports are reconciled against the ledger (DECISIONS #18), the bank statement is not. No Kubernetes — `docker compose up` is the deployment. The production `Dockerfile` hardening (multi-stage, non-root, precompiled bootsnap) is noted, not done.
 
 ---
 

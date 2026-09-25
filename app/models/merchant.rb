@@ -5,36 +5,53 @@ class Merchant < ApplicationRecord
   has_many :ledger_accounts, dependent: :restrict_with_exception
   has_many :idempotency_keys, dependent: :restrict_with_exception
   has_many :outbound_events, dependent: :restrict_with_exception
+  has_many :api_keys, dependent: :restrict_with_exception
+  belongs_to :live_merchant, class_name: "Merchant", optional: true
+  has_one :test_twin, class_name: "Merchant", foreign_key: :live_merchant_id,
+                      inverse_of: :live_merchant, dependent: :restrict_with_exception
 
   validates :name, presence: true
   validates :api_key_digest, presence: true, uniqueness: true
   validates :webhook_secret, presence: true
   validates :default_currency, inclusion: { in: Currency::SUPPORTED }
 
-  API_KEY_PREFIX = "sk_live_"
-
   # Returns [merchant, raw_key]. The raw key is shown to the merchant once
-  # and never stored — only its digest is.
+  # and never stored — only its digest is. api_key_digest is still written
+  # until the column is dropped (design §2, two-step migration).
   def self.create_with_api_key!(attrs)
-    raw = "#{API_KEY_PREFIX}#{SecureRandom.hex(24)}"
-    merchant = create!(attrs.merge(
-      api_key_digest: digest(raw),
-      webhook_secret: SecureRandom.hex(32)
-    ))
-    [merchant, raw]
+    transaction do
+      merchant = new(attrs.merge(api_key_digest: digest(SecureRandom.hex(32)), webhook_secret: SecureRandom.hex(32)))
+      merchant.save!
+      key, raw = ApiKey.issue!(merchant:, livemode: true, name: "Default key")
+      merchant.update!(api_key_digest: key.digest)
+      [merchant, raw]
+    end
   end
 
-  # Constant-time authentication. We look up by digest (an indexed equality
-  # query is fine — the digest is not secret) and then secure_compare so the
-  # final check does not leak a byte-by-byte timing signal.
+  # Constant-time lookup, now through api_keys so revoked and expired keys stop
+  # working and many keys can be active at once.
   def self.authenticate(raw_key)
-    return nil if raw_key.blank?
+    ApiKey.authenticate(raw_key)&.merchant_for_mode
+  end
 
-    candidate = digest(raw_key)
-    merchant = find_by(api_key_digest: candidate)
-    return nil unless merchant
+  # The test-mode twin, created on first use. The unique index makes a
+  # concurrent second create fail, and we then read the winner's row; the
+  # savepoint keeps that failure from aborting a caller's transaction.
+  #
+  # No webhook_url: the live endpoint is production, and test events must
+  # never reach it. The twin gets its own endpoint in phase 1.
+  def test_twin!
+    raise ArgumentError, "a test twin has no twin" unless livemode
 
-    ActiveSupport::SecurityUtils.secure_compare(merchant.api_key_digest, candidate) ? merchant : nil
+    test_twin || Merchant.transaction(requires_new: true) do
+      Merchant.create!(
+        name: "#{name} (test)", livemode: false, live_merchant: self, default_currency:,
+        # Placeholder until api_key_digest is dropped: nobody holds this key.
+        api_key_digest: Merchant.digest(SecureRandom.hex(32)), webhook_secret: SecureRandom.hex(32)
+      )
+    end
+  rescue ActiveRecord::RecordNotUnique
+    reload.test_twin || raise
   end
 
   def self.digest(raw) = Digest::SHA256.hexdigest(raw)

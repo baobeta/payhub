@@ -362,6 +362,38 @@ class Merchant
 
   module GeneratedAssociationMethods
     sig { returns(T::Array[T.untyped]) }
+    def api_key_ids; end
+
+    sig { params(ids: T::Array[T.untyped]).returns(T::Array[T.untyped]) }
+    def api_key_ids=(ids); end
+
+    # This method is created by ActiveRecord on the `Merchant` class because it declared `has_many :api_keys`.
+    # 🔗 [Rails guide for `has_many` association](https://guides.rubyonrails.org/association_basics.html#the-has-many-association)
+    sig { returns(::ApiKey::PrivateCollectionProxy) }
+    def api_keys; end
+
+    sig { params(value: T::Enumerable[::ApiKey]).void }
+    def api_keys=(value); end
+
+    sig { params(args: T.untyped, blk: T.untyped).returns(::Merchant) }
+    def build_live_merchant(*args, &blk); end
+
+    sig { params(args: T.untyped, blk: T.untyped).returns(::Merchant) }
+    def build_test_twin(*args, &blk); end
+
+    sig { params(args: T.untyped, blk: T.untyped).returns(::Merchant) }
+    def create_live_merchant(*args, &blk); end
+
+    sig { params(args: T.untyped, blk: T.untyped).returns(::Merchant) }
+    def create_live_merchant!(*args, &blk); end
+
+    sig { params(args: T.untyped, blk: T.untyped).returns(::Merchant) }
+    def create_test_twin(*args, &blk); end
+
+    sig { params(args: T.untyped, blk: T.untyped).returns(::Merchant) }
+    def create_test_twin!(*args, &blk); end
+
+    sig { returns(T::Array[T.untyped]) }
     def idempotency_key_ids; end
 
     sig { params(ids: T::Array[T.untyped]).returns(T::Array[T.untyped]) }
@@ -388,6 +420,18 @@ class Merchant
 
     sig { params(value: T::Enumerable[::LedgerAccount]).void }
     def ledger_accounts=(value); end
+
+    sig { returns(T.nilable(::Merchant)) }
+    def live_merchant; end
+
+    sig { params(value: T.nilable(::Merchant)).void }
+    def live_merchant=(value); end
+
+    sig { returns(T::Boolean) }
+    def live_merchant_changed?; end
+
+    sig { returns(T::Boolean) }
+    def live_merchant_previously_changed?; end
 
     sig { returns(T::Array[T.untyped]) }
     def outbound_event_ids; end
@@ -416,6 +460,24 @@ class Merchant
 
     sig { params(value: T::Enumerable[::Payment]).void }
     def payments=(value); end
+
+    sig { returns(T.nilable(::Merchant)) }
+    def reload_live_merchant; end
+
+    sig { returns(T.nilable(::Merchant)) }
+    def reload_test_twin; end
+
+    sig { void }
+    def reset_live_merchant; end
+
+    sig { void }
+    def reset_test_twin; end
+
+    sig { returns(T.nilable(::Merchant)) }
+    def test_twin; end
+
+    sig { params(value: T.nilable(::Merchant)).void }
+    def test_twin=(value); end
   end
 
   module GeneratedAssociationRelationMethods
@@ -793,6 +855,96 @@ class Merchant
     sig { void }
     def id_will_change!; end
 
+    sig { returns(T.nilable(::String)) }
+    def live_merchant_id; end
+
+    sig { params(value: T.nilable(::String)).returns(T.nilable(::String)) }
+    def live_merchant_id=(value); end
+
+    sig { returns(T::Boolean) }
+    def live_merchant_id?; end
+
+    sig { returns(T.nilable(::String)) }
+    def live_merchant_id_before_last_save; end
+
+    sig { returns(T.untyped) }
+    def live_merchant_id_before_type_cast; end
+
+    sig { returns(T::Boolean) }
+    def live_merchant_id_came_from_user?; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def live_merchant_id_change; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def live_merchant_id_change_to_be_saved; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def live_merchant_id_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::String)) }
+    def live_merchant_id_in_database; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def live_merchant_id_previous_change; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def live_merchant_id_previously_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::String)) }
+    def live_merchant_id_previously_was; end
+
+    sig { returns(T.nilable(::String)) }
+    def live_merchant_id_was; end
+
+    sig { void }
+    def live_merchant_id_will_change!; end
+
+    sig { returns(T::Boolean) }
+    def livemode; end
+
+    sig { params(value: T::Boolean).returns(T::Boolean) }
+    def livemode=(value); end
+
+    sig { returns(T::Boolean) }
+    def livemode?; end
+
+    sig { returns(T.nilable(T::Boolean)) }
+    def livemode_before_last_save; end
+
+    sig { returns(T.untyped) }
+    def livemode_before_type_cast; end
+
+    sig { returns(T::Boolean) }
+    def livemode_came_from_user?; end
+
+    sig { returns(T.nilable([T::Boolean, T::Boolean])) }
+    def livemode_change; end
+
+    sig { returns(T.nilable([T::Boolean, T::Boolean])) }
+    def livemode_change_to_be_saved; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def livemode_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(T::Boolean)) }
+    def livemode_in_database; end
+
+    sig { returns(T.nilable([T::Boolean, T::Boolean])) }
+    def livemode_previous_change; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def livemode_previously_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(T::Boolean)) }
+    def livemode_previously_was; end
+
+    sig { returns(T.nilable(T::Boolean)) }
+    def livemode_was; end
+
+    sig { void }
+    def livemode_will_change!; end
+
     sig { returns(::String) }
     def name; end
 
@@ -944,6 +1096,12 @@ class Merchant
     def restore_id_value!; end
 
     sig { void }
+    def restore_live_merchant_id!; end
+
+    sig { void }
+    def restore_livemode!; end
+
+    sig { void }
     def restore_name!; end
 
     sig { void }
@@ -990,6 +1148,18 @@ class Merchant
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def saved_change_to_id_value?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def saved_change_to_live_merchant_id; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def saved_change_to_live_merchant_id?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable([T::Boolean, T::Boolean])) }
+    def saved_change_to_livemode; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def saved_change_to_livemode?(from: T.unsafe(nil), to: T.unsafe(nil)); end
 
     sig { returns(T.nilable([::String, ::String])) }
     def saved_change_to_name; end
@@ -1176,6 +1346,12 @@ class Merchant
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def will_save_change_to_id_value?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def will_save_change_to_live_merchant_id?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def will_save_change_to_livemode?(from: T.unsafe(nil), to: T.unsafe(nil)); end
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def will_save_change_to_name?(from: T.unsafe(nil), to: T.unsafe(nil)); end

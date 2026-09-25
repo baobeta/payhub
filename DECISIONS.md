@@ -206,3 +206,35 @@ It earned its place on its first runs. Twenty seeds found two defects every exis
 Serializing captures per payment is what makes the read sufficient: with one capture in flight and a running total that only grows, "has it landed?" is `total ≥ base + amount`, with no ambiguity about whose capture moved the total. The 409 costs a merchant who fires two partial captures at once one retry; it is the same trade #6 makes for refunds. Refunds didn't have this bug because Nordpay's refund call *is* idempotent on our reference (#6) — which is the general rule: an operation is safe to retry only if the PSP deduplicates it or we can prove from a read that it hasn't happened.
 
 **Deploy note:** jobs already queued with the old `(payment_id, amount)` arguments are adopted as captures on first run. A legacy job *redelivered after it already booked* can't be told from a fresh one; drain the `payments` queue before deploying this change.
+
+## 21. A UI, kept beside the API rather than in it
+
+**Decision:** Three Vue bundles (`merchant`, `ops`, `demo`) served by Vite Ruby from the same Rails app, each from its own shell page (`/dashboard`, `/ops`, `/demo`) behind `Web::BaseController < ActionController::Base`. `/v1` is unchanged: `ActionController::API`, Bearer keys, no cookies.
+
+**Rejected:** a separate SPA calling `/v1` over CORS.
+
+**Reason:** Same-origin cookie sessions keep secret API keys out of the browser, and the assignment's "no UI" scope is preserved for the API itself — nothing the UI adds is reachable through `/v1`. Three bundles rather than one means a merchant's browser never downloads the operator console's code.
+
+## 22. Test mode is a twin merchant
+
+**Decision:** Each live merchant has at most one test-mode twin (`merchants.livemode = false`, `live_merchant_id` → the live row, one twin enforced by a unique index and the shape by a CHECK). Keys live in `api_keys`; an `sk_test_` key authenticates as the twin.
+
+**Rejected:** a `livemode` column on payments, refunds, captures, ledger accounts and events.
+
+**Reason:** Every query is already scoped by merchant, so separation comes from scoping that exists and is already tested, rather than a new filter every query must remember. The ledger, the chaos run and the simulation are untouched.
+
+## 23. Operators change money only with two people
+
+**Decision:** Manual exits from `unknown` and ledger corrections are proposals, approved by a different operator. No operator role holds both `ops.proposals.create` and `ops.proposals.decide`; the operator admin holds neither. Built in phase 2; recorded now because phase 0's permission catalogue already encodes the split and tests it.
+
+**Rejected:** a single operator transition with a reason (the current RUNBOOK §5).
+
+**Reason:** Segregation of duties is the baseline for manual money movement (`reports/RBAC implementation patterns.md`), and "proposer ≠ approver" is enforceable by a CHECK constraint rather than by convention.
+
+## 24. Permissions are a catalogue in code, checked per action, verified in CI
+
+**Decision:** `resource.verb` permissions and fixed roles in `app/lib/permissions.rb`, validated at boot. Every UI action declares `requires_permission` or `allow_unauthorized`; a denial is a 403 and an append-only `audit_events` row. CI enforces it three ways: a route inventory (every Web route is declared), an independent hand-written matrix (`spec/fixtures/permission_matrix.yml`), and a grep that forbids checking role names. The docs table and the TypeScript permission type are generated from the catalogue and fail `bin/check` when stale.
+
+**Rejected:** Pundit/CanCanCan, a policy engine (OPA, Cedar), permissions in the database.
+
+**Reason:** Nine fixed roles do not need them. Each deferred option has a written trigger in design §3 (custom roles → database; per-record rules → policy objects). The matrix is hand-written on purpose: expectations derived from the code under test cannot disagree with it.

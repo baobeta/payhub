@@ -147,4 +147,12 @@ RSpec.describe NordpayAdapter do
       expect { adapter.settlement_report(Date.new(2026, 9, 23)) }.to raise_error(PspAdapter::Rejected, /unreadable/)
     end
   end
+
+  it "records a timed-out charge as a psp_calls row with no response" do
+    payment = create(:payment, psp_reference: Payment.generate_psp_reference)
+    stub_request(:post, "http://nordpay.test/charges").to_raise(Net::ReadTimeout)
+    expect { adapter.authorize(payment) }.to raise_error(PspAdapter::TimedOut)
+    expect(PspCall.sole).to have_attributes(outcome: "timeout", psp_reference: payment.psp_reference, http_status: nil)
+    expect(PspCall.sole.request_redacted.to_json).not_to include(payment.payment_method_token)
+  end
 end

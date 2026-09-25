@@ -167,9 +167,12 @@ class KiripayAdapter < PspAdapter
   end
   def send_request(method, path, body: nil, params: {})
     operation = "#{method.upcase} #{path.sub(%r{/kp_[a-f0-9]+}, '/:id')}"
+    started_at = Time.current
     response = @conn.run_request(method, path, body, {}) { |req| req.params.update(params) }
     outcome = response.status.between?(200, 299) ? "ok" : "http_#{response.status}"
     Metrics.increment(:psp_calls, psp: "kiripay", operation: operation, outcome: outcome)
+    PspCallLog.record(psp: "kiripay", method:, path:, params:, request_body: body, status: response.status,
+                      response_body: response.body, outcome: outcome == "ok" ? "ok" : "http_error", started_at:)
     case response.status
     when 200..299, 404 then response
     when 500..599 then raise Unavailable, "kiripay #{response.status}"
@@ -177,9 +180,13 @@ class KiripayAdapter < PspAdapter
     end
   rescue Faraday::TimeoutError => e
     Metrics.increment(:psp_calls, psp: "kiripay", operation: operation, outcome: "timeout")
+    PspCallLog.record(psp: "kiripay", method:, path:, params:, request_body: body, status: nil, response_body: nil,
+                      outcome: "timeout", started_at: T.must(started_at))
     raise TimedOut, "kiripay #{method.upcase} #{path}: #{e.message}"
   rescue Faraday::ConnectionFailed => e
     Metrics.increment(:psp_calls, psp: "kiripay", operation: operation, outcome: "unreachable")
+    PspCallLog.record(psp: "kiripay", method:, path:, params:, request_body: body, status: nil, response_body: nil,
+                      outcome: "unreachable", started_at: T.must(started_at))
     raise Unavailable, "kiripay unreachable: #{e.message}"
   end
 
