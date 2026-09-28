@@ -197,10 +197,6 @@ GEM
       racc (~> 1.4)
     nokogiri (1.19.4-aarch64-linux-musl)
       racc (~> 1.4)
-    nokogiri (1.19.4-arm-linux-gnu)
-      racc (~> 1.4)
-    nokogiri (1.19.4-arm-linux-musl)
-      racc (~> 1.4)
     nokogiri (1.19.4-arm64-darwin)
       racc (~> 1.4)
     nokogiri (1.19.4-x86_64-darwin)
@@ -546,15 +542,15 @@ GEM
       fugit (~> 1.8, >= 1.11.1)
       globalid (>= 1.0.1)
       sidekiq (>= 6.5.0)
-    sorbet (0.6.13506)
-      sorbet-static (= 0.6.13506)
-    sorbet-runtime (0.6.13506)
-    sorbet-static (0.6.13506-aarch64-linux)
-    sorbet-static (0.6.13506-universal-darwin)
-    sorbet-static (0.6.13506-x86_64-linux)
-    sorbet-static-and-runtime (0.6.13506)
-      sorbet (= 0.6.13506)
-      sorbet-runtime (= 0.6.13506)
+    sorbet (0.6.13508)
+      sorbet-static (= 0.6.13508)
+    sorbet-runtime (0.6.13508)
+    sorbet-static (0.6.13508-aarch64-linux)
+    sorbet-static (0.6.13508-universal-darwin)
+    sorbet-static (0.6.13508-x86_64-linux)
+    sorbet-static-and-runtime (0.6.13508)
+      sorbet (= 0.6.13508)
+      sorbet-runtime (= 0.6.13508)
     spoom (1.7.16)
       erubi (>= 1.10.0)
       prism (>= 0.28.0)
@@ -609,8 +605,6 @@ PLATFORMS
   aarch64-linux
   aarch64-linux-gnu
   aarch64-linux-musl
-  arm-linux-gnu
-  arm-linux-musl
   arm64-darwin
   x86_64-darwin
   x86_64-linux
