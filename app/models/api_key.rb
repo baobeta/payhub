@@ -9,7 +9,10 @@ class ApiKey < ApplicationRecord
   TEST_PREFIX = "sk_test_"
   LAST_USED_RESOLUTION = 1.minute
 
+  ROLL_OVERLAPS = { "now" => 0, "24h" => 24.hours, "7d" => 7.days }.freeze
+
   belongs_to :merchant
+  belongs_to :created_by, class_name: "MerchantUser", optional: true
 
   scope :active, -> { where(revoked_at: nil).where("expires_at IS NULL OR expires_at > ?", Time.current) }
 
@@ -40,6 +43,24 @@ class ApiKey < ApplicationRecord
     return if last && last > LAST_USED_RESOLUTION.ago
 
     update_column(:last_used_at, Time.current) # rubocop:disable Rails/SkipsModelValidations -- hot path, no validations to run
+  end
+
+  # Returns [replacement, raw]. The old key keeps working for `overlap` so a
+  # deploy can pick up the new one (Stripe 7d, Adyen 24h).
+  def roll!(overlap:, by:)
+    transaction do
+      overlap.to_i.zero? ? update!(revoked_at: Time.current) : update!(expires_at: overlap.from_now)
+      ApiKey.issue!(merchant: T.must(merchant), livemode:, name:, note:, created_by_id: by&.id)
+    end
+  end
+
+  def revoke! = update!(revoked_at: Time.current)
+
+  def status
+    return "revoked" if revoked_at
+    return "expired" if expires_at&.past?
+
+    expires_at ? "expiring" : "active"
   end
 
   # Which data space this key opens: the live merchant or its test twin.

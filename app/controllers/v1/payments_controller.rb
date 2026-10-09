@@ -10,11 +10,7 @@ module V1
     # no COUNT, no OFFSET, no N+1 (transitions are not loaded for the list).
     sig { void }
     def index
-      scope = current_merchant.payments
-      scope = scope.where(state: params[:state]) if params[:state].present?
-      scope = scope.where(currency: params[:currency]) if params[:currency].present?
-      scope = scope.where(created_at: Time.iso8601(params[:created_after])..) if params[:created_after].present?
-      scope = scope.where(created_at: ..Time.iso8601(params[:created_before])) if params[:created_before].present?
+      scope = PaymentFilters.apply(current_merchant.payments, params)
 
       page = Cursor.paginate(scope, after: params[:cursor].presence, limit: params[:limit]&.to_i)
       render json: {

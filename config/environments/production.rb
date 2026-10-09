@@ -80,6 +80,12 @@ Rails.application.configure do
   # Skip DNS rebinding protection for the default health check endpoint.
   # config.host_authorization = { exclude: ->(request) { request.path == "/up" } }
 
+  # Links in emails (invitations) must point at the real host. Fail at boot
+  # rather than send every invitation to localhost.
+  config.action_mailer.default_url_options = {
+    host: ENV.fetch("APP_HOST") { raise "Set APP_HOST (e.g. payhub.example.com) for links in emails" },
+    protocol: "https"
+  }
   # Real SMTP credentials are out of scope for this project (design §5).
   config.action_mailer.delivery_method = :smtp
   config.action_mailer.smtp_settings = { address: ENV.fetch("SMTP_HOST", "localhost"),

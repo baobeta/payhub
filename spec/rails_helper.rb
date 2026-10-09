@@ -27,6 +27,9 @@ RSpec.configure do |config|
   # Circuit-breaker state is per process in the test suite; no example may
   # inherit an open circuit from another (DECISIONS #17).
   config.before { T.cast(PspCircuit.store, PspCircuit::MemoryStore).clear! }
+  # Throttle counters live in the shared test cache; no example may inherit
+  # another's (the sign-in throttle counts every POST /session from 127.0.0.1).
+  config.before { Rack::Attack.cache.store.clear }
   config.around(:each, :concurrency) do |example|
     self.use_transactional_tests = false
     example.run

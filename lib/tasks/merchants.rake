@@ -15,4 +15,15 @@ namespace :merchants do
       carries two v1 signatures (new and old); verify against the new one, then stop accepting the old.
     MSG
   end
+
+  # bin/rails "merchants:invite_owner[<merchant_id>,<email>]"
+  desc "Invite the first owner of a merchant (prints the invitation link; also emailed)"
+  task :invite_owner, %i[merchant_id email] => :environment do |_t, args|
+    merchant = Merchant.find(args.fetch(:merchant_id))
+    user, token = MerchantUser.invite_first_owner!(merchant:, email: args.fetch(:email))
+    InvitationMailer.invite(user, token).deliver_now
+    puts "Invitation for #{user.email}: http://localhost:3000/dashboard/invitations/#{token}"
+  rescue ArgumentError => e
+    abort e.message
+  end
 end

@@ -6,8 +6,9 @@
     "strict": true,
     "jsx": "preserve",
     "noEmit": true,
+    "skipLibCheck": true,
     "types": ["vite/client"],
     "paths": { "@/*": ["./app/frontend/*"] }
   },
-  "include": ["app/frontend/**/*.ts", "app/frontend/**/*.vue"]
+  "include": ["app/frontend/**/*.ts", "app/frontend/**/*.vue", "e2e/**/*.ts", "playwright.config.ts"]
 }

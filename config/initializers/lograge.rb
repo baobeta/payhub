@@ -9,7 +9,9 @@
 Rails.application.configure do
   config.lograge.enabled = true
   config.lograge.formatter = Lograge::Formatters::Json.new
-  config.lograge.base_controller_class = "ActionController::API"
+  config.lograge.base_controller_class = ["ActionController::API", "ActionController::Base"] # /v1 and the UI
+  # Polling endpoints mark themselves; one line per poll would drown the log.
+  config.lograge.ignore_custom = ->(event) { event.payload[:skip_request_log] }
 
   config.lograge.custom_options = lambda do |event|
     payload = event.payload

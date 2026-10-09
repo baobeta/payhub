@@ -56,4 +56,34 @@ RSpec.describe ApiKey do
       expect(described_class.authenticate("")).to be_nil
     end
   end
+
+  describe "#roll!" do
+    it "issues a replacement with the same name and keeps the old key working for the overlap" do
+      key, old_raw = described_class.issue!(merchant:, livemode: true, name: "Server")
+      replacement, new_raw = key.roll!(overlap: 24.hours, by: nil)
+      expect(replacement.name).to eq("Server")
+      expect(described_class.authenticate(old_raw)).to eq(key)
+      expect(described_class.authenticate(new_raw)).to eq(replacement)
+      travel 25.hours
+      expect(described_class.authenticate(old_raw)).to be_nil
+    end
+
+    it "with no overlap revokes the old key at once" do
+      key, old_raw = described_class.issue!(merchant:, livemode: true, name: "Server")
+      key.roll!(overlap: 0, by: nil)
+      expect(described_class.authenticate(old_raw)).to be_nil
+      expect(key.reload.status).to eq("revoked")
+    end
+  end
+
+  describe "#status" do
+    it "is active, then expiring once rolled, then expired" do
+      key, = described_class.issue!(merchant:, livemode: true, name: "Server")
+      expect(key.status).to eq("active")
+      key.update!(expires_at: 1.hour.from_now)
+      expect(key.status).to eq("expiring")
+      travel 2.hours
+      expect(key.status).to eq("expired")
+    end
+  end
 end

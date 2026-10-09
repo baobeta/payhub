@@ -57,3 +57,7 @@ node_modules
 # https://vite.dev/guide/env-and-mode.html#env-files
 *.local
 
+
+# Playwright
+/test-results/
+/playwright-report/

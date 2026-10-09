@@ -51,3 +51,11 @@ else
   _test_key, test_raw = ApiKey.issue!(merchant:, livemode: false, name: "Default test key")
   puts "Demo merchant TEST key (shown once): #{test_raw}"
 end
+
+# ── Demo merchant's first owner ─────────────────────────────────────────────
+demo = Merchant.find_by(name: "Demo Merchant", livemode: true)
+if demo && !demo.merchant_users.active.exists?(role: "owner") # authz-allow-role-check
+  owner, token = MerchantUser.invite_first_owner!(merchant: demo, email: "owner@demo.payhub.local")
+  InvitationMailer.invite(owner, token).deliver_now
+  puts "\nDashboard owner invitation (also in MailCatcher): http://localhost:3000/dashboard/invitations/#{token}"
+end

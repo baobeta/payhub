@@ -60,12 +60,27 @@ module Authorization
 
   private
 
+  # Layer order (design §3): no principal → 401 with no audit row (anonymous
+  # traffic must not fill an append-only table); no grant → audited 403;
+  # sensitive permission without a fresh step-up → 401 step_up_required.
   def authorize!(permission)
     @authorization_checked = true
-    return if authorization_role && Permissions.granted?(authorization_area, authorization_role, permission)
+    raise ApiError.unauthenticated if authorization_role.nil?
 
-    record_denial(permission)
-    raise ApiError.forbidden(permission)
+    unless permission_granted?(permission)
+      record_denial(permission)
+      raise ApiError.forbidden(permission)
+    end
+    raise ApiError.step_up_required if Permissions.sensitive?(permission) && !step_up_fresh?
+  end
+
+  # Phase 2 narrows this for read-only impersonation.
+  def permission_granted?(permission)
+    Permissions.granted?(authorization_area, authorization_role, permission)
+  rescue ArgumentError => e
+    raise if e.is_a?(Permissions::Unknown) # a typo in code is a bug, not a denial
+
+    false # unknown role: deny (and audit), never 500
   end
 
   def record_denial(permission)
@@ -95,4 +110,6 @@ module Authorization
   def authorization_role = nil
   def authorization_actor = nil
   def authorization_merchant_id = nil
+  # Fail closed: only an area base controller that tracks step-up says yes.
+  def step_up_fresh? = false
 end

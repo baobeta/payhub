@@ -78,6 +78,24 @@ class ApiError < StandardError
     new(type: Type::InvalidRequest, http_status: 401, code: "unauthorized", message: "Invalid or missing API key")
   end
 
+  sig { params(code: String, message: String).returns(ApiError) }
+  def self.unauthenticated(code: "unauthenticated", message: "Sign in to continue")
+    new(type: Type::InvalidRequest, http_status: 401, code:, message:)
+  end
+
+  sig { returns(ApiError) }
+  def self.step_up_required
+    new(type: Type::InvalidRequest, http_status: 401, code: "step_up_required",
+        message: "Confirm with your authenticator code to continue")
+  end
+
+  sig { params(until_time: ActiveSupport::TimeWithZone).returns(ApiError) }
+  def self.locked(until_time)
+    new(type: Type::InvalidRequest, http_status: 423, code: "account_locked",
+        message: "Too many attempts. Try again after #{until_time.utc.iso8601}",
+        details: { "locked_until" => [until_time.utc.iso8601] })
+  end
+
   sig { params(permission: String).returns(ApiError) }
   def self.forbidden(permission)
     new(type: Type::InvalidRequest, http_status: 403, code: "forbidden",

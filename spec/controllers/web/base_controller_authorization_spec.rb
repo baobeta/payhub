@@ -19,6 +19,7 @@ RSpec.describe Web::BaseController, type: :controller do
 
     def authorization_area = :merchant
     def authorization_role = request.headers["X-Test-Role"]
+    def step_up_fresh? = request.headers["X-Test-Stepped-Up"] == "1"
   end
 
   # An anonymous subclass of a namespaced controller keeps its parent's path.
@@ -26,6 +27,7 @@ RSpec.describe Web::BaseController, type: :controller do
 
   it "allows a role that holds the permission" do
     request.headers["X-Test-Role"] = "support"
+    request.headers["X-Test-Stepped-Up"] = "1"
     post :create
     expect(response).to have_http_status(:ok)
   end
@@ -65,5 +67,29 @@ RSpec.describe Web::BaseController, type: :controller do
     expect(controller.class.authorization_declared_for?("create")).to be(true)
     expect(controller.class.authorization_declared_for?("show")).to be(true)
     expect(controller.class.authorization_declared_for?("destroy")).to be(false)
+  end
+
+  it "answers 401 without an audit row when nobody is signed in" do
+    expect { post :create }.not_to change(AuditEvent, :count)
+    expect(response).to have_http_status(:unauthorized)
+  end
+
+  it "asks for step-up before a sensitive permission" do
+    request.headers["X-Test-Role"] = "support"
+    post :create
+    expect(response).to have_http_status(:unauthorized)
+    expect(JSON.parse(response.body).dig("error", "code")).to eq("step_up_required")
+  end
+
+  it "does not ask for step-up on a non-sensitive permission" do
+    request.headers["X-Test-Role"] = "viewer"
+    get :index
+    expect(response).to have_http_status(:ok)
+  end
+
+  it "denies and audits an unknown role instead of failing with 500" do
+    request.headers["X-Test-Role"] = "superuser"
+    expect { get :index }.to change(AuditEvent, :count).by(1)
+    expect(response).to have_http_status(:forbidden)
   end
 end
