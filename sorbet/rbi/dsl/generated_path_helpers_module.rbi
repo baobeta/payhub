@@ -106,6 +106,9 @@ module GeneratedPathHelpersModule
   def metrics_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def ops_api_circuits_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def ops_api_invitation_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -121,6 +124,21 @@ module GeneratedPathHelpersModule
   def ops_api_otp_setup_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def ops_api_payment_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_payments_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_proposals_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_queue_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_reconciliation_breaks_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def ops_api_session_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -131,6 +149,9 @@ module GeneratedPathHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def password_dashboard_api_me_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def poll_ops_api_payment_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def rails_info_notes_path(*args); end
@@ -160,10 +181,16 @@ module GeneratedPathHelpersModule
   def redeliver_dashboard_api_event_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def redeliver_ops_api_event_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def redeliver_v1_event_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def reveal_secret_dashboard_api_webhook_endpoint_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def review_ops_api_reconciliation_break_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def revoke_dashboard_api_api_key_path(*args); end
@@ -197,4 +224,7 @@ module GeneratedPathHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def v1_payments_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def withdraw_ops_api_proposal_path(*args); end
 end

@@ -6,4 +6,10 @@ class OperatorMailer < ApplicationMailer
     @role = operator.role
     mail(to: operator.email, subject: "Your PayHub operator account")
   end
+
+  def proposal_waiting(proposal, approver)
+    @proposal = proposal
+    @url = app_url("/ops/proposals")
+    mail(to: approver.email, subject: "Proposal waiting: #{proposal.case_reference}")
+  end
 end

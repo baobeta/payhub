@@ -33,11 +33,6 @@ module OpsPaymentDetail
   end
 
   def self.proposals(payment)
-    OperatorProposal.where(payment:).order(:created_at).map do |pr|
-      { "id" => pr.id, "kind" => pr.kind, "state" => pr.state, "reason_code" => pr.reason_code,
-        "case_reference" => pr.case_reference, "proposed_by" => T.must(pr.proposed_by).email,
-        "decided_by" => pr.decided_by&.email, "created_at" => pr.created_at.utc.iso8601(3),
-        "decided_at" => pr.decided_at&.utc&.iso8601(3) }
-    end
+    OperatorProposal.where(payment:).order(:created_at).map { |pr| ProposalSerializer.call(pr) }
   end
 end

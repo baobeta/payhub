@@ -23,9 +23,13 @@ class OperatorProposal < ApplicationRecord
 
   scope :open, -> { where(state: "pending") }
 
-  # TODO(user): Task 10.
+  # The maker-checker guard (design §3 layer 4, DECISIONS #23). Called twice:
+  # to compute the `can.approve` flag, and again under the row lock before
+  # applying. The database CHECK is the backstop for self-approval, not the
+  # only defence.
   def approvable_by?(operator)
-    raise NotImplementedError
+    state == "pending" && operator.active? && operator.id != proposed_by_id &&
+      Permissions.granted?(:operator, operator.role, "ops.proposals.decide")
   end
 
   def legs
