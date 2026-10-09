@@ -13,9 +13,11 @@ namespace :permissions do
 end
 
 namespace :exports do
-  desc "Write every generated file: permissions (docs + TS) and currency exponents (TS)"
+  desc "Write every generated file: permissions (docs + TS), currency exponents (TS) and the state machine (TS)"
   task all: ["permissions:export", :environment] do
     File.write(Rails.root.join("app/frontend/shared/currencies.ts"), CurrencyExport.typescript)
     puts "Wrote app/frontend/shared/currencies.ts"
+    File.write(Rails.root.join("app/frontend/shared/stateMachine.ts"), StateMachineExport.typescript)
+    puts "Wrote app/frontend/shared/stateMachine.ts"
   end
 end
