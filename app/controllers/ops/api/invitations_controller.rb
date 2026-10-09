@@ -14,17 +14,10 @@ module Ops
       allow_unauthorized only: %i[show accept] # the token is the credential
 
       def create
-        role = params.require(:role).to_s
-        unless Operator::ROLES.include?(role)
-          raise ApiError.validation("role" => ["must be one of #{Operator::ROLES.join(', ')}"])
-        end
-
-        operator, token = Operator.invite!(email: params.require(:email).to_s, role:, invited_by: current_user)
-        OperatorMailer.invite(operator, token).deliver_later
-        audit!("operator.invited", target: operator, metadata: { "email" => operator.email, "role" => role })
+        operator = InviteOperator.call(email: params.require(:email), role: params.require(:role).to_s,
+                                       invited_by: current_user)
+        audit!("operator.invited", target: operator, metadata: { "email" => operator.email, "role" => operator.role })
         render json: { "id" => operator.id, "email" => operator.email, "role" => operator.role }, status: :created
-      rescue ActiveRecord::RecordNotUnique
-        raise ApiError.validation("email" => ["already belongs to a PayHub user"])
       end
 
       def show
