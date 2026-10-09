@@ -963,6 +963,20 @@ CREATE INDEX index_audit_events_on_actor_type_and_actor_id_and_created_at ON pub
 
 
 --
+-- Name: index_audit_events_on_behalf_of_merchant_id_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_audit_events_on_behalf_of_merchant_id_and_created_at ON public.audit_events USING btree (on_behalf_of_merchant_id, created_at);
+
+
+--
+-- Name: index_audit_events_on_created_at_and_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_audit_events_on_created_at_and_id ON public.audit_events USING btree (created_at, id);
+
+
+--
 -- Name: index_audit_events_on_merchant_id_and_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1379,6 +1393,7 @@ ALTER TABLE ONLY public.api_keys
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260928000001'),
 ('20260927000001'),
 ('20260926000001'),
 ('20260925000006'),

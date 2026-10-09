@@ -101,6 +101,7 @@ Rails.application.routes.draw do
       delete "impersonations/current", to: "impersonations#destroy"
       resources :operators, only: %i[index create update destroy]
       get "access_review", to: "operators#access_review"
+      resources :audit_events, only: :index
       resource :session, only: %i[create destroy] do
         post :otp
         post :recovery
