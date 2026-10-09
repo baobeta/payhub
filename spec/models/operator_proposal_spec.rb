@@ -35,4 +35,32 @@ RSpec.describe OperatorProposal do
     expect(build(:operator_proposal, payment:, proposed_by: maker, reason_code: nil)).not_to be_valid
     expect(build(:operator_proposal, payment:, proposed_by: maker, case_reference: "")).not_to be_valid
   end
+
+  describe "#approvable_by?" do
+    it "is false for the proposer whatever their role" do
+      proposal = create(:operator_proposal, payment:, proposed_by: maker)
+      maker.update!(role: "approver")
+      expect(proposal.approvable_by?(maker)).to be(false)
+    end
+
+    it "is true for another active approver while pending" do
+      proposal = create(:operator_proposal, payment:, proposed_by: maker)
+      expect(proposal.approvable_by?(checker)).to be(true)
+    end
+
+    it "is false once decided, withdrawn or failed" do
+      proposal = create(:operator_proposal, payment:, proposed_by: maker)
+      proposal.update_columns(state: "withdrawn")
+      expect(proposal.approvable_by?(checker)).to be(false)
+
+      proposal.update_columns(state: "failed", decided_by_id: checker.id, decided_at: Time.current)
+      expect(proposal.approvable_by?(checker)).to be(false)
+    end
+
+    it "is false for a disabled operator" do
+      proposal = create(:operator_proposal, payment:, proposed_by: maker)
+      checker.update!(disabled_at: Time.current)
+      expect(proposal.approvable_by?(checker)).to be(false)
+    end
+  end
 end

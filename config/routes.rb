@@ -91,7 +91,11 @@ Rails.application.routes.draw do
         post :review, on: :member
       end
       resources :proposals, only: %i[index create] do
-        post :withdraw, on: :member
+        member do
+          post :withdraw
+          post :approve
+          post :reject
+        end
       end
       resource :session, only: %i[create destroy] do
         post :otp

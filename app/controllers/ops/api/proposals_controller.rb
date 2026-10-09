@@ -8,6 +8,7 @@ module Ops
     class ProposalsController < BaseController
       requires_permission "ops.payments.read", only: :index
       requires_permission "ops.proposals.create", only: %i[create withdraw]
+      requires_permission "ops.proposals.decide", only: %i[approve reject]
 
       def index
         scope = OperatorProposal.includes(:payment, :proposed_by, :decided_by).order(created_at: :desc).limit(100)
@@ -45,7 +46,20 @@ module Ops
         render json: ProposalSerializer.call(proposal, viewer: current_user)
       end
 
+      def approve = decide(approve: true)
+      def reject = decide(approve: false)
+
       private
+
+      def decide(approve:)
+        note = params[:note].to_s.strip.presence
+        raise ApiError.validation("note" => ["is required to reject"]) if !approve && note.nil?
+
+        proposal = DecideProposal.call(params[:id], approver: current_user, approve:, note:)
+        audit!("proposal.#{proposal.state}", target: proposal, merchant_id: T.must(proposal.payment).merchant_id,
+                                             metadata: { "note" => note, "error" => proposal.error }.compact)
+        render json: ProposalSerializer.call(proposal.reload, viewer: current_user)
+      end
 
       # Only the keys either payload shape uses; the model validates the shape.
       def payload_params
