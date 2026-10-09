@@ -80,6 +80,9 @@ Rails.application.routes.draw do
     namespace :api, defaults: { format: :json } do
       get "me", to: "me#show"
       get "queue", to: "queue#show"
+      resources :payments, only: %i[index show] do
+        post :poll, on: :member
+      end
       resource :session, only: %i[create destroy] do
         post :otp
         post :recovery
