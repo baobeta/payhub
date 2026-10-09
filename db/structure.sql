@@ -54,6 +54,23 @@ $$;
 
 
 --
+-- Name: operator_proposal_payload_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.operator_proposal_payload_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.payload IS DISTINCT FROM OLD.payload OR NEW.kind IS DISTINCT FROM OLD.kind
+     OR NEW.payment_id IS DISTINCT FROM OLD.payment_id OR NEW.proposed_by_id IS DISTINCT FROM OLD.proposed_by_id THEN
+    RAISE EXCEPTION 'operator_proposals payload is immutable; withdraw and resubmit';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: stamp_created_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -303,6 +320,62 @@ CREATE TABLE public.merchants (
 
 
 --
+-- Name: operator_proposals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_proposals (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    kind character varying NOT NULL,
+    payment_id uuid NOT NULL,
+    payload jsonb NOT NULL,
+    reason_code character varying NOT NULL,
+    reason_text text NOT NULL,
+    case_reference character varying NOT NULL,
+    client_token character varying NOT NULL,
+    proposed_by_id uuid NOT NULL,
+    state character varying DEFAULT 'pending'::character varying NOT NULL,
+    decided_by_id uuid,
+    decided_at timestamp(6) without time zone,
+    decision_note text,
+    applied_at timestamp(6) without time zone,
+    applied_transfer_id uuid,
+    error character varying,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_operator_proposals_decided_shape CHECK (((((state)::text = 'pending'::text) = (decided_at IS NULL)) OR ((state)::text = 'withdrawn'::text))),
+    CONSTRAINT chk_operator_proposals_kind CHECK (((kind)::text = ANY ((ARRAY['payment_transition'::character varying, 'ledger_correction'::character varying])::text[]))),
+    CONSTRAINT chk_operator_proposals_not_self CHECK (((decided_by_id IS NULL) OR (decided_by_id <> proposed_by_id))),
+    CONSTRAINT chk_operator_proposals_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'withdrawn'::character varying, 'rejected'::character varying, 'applied'::character varying, 'failed'::character varying])::text[])))
+);
+
+
+--
+-- Name: operators; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operators (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    email character varying NOT NULL,
+    name character varying,
+    password_digest character varying,
+    role character varying NOT NULL,
+    otp_secret text,
+    otp_enabled_at timestamp(6) without time zone,
+    otp_last_used_step bigint,
+    failed_attempts integer DEFAULT 0 NOT NULL,
+    locked_until timestamp(6) without time zone,
+    invited_by_id uuid,
+    invitation_digest character varying,
+    invitation_expires_at timestamp(6) without time zone,
+    accepted_at timestamp(6) without time zone,
+    disabled_at timestamp(6) without time zone,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_operators_role CHECK (((role)::text = ANY ((ARRAY['support'::character varying, 'ops'::character varying, 'approver'::character varying, 'admin'::character varying])::text[])))
+);
+
+
+--
 -- Name: outbound_delivery_attempts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -465,6 +538,9 @@ CREATE TABLE public.sessions (
     revoked_at timestamp(6) without time zone,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
+    impersonating_merchant_id uuid,
+    impersonation_case_ref character varying,
+    impersonation_expires_at timestamp(6) without time zone,
     CONSTRAINT chk_sessions_principal_type CHECK (((principal_type)::text = ANY ((ARRAY['MerchantUser'::character varying, 'Operator'::character varying])::text[])))
 );
 
@@ -491,6 +567,9 @@ CREATE TABLE public.settlement_lines (
     status character varying NOT NULL,
     problem character varying,
     created_at timestamp(6) without time zone NOT NULL,
+    reviewed_at timestamp(6) without time zone,
+    reviewed_by_id uuid,
+    review_note text,
     CONSTRAINT chk_settlement_lines_kind CHECK (((kind)::text = ANY ((ARRAY['capture'::character varying, 'refund'::character varying])::text[]))),
     CONSTRAINT chk_settlement_lines_status CHECK (((status)::text = ANY ((ARRAY['matched'::character varying, 'unmatched'::character varying, 'mismatch'::character varying])::text[])))
 );
@@ -582,6 +661,22 @@ ALTER TABLE ONLY public.merchant_users
 
 ALTER TABLE ONLY public.merchants
     ADD CONSTRAINT merchants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: operator_proposals operator_proposals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_proposals
+    ADD CONSTRAINT operator_proposals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: operators operators_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operators
+    ADD CONSTRAINT operators_pkey PRIMARY KEY (id);
 
 
 --
@@ -777,6 +872,13 @@ CREATE INDEX idx_on_principal_type_principal_id_created_at_3ad1e69451 ON public.
 
 
 --
+-- Name: idx_operators_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_operators_email ON public.operators USING btree (lower((email)::text));
+
+
+--
 -- Name: idx_outbound_events_list; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -861,6 +963,20 @@ CREATE INDEX index_audit_events_on_actor_type_and_actor_id_and_created_at ON pub
 
 
 --
+-- Name: index_audit_events_on_behalf_of_merchant_id_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_audit_events_on_behalf_of_merchant_id_and_created_at ON public.audit_events USING btree (on_behalf_of_merchant_id, created_at);
+
+
+--
+-- Name: index_audit_events_on_created_at_and_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_audit_events_on_created_at_and_id ON public.audit_events USING btree (created_at, id);
+
+
+--
 -- Name: index_audit_events_on_merchant_id_and_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -900,6 +1016,48 @@ CREATE INDEX index_merchant_users_on_merchant_id ON public.merchant_users USING 
 --
 
 CREATE UNIQUE INDEX index_merchants_on_api_key_digest ON public.merchants USING btree (api_key_digest);
+
+
+--
+-- Name: index_operator_proposals_on_client_token; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX index_operator_proposals_on_client_token ON public.operator_proposals USING btree (client_token);
+
+
+--
+-- Name: index_operator_proposals_on_decided_by_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_operator_proposals_on_decided_by_id ON public.operator_proposals USING btree (decided_by_id);
+
+
+--
+-- Name: index_operator_proposals_on_payment_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_operator_proposals_on_payment_id ON public.operator_proposals USING btree (payment_id);
+
+
+--
+-- Name: index_operator_proposals_on_proposed_by_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_operator_proposals_on_proposed_by_id ON public.operator_proposals USING btree (proposed_by_id);
+
+
+--
+-- Name: index_operator_proposals_on_state_and_created_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_operator_proposals_on_state_and_created_at ON public.operator_proposals USING btree (state, created_at);
+
+
+--
+-- Name: index_operators_on_invitation_digest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX index_operators_on_invitation_digest ON public.operators USING btree (invitation_digest) WHERE (invitation_digest IS NOT NULL);
 
 
 --
@@ -1001,6 +1159,13 @@ CREATE TRIGGER trg_ledger_entries_immutable BEFORE DELETE OR UPDATE ON public.le
 
 
 --
+-- Name: operator_proposals trg_operator_proposals_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_operator_proposals_immutable BEFORE UPDATE ON public.operator_proposals FOR EACH ROW EXECUTE FUNCTION public.operator_proposal_payload_immutable();
+
+
+--
 -- Name: psp_calls trg_psp_calls_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -1019,6 +1184,14 @@ CREATE TRIGGER trg_psp_calls_no_truncate BEFORE TRUNCATE ON public.psp_calls FOR
 --
 
 CREATE TRIGGER trg_psp_calls_stamp_created_at BEFORE INSERT ON public.psp_calls FOR EACH ROW EXECUTE FUNCTION public.stamp_created_at();
+
+
+--
+-- Name: sessions fk_rails_08baf1a714; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sessions
+    ADD CONSTRAINT fk_rails_08baf1a714 FOREIGN KEY (impersonating_merchant_id) REFERENCES public.merchants(id);
 
 
 --
@@ -1094,11 +1267,35 @@ ALTER TABLE ONLY public.outbound_events
 
 
 --
+-- Name: operator_proposals fk_rails_70ffb9a852; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_proposals
+    ADD CONSTRAINT fk_rails_70ffb9a852 FOREIGN KEY (decided_by_id) REFERENCES public.operators(id);
+
+
+--
 -- Name: captures fk_rails_835edaeb47; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.captures
     ADD CONSTRAINT fk_rails_835edaeb47 FOREIGN KEY (payment_id) REFERENCES public.payments(id);
+
+
+--
+-- Name: settlement_lines fk_rails_8834e5337b; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.settlement_lines
+    ADD CONSTRAINT fk_rails_8834e5337b FOREIGN KEY (reviewed_by_id) REFERENCES public.operators(id);
+
+
+--
+-- Name: operator_proposals fk_rails_90a8eae754; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_proposals
+    ADD CONSTRAINT fk_rails_90a8eae754 FOREIGN KEY (payment_id) REFERENCES public.payments(id);
 
 
 --
@@ -1118,11 +1315,27 @@ ALTER TABLE ONLY public.ledger_entries
 
 
 --
+-- Name: operator_proposals fk_rails_9fabbe9e94; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_proposals
+    ADD CONSTRAINT fk_rails_9fabbe9e94 FOREIGN KEY (proposed_by_id) REFERENCES public.operators(id);
+
+
+--
 -- Name: merchants fk_rails_a387bf8734; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.merchants
     ADD CONSTRAINT fk_rails_a387bf8734 FOREIGN KEY (live_merchant_id) REFERENCES public.merchants(id);
+
+
+--
+-- Name: operators fk_rails_b336ada0c2; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operators
+    ADD CONSTRAINT fk_rails_b336ada0c2 FOREIGN KEY (invited_by_id) REFERENCES public.operators(id);
 
 
 --
@@ -1180,6 +1393,8 @@ ALTER TABLE ONLY public.api_keys
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260928000001'),
+('20260927000001'),
 ('20260926000001'),
 ('20260925000006'),
 ('20260925000005'),

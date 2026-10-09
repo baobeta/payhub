@@ -13,6 +13,9 @@ module GeneratedUrlHelpersModule
   def accept_dashboard_api_invitation_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def accept_ops_api_invitation_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def cancel_dashboard_api_payment_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -103,10 +106,52 @@ module GeneratedUrlHelpersModule
   def metrics_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def ops_api_circuits_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_invitation_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_invitations_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_me_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_otp_confirm_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_otp_setup_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_payments_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_proposals_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_queue_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_reconciliation_breaks_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_session_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def otp_dashboard_api_session_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def otp_ops_api_session_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def password_dashboard_api_me_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def poll_ops_api_payment_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def rails_info_notes_url(*args); end
@@ -130,13 +175,22 @@ module GeneratedUrlHelpersModule
   def recovery_dashboard_api_session_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def recovery_ops_api_session_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def redeliver_dashboard_api_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def redeliver_ops_api_event_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def redeliver_v1_event_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def reveal_secret_dashboard_api_webhook_endpoint_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def review_ops_api_reconciliation_break_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def revoke_dashboard_api_api_key_url(*args); end
@@ -149,6 +203,9 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def step_up_dashboard_api_session_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def step_up_ops_api_session_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def v1_balance_url(*args); end
@@ -167,4 +224,7 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def v1_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def withdraw_ops_api_proposal_url(*args); end
 end

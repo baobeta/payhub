@@ -191,6 +191,13 @@ class NordpayAdapter < PspAdapter
     PspCallLog.record(psp: "nordpay", method:, path:, headers:, request_body: body, status: nil, response_body: nil,
                       outcome: "unreachable", started_at: T.must(started_at))
     raise Unavailable, "nordpay unreachable: #{e.message}"
+  rescue Faraday::Error
+    # Any other transport failure (TLS, malformed response). Record it so the
+    # operator's PSP-calls table has a row, then let it surface unchanged.
+    Metrics.increment(:psp_calls, psp: "nordpay", operation: operation, outcome: "unreachable")
+    PspCallLog.record(psp: "nordpay", method:, path:, headers:, request_body: body, status: nil, response_body: nil,
+                      outcome: "unreachable", started_at: T.must(started_at))
+    raise
   end
 
   # Nordpay can return the same charge twice in one body ({charges: [c, c]}).

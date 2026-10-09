@@ -29,6 +29,14 @@ RSpec.describe PspCallLog do
     expect(PspCall.sole).to have_attributes(psp_reference: "ph_#{'d' * 24}", operation: "GET /charges/:id/refunds")
   end
 
+  it "caps an enormous response body at 16 KB plus a marker" do
+    described_class.record(psp: "nordpay", method: :get, path: "/x", request_body: nil, status: 502,
+                           response_body: "<html>#{'x' * 100_000}</html>", outcome: "http_error", started_at: started)
+    stored = PspCall.sole.response_redacted
+    expect(stored).to end_with("…[truncated]")
+    expect(stored.bytesize).to be <= 16_500
+  end
+
   it "never lets a logging failure break the PSP call" do
     allow(PspCall).to receive(:create!).and_raise(ActiveRecord::ConnectionNotEstablished)
     expect do

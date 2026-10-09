@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { TimelineEntry } from "../types";
-import { formatMoney } from "../../shared/money";
+import type { TimelineEntry } from "../timeline";
+import { formatMoney } from "../money";
 
 const props = defineProps<{ entries: TimelineEntry[]; currency: string }>();
 

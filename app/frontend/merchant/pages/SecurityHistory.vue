@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useInfiniteQuery } from "@tanstack/vue-query";
-import { api } from "../api";
+import { useArea } from "../area";
 import StatusBadge from "../../shared/components/StatusBadge.vue";
 import type { List } from "../types";
 
 type Row = { id: string; at: string; actor: string | null; action: string; result: string; ip: string | null };
 
+const { client, me } = useArea();
 const list = useInfiniteQuery({
   queryKey: ["security-history"],
   initialPageParam: null as string | null,
-  queryFn: ({ pageParam }) => api.get<List<Row>>(`/security_history${pageParam ? `?cursor=${pageParam}` : ""}`),
+  queryFn: ({ pageParam }) => client.get<List<Row>>(`/security_history${pageParam ? `?cursor=${pageParam}` : ""}`),
   getNextPageParam: (last) => (last.has_more ? last.next_cursor : null),
 });
 const rows = computed(() => list.data.value?.pages.flatMap((p) => p.data) ?? []);
@@ -23,6 +24,7 @@ const rows = computed(() => list.data.value?.pages.flatMap((p) => p.data) ?? [])
         Security history
       </h1>
       <a
+        v-if="!me?.impersonating"
         href="/dashboard/api/security_history/export.csv"
         class="ml-auto text-sm underline"
       >Export CSV</a>

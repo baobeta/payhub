@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/vue-query";
-import { api } from "../api";
-import { useMe } from "../useMe";
+import { useArea } from "../area";
 import { ApiFailure } from "../../shared/http";
 import ErrorBanner from "../../shared/components/ErrorBanner.vue";
 import StatusBadge from "../../shared/components/StatusBadge.vue";
@@ -14,7 +13,7 @@ type Event = {
   next_attempt_at: string; last_error: string | null; created_at: string; delivery_attempts?: Attempt[];
 };
 
-const { allowed } = useMe();
+const { client, allowed, base } = useArea();
 const queryClient = useQueryClient();
 const state = ref("");
 const list = useInfiniteQuery({
@@ -22,7 +21,7 @@ const list = useInfiniteQuery({
   initialPageParam: null as string | null,
   queryFn: ({ pageParam }) => {
     const p = new URLSearchParams({ ...(state.value ? { state: state.value } : {}), ...(pageParam ? { cursor: pageParam } : {}) });
-    return api.get<List<Event>>(`/events?${p}`);
+    return client.get<List<Event>>(`/events?${p}`);
   },
   getNextPageParam: (last) => (last.has_more ? last.next_cursor : null),
 });
@@ -36,14 +35,14 @@ async function toggle(e: Event) {
     delete open.value[e.id];
     return;
   }
-  const full = await api.get<Event>(`/events/${e.id}`);
+  const full = await client.get<Event>(`/events/${e.id}`);
   open.value[e.id] = full.delivery_attempts ?? [];
 }
 
 async function resend(e: Event) {
   error.value = null;
   try {
-    await api.post(`/events/${e.id}/redeliver`);
+    await client.post(`/events/${e.id}/redeliver`);
   } catch (err) {
     error.value = err instanceof ApiFailure ? err.message : "Something went wrong. Try again.";
   } finally {
@@ -90,7 +89,7 @@ async function resend(e: Event) {
           <span class="text-slate-500">{{ e.attempts }} attempt(s)</span>
           <RouterLink
             v-if="e.payment_id"
-            :to="`/payments/${e.payment_id}`"
+            :to="`${base}/payments/${e.payment_id}`"
             class="underline"
           >
             payment

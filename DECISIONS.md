@@ -225,11 +225,13 @@ Serializing captures per payment is what makes the read sufficient: with one cap
 
 ## 23. Operators change money only with two people
 
-**Decision:** Manual exits from `unknown` and ledger corrections are proposals, approved by a different operator. No operator role holds both `ops.proposals.create` and `ops.proposals.decide`; the operator admin holds neither. Built in phase 2; recorded now because phase 0's permission catalogue already encodes the split and tests it.
+**Decision:** Manual exits from `unknown` and ledger corrections are `operator_proposals`: a maker records the intended change (a `payment_transition` with `to_state`, or a `ledger_correction` with balanced legs), a reason code, free text and a case reference; a different operator approves it. No operator role holds both `ops.proposals.create` and `ops.proposals.decide`; the operator admin holds neither.
 
-**Rejected:** a single operator transition with a reason (the current RUNBOOK §5).
+The "proposer ≠ approver" rule is enforced in three places: `OperatorProposal#approvable_by?` computes the `can.approve`/`can.reject` flags the UI shows, the same check runs again under `SELECT … FOR UPDATE` in `DecideProposal`, and a database CHECK (`chk_operator_proposals_not_self`) is the backstop. `DecideProposal` writes the decision first, then applies it inside a nested transaction (`requires_new: true`, a savepoint): a failed apply rolls back only the apply, so the decision and a `state = "failed"` row with the error still commit and the approver can see what happened. Only `unknown → authorized` and `unknown → failed` exist from `unknown`; `pending` is left to the worker and the sweeper.
 
-**Reason:** Segregation of duties is the baseline for manual money movement (`reports/RBAC implementation patterns.md`), and "proposer ≠ approver" is enforceable by a CHECK constraint rather than by convention.
+**Rejected:** a single operator transition with a reason (the previous RUNBOOK §5); enforcing proposer ≠ approver by convention alone.
+
+**Reason:** Segregation of duties is the baseline for manual money movement (`reports/RBAC implementation patterns.md`), and "proposer ≠ approver" is worth a CHECK constraint, not just a code path. Failing the whole decision on a failed apply would lose the approver's intent and hide the error; the savepoint keeps the audit trail honest.
 
 ## 24. Permissions are a catalogue in code, checked per action, verified in CI
 
@@ -246,3 +248,11 @@ Serializing captures per payment is what makes the read sufficient: with one cap
 **Rejected:** Devise (a large surface for fixed roles, invitations only and no self-sign-up); cookie-only sessions (cannot be revoked when a role changes or a person is removed); SMS codes (SIM swapping); passkeys for now (enterprise tier in the use cases).
 
 **Reason:** PCI DSS 8.2.8 (idle timeout), 8.3.4 (lockout) and 8.4 (MFA for access to the cardholder-data environment's admin functions), and use cases A-01 to A-07. Revocation is the deciding property: removing a teammate or changing a role must take effect on their very next request, which needs a server-side session row and the role read from the database every time.
+
+## 26. Operator writes are made safe by state, not idempotency keys
+
+**Decision:** Every operator write carries its own natural precondition instead of an `Idempotency-Key`. A proposal is created once per client attempt, keyed by a `client_token` unique to the proposal (a retried `POST` with the same token returns the same proposal); the decision is guarded by the proposal's `pending` state read under `SELECT … FOR UPDATE` (a second approve is `409 refused`); a reconciliation review refuses a line already reviewed; a poll is naturally safe because the sweeper reads the PSP before it writes (DECISIONS #20). Row locks and state preconditions do the work; there is no merchant-less `IdempotencyGuard`.
+
+**Rejected:** extending the merchant `IdempotencyGuard` to operators.
+
+**Reason:** The guard's key space is per merchant, and an operator does not act for a merchant. More importantly, every operator write already has a precondition that is stronger than a key: "this proposal is still pending", "this break is not yet reviewed", "this payment is still `unknown`". A key would be a second, weaker way to say the same thing and would need a scope (per operator, per merchant, global) that the existing guard does not model. The `client_token` on proposals exists only to make a retried create idempotent, not to authorize the change.

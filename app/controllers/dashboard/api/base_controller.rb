@@ -8,6 +8,7 @@ module Dashboard
     # rules in services (409/422), step-up (401 step_up_required).
     class BaseController < Web::BaseController
       include IdempotentAction
+      include ImpersonationContext
 
       COOKIE = :_payhub_dashboard
       IDLE_TIMEOUT = 15.minutes
@@ -37,6 +38,8 @@ module Dashboard
       private
 
       def require_session!
+        return require_impersonation_session! if impersonating_request?
+
         row = Session.find_by(id: cookies.signed[COOKIE], principal_type: "MerchantUser")
         user = row&.principal
         raise ApiError.unauthenticated unless row&.active?(idle: IDLE_TIMEOUT) && user.is_a?(MerchantUser) && user.active?
@@ -50,19 +53,35 @@ module Dashboard
 
       def current_session = T.must(@current_session)
       def current_user = T.must(@current_user)
-      def live_merchant = T.must(current_user.merchant)
+      def live_merchant = impersonating_request? ? T.must(@impersonated_merchant) : T.must(current_user.merchant)
 
-      # Tenant scoping (layer 2): every query starts here.
-      def current_merchant = current_session.livemode ? live_merchant : live_merchant.test_twin!
+      # Tenant scoping (layer 2): every query starts here. Impersonation always
+      # shows the live merchant.
+      def current_merchant
+        return live_merchant if impersonating_request?
+
+        current_session.livemode ? live_merchant : live_merchant.test_twin!
+      end
 
       def authorization_area = :merchant
-      def authorization_role = @current_user&.role
-      def authorization_actor = @current_user
-      def authorization_merchant_id = @current_user&.merchant_id
+      def authorization_role = impersonating_request? ? "impersonation" : @current_user&.role
+      def authorization_actor = impersonating_request? ? @impersonator : @current_user
+      def authorization_merchant_id
+        impersonating_request? ? @impersonated_merchant&.id : @current_user&.merchant_id
+      end
       def step_up_fresh? = @current_session&.stepped_up? || false
 
       # Security history rows always belong to the LIVE merchant.
       def audit!(action, target: nil, result: "success", metadata: {})
+        if impersonating_request?
+          return AuditEvent.record!(
+            action:, result:, actor: @impersonator, actor_label: "#{T.must(@impersonator).email} (PayHub support)",
+            merchant_id: nil, on_behalf_of_merchant_id: T.must(@impersonated_merchant).id, target:,
+            ip: request.remote_ip, user_agent: request.user_agent, request_id: request.request_id,
+            metadata: metadata.merge("impersonation" => true)
+          )
+        end
+
         AuditEvent.record!(
           action:, result:, actor: current_user, actor_label: current_user.email, merchant_id: live_merchant.id,
           target:, ip: request.remote_ip, user_agent: request.user_agent, request_id: request.request_id,

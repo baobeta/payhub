@@ -155,4 +155,11 @@ RSpec.describe NordpayAdapter do
     expect(PspCall.sole).to have_attributes(outcome: "timeout", psp_reference: payment.psp_reference, http_status: nil)
     expect(PspCall.sole.request_redacted.to_json).not_to include(payment.payment_method_token)
   end
+
+  it "records an unexpected transport error as unreachable and re-raises it unchanged" do
+    payment = create(:payment, psp_reference: Payment.generate_psp_reference)
+    stub_request(:post, "http://nordpay.test/charges").to_raise(Faraday::SSLError.new("tls handshake failed"))
+    expect { adapter.authorize(payment) }.to raise_error(Faraday::SSLError)
+    expect(PspCall.sole).to have_attributes(outcome: "unreachable", http_status: nil)
+  end
 end

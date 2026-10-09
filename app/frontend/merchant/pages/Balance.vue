@@ -1,17 +1,16 @@
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
-import { api } from "../api";
-import { useMe } from "../useMe";
+import { useArea } from "../area";
 import { formatMoney } from "../../shared/money";
 
 type Row = { currency: string; available_minor: number; reserved_minor: number };
 type Settlement = { settled_on: string; currency: string; gross_minor: number; fee_minor: number; net_minor: number };
 
-const { allowed } = useMe();
-const balance = useQuery({ queryKey: ["balance"], queryFn: () => api.get<{ data: Row[] }>("/balance") });
+const { client, allowed } = useArea();
+const balance = useQuery({ queryKey: ["balance"], queryFn: () => client.get<{ data: Row[] }>("/balance") });
 const settlements = useQuery({
   queryKey: ["settlements"],
-  queryFn: () => api.get<{ data: Settlement[] }>("/settlements"),
+  queryFn: () => client.get<{ data: Settlement[] }>("/settlements"),
   enabled: () => allowed("settlements.read"),
 });
 </script>

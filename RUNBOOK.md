@@ -74,13 +74,19 @@ Symptoms: `sweeper.skip` with `PspAdapter::Rejected`, or `webhook.illegal_transi
 
 1. Read the exception. `Rejected` carries the PSP's HTTP status and message; `IllegalTransition` names the edge (`from -> to`).
 2. **Do not** hand-edit `payments.state`. It is not writable — `Payment#state=` raises — and even if you got around it, the history and the ledger would disagree with the PSP.
-3. If you must move the payment tonight (merchant escalation) and the PSP's view is unambiguous, the honest operator action is a transition with `source: "operator"` and the reason in metadata, from a console:
+3. If you must move the payment tonight (merchant escalation) and the PSP's view is unambiguous, use the maker-checker flow in `/ops` — never a console (DECISIONS #23):
+   1. Open the payment in `/ops` (search by its id, `ph_` reference or merchant name).
+   2. Read its **PSP calls** and **inbound webhooks**. The evidence has to be on the page, not in your head: cite the call (or the webhook) that settles the outcome.
+   3. **Propose resolution** — target state (`authorized` or `failed`), a reason code, what you found, and the incident ticket as the case reference.
+   4. Page an approver. A *different* operator with `ops.proposals.decide` opens the proposal, reads the same evidence, and approves. The approver cannot be you.
+   Only `unknown -> failed` and `unknown -> authorized` are offered. There is deliberately no `unknown -> canceled`: you cannot release a hold you cannot see (DECISIONS #10).
+4. **Break-glass only.** If `/ops` is down and the payment cannot wait, a console transition remains possible — but only with two named people on the incident ticket (the operator who runs it and the approver who sanctioned it), and with the reason recorded:
    ```ruby
    p = Payment.find("<PAYMENT_ID>")
-   p.transition!(:failed, sort_key: Time.current, source: "operator", metadata: { "reason" => "PSP confirms declined; ticket OPS-123" })
+   p.transition!(:failed, sort_key: Time.current, source: "operator", metadata: { "reason" => "PSP confirms declined; ticket OPS-123", "break_glass_approved_by" => "<APPROVER_EMAIL>" })
    ```
-   Only `unknown -> failed` and `unknown -> authorized` exist from `unknown`. There is deliberately no `unknown -> canceled`: you cannot release a hold you cannot see (DECISIONS #10).
-4. Open a ticket with the exception, the `payment_id`, and the PSP response. The fix is code, not data.
+   This writes `source: "operator"` into the history forever and bypasses the second pair of eyes. Prefer waiting for `/ops`.
+5. Open a ticket with the exception, the `payment_id`, and the PSP response. The fix is code, not data.
 
 ## 6. The job never ran
 

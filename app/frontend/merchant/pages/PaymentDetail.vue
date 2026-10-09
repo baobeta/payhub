@@ -2,7 +2,7 @@
 import { computed, ref } from "vue";
 import { useQueryClient } from "@tanstack/vue-query";
 import { useRoute } from "vue-router";
-import { api } from "../api";
+import { useArea } from "../area";
 import { ApiFailure } from "../../shared/http";
 import { useLiveQuery } from "../../shared/useLiveQuery";
 import { pollIntervalFor } from "../../shared/pollInterval";
@@ -10,22 +10,26 @@ import { useIdempotencyKey } from "../../shared/useIdempotencyKey";
 import { formatMoney } from "../../shared/money";
 import StatusBadge from "../../shared/components/StatusBadge.vue";
 import ErrorBanner from "../../shared/components/ErrorBanner.vue";
-import PaymentTimeline from "../components/PaymentTimeline.vue";
+import PaymentTimeline from "../../shared/components/PaymentTimeline.vue";
 import RefundDialog from "../components/RefundDialog.vue";
 import CaptureDialog from "../components/CaptureDialog.vue";
-import ConfirmDialog from "../components/ConfirmDialog.vue";
+import ConfirmDialog from "../../shared/components/ConfirmDialog.vue";
 import type { PaymentDetail } from "../types";
 
 const route = useRoute();
 const queryClient = useQueryClient();
+const { client, me } = useArea();
 const id = computed(() => String(route.params.id));
 const key = computed(() => ["payment", id.value]);
 
 const { data: payment, isError } = useLiveQuery<PaymentDetail>(
   key,
-  (poll) => api.get(`/payments/${id.value}`, { poll }),
+  (poll) => client.get(`/payments/${id.value}`, { poll }),
   (p) => pollIntervalFor(p.state),
 );
+// Read-only while impersonating: the server refuses writes anyway, and the
+// action dialogs would only confuse.
+const readOnly = computed(() => !!me.value?.impersonating);
 
 const refundOpen = ref(false);
 const captureOpen = ref(false);
@@ -47,7 +51,7 @@ function openCancel() {
 async function cancel() {
   cancelBusy.value = true;
   try {
-    await api.post(`/payments/${id.value}/cancel`, {}, { idempotencyKey: cancelKey.key.value });
+    await client.post(`/payments/${id.value}/cancel`, {}, { idempotencyKey: cancelKey.key.value });
     cancelOpen.value = false;
   } catch (e) {
     // 409/422: someone (or the sweeper) moved it first. Show why and refetch.
@@ -79,7 +83,7 @@ const lastCheck = computed(() => payment.value?.updated_at && new Date(payment.v
       <StatusBadge :status="payment.state" />
       <div class="ml-auto flex gap-2">
         <button
-          v-if="payment.can.capture"
+          v-if="payment.can.capture && !readOnly"
           type="button"
           class="rounded bg-slate-900 px-3 py-1.5 text-sm text-white"
           @click="captureOpen = true"
@@ -87,7 +91,7 @@ const lastCheck = computed(() => payment.value?.updated_at && new Date(payment.v
           Capture
         </button>
         <button
-          v-if="payment.can.cancel"
+          v-if="payment.can.cancel && !readOnly"
           type="button"
           class="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm"
           @click="openCancel"
@@ -95,7 +99,7 @@ const lastCheck = computed(() => payment.value?.updated_at && new Date(payment.v
           Cancel
         </button>
         <button
-          v-if="payment.can.refund"
+          v-if="payment.can.refund && !readOnly"
           type="button"
           class="rounded bg-red-700 px-3 py-1.5 text-sm text-white"
           @click="refundOpen = true"

@@ -76,6 +76,60 @@ Rails.application.routes.draw do
     end
   end
 
+  namespace :ops do
+    namespace :api, defaults: { format: :json } do
+      get "me", to: "me#show"
+      get "queue", to: "queue#show"
+      get "circuits", to: "circuits#index"
+      resources :payments, only: %i[index show] do
+        post :poll, on: :member
+      end
+      resources :events, only: [] do
+        post :redeliver, on: :member
+      end
+      resources :reconciliation_breaks, only: :index do
+        post :review, on: :member
+      end
+      resources :proposals, only: %i[index create] do
+        member do
+          post :withdraw
+          post :approve
+          post :reject
+        end
+      end
+      resources :impersonations, only: %i[create]
+      delete "impersonations/current", to: "impersonations#destroy"
+      resources :operators, only: %i[index create update destroy]
+      get "access_review", to: "operators#access_review"
+      resources :audit_events, only: :index
+      resource :session, only: %i[create destroy] do
+        post :otp
+        post :recovery
+        post :step_up
+      end
+      resources :invitations, only: %i[create show], param: :token do
+        post :accept, on: :member
+      end
+      get "otp/setup", to: "otp#setup"
+      post "otp/confirm", to: "otp#confirm"
+    end
+  end
+
+  # Read-only merchant view for operators (design §4, O-12). Top-level scope so
+  # `module:` is not nested under ops/api; the path keeps the /ops prefix so the
+  # ops session cookie is sent. GET only.
+  scope "ops/api/as/:as_merchant_id", module: "dashboard/api", as: "as_merchant", defaults: { impersonation: "1" } do
+    get "home", to: "home#show"
+    resources :payments, only: %i[index show]
+    get "balance", to: "balances#show"
+    get "settlements", to: "settlements#index"
+    resources :api_keys, only: :index
+    resource :webhook_endpoint, only: :show
+    resources :events, only: %i[index show]
+    resources :members, only: :index
+    get "security_history", to: "security_history#index"
+  end
+
   # UI shells: the Vue router owns every path below each prefix (design §1).
   # Keep these LAST so /dashboard/api/* and /ops/api/* routes above them match first.
   get "dashboard(/*path)", to: "dashboard/shell#show", format: false

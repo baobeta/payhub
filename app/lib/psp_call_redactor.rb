@@ -5,6 +5,8 @@
 # stored in psp_calls. Runs on every call, so it must never raise.
 module PspCallRedactor
   MASK = "[REDACTED]"
+  TRUNCATION = "…[truncated]"
+  DEFAULT_CAP = 16_384
 
   # A key is sensitive when one of its words is one of these. Keys are split on
   # _, -, spaces and camelCase humps, and matched as whole words, so
@@ -30,6 +32,25 @@ module PspCallRedactor
     # append-only table that cannot be scrubbed afterwards.
     body.nil? ? nil : MASK
   end
+
+  # Caps every string in an already-redacted structure, so one enormous PSP
+  # error page cannot bloat an append-only table (Phase 0 review #14). Never
+  # raises: an unknown shape is returned as-is for redact to have handled.
+  def self.cap(value, bytes: DEFAULT_CAP)
+    walk_cap(value, bytes)
+  rescue StandardError
+    value
+  end
+
+  def self.walk_cap(value, bytes)
+    case value
+    when Hash then value.to_h { |k, v| [k, walk_cap(v, bytes)] }
+    when Array then value.map { |v| walk_cap(v, bytes) }
+    when String then value.bytesize > bytes ? "#{T.must(value.byteslice(0, bytes)).scrub('')}#{TRUNCATION}" : value
+    else value
+    end
+  end
+  private_class_method :walk_cap
 
   def self.walk(value)
     case value

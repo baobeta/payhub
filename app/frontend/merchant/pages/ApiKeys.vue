@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { api } from "../api";
-import { useMe } from "../useMe";
+import { useArea } from "../area";
 import { ApiFailure } from "../../shared/http";
 import BaseModal from "../../shared/components/BaseModal.vue";
 import ErrorBanner from "../../shared/components/ErrorBanner.vue";
 import StatusBadge from "../../shared/components/StatusBadge.vue";
-import ConfirmDialog from "../components/ConfirmDialog.vue";
+import ConfirmDialog from "../../shared/components/ConfirmDialog.vue";
 import OneTimeSecret from "../components/OneTimeSecret.vue";
 
 type Key = {
@@ -15,9 +14,9 @@ type Key = {
   created_by: string | null; created_at: string; last_used_at: string | null; expires_at: string | null;
 };
 
-const { data: me, allowed } = useMe();
+const { client, me, allowed } = useArea();
 const queryClient = useQueryClient();
-const keys = useQuery({ queryKey: ["api-keys"], queryFn: () => api.get<{ data: Key[] }>("/api_keys") });
+const keys = useQuery({ queryKey: ["api-keys"], queryFn: () => client.get<{ data: Key[] }>("/api_keys") });
 
 const secret = ref<string | null>(null);
 // A secret belongs to the mode it was shown in; never leave it on screen under the other.
@@ -45,9 +44,9 @@ async function run(fn: () => Promise<{ secret?: string }>) {
   }
 }
 
-const create = () => run(() => api.post("/api_keys", { name: name.value, note: note.value || null }));
-const roll = () => run(() => api.post(`/api_keys/${rolling.value!.id}/roll`, { expires_in: expiresIn.value }));
-const revoke = () => run(() => api.post(`/api_keys/${revoking.value!.id}/revoke`));
+const create = () => run(() => client.post("/api_keys", { name: name.value, note: note.value || null }));
+const roll = () => run(() => client.post(`/api_keys/${rolling.value!.id}/roll`, { expires_in: expiresIn.value }));
+const revoke = () => run(() => client.post(`/api_keys/${revoking.value!.id}/revoke`));
 </script>
 
 <template>

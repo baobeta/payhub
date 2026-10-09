@@ -1,17 +1,16 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { api } from "../api";
-import { useMe } from "../useMe";
+import { useArea } from "../area";
 import { ApiFailure } from "../../shared/http";
 import ErrorBanner from "../../shared/components/ErrorBanner.vue";
 import OneTimeSecret from "../components/OneTimeSecret.vue";
 
 type Endpoint = { url: string | null; livemode: boolean; secret_last4: string; previous_secret_expires_at: string | null };
 
-const { data: me, allowed } = useMe();
+const { client, me, allowed } = useArea();
 const queryClient = useQueryClient();
-const endpoint = useQuery({ queryKey: ["webhook-endpoint"], queryFn: () => api.get<Endpoint>("/webhook_endpoint") });
+const endpoint = useQuery({ queryKey: ["webhook-endpoint"], queryFn: () => client.get<Endpoint>("/webhook_endpoint") });
 const url = ref("");
 watch(() => endpoint.data.value?.url, (u) => (url.value = u ?? ""), { immediate: true });
 
@@ -46,7 +45,7 @@ async function act(fn: () => Promise<{ secret?: string }>) {
     </h1>
     <form
       class="space-y-2"
-      @submit.prevent="act(() => api.patch('/webhook_endpoint', { url }))"
+      @submit.prevent="act(() => client.patch('/webhook_endpoint', { url }))"
     >
       <label class="block text-sm font-medium">Endpoint URL
         <input
@@ -86,14 +85,14 @@ async function act(fn: () => Promise<{ secret?: string }>) {
         <button
           type="button"
           class="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm"
-          @click="act(() => api.post('/webhook_endpoint/reveal_secret'))"
+          @click="act(() => client.post('/webhook_endpoint/reveal_secret'))"
         >
           Reveal
         </button>
         <button
           type="button"
           class="rounded border border-slate-300 bg-white px-3 py-1.5 text-sm"
-          @click="act(() => api.post('/webhook_endpoint/roll_secret'))"
+          @click="act(() => client.post('/webhook_endpoint/roll_secret'))"
         >
           Roll (old one keeps signing for 24 hours)
         </button>

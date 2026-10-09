@@ -66,6 +66,22 @@ RSpec.describe PspCircuit do
     expect(PspCircuit::Open.ancestors).to include(PspAdapter::Unavailable)
   end
 
+  describe ".snapshot" do
+    it "reports open and does not change the window when read" do
+      5.times { ok }
+      5.times { attempt { fail_with(PspAdapter::TimedOut) } }
+
+      first = described_class.snapshot("nordpay")
+      expect(first).to include("psp" => "nordpay", "state" => "open")
+      expect(first["open_until"]).to be_present
+      expect(described_class.snapshot("nordpay")).to eq(first)
+    end
+
+    it "reports closed for an idle PSP" do
+      expect(described_class.snapshot("kiripay")).to include("state" => "closed", "window_calls" => 0)
+    end
+  end
+
   describe PspCircuit::RedisStore do
     # The production store, against the real Redis the suite already needs for Sidekiq.
     subject(:store) { described_class.new }

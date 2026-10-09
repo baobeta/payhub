@@ -1397,10 +1397,154 @@ class SettlementLine
     def restore_refund_reference!; end
 
     sig { void }
+    def restore_review_note!; end
+
+    sig { void }
+    def restore_reviewed_at!; end
+
+    sig { void }
+    def restore_reviewed_by_id!; end
+
+    sig { void }
     def restore_settled_on!; end
 
     sig { void }
     def restore_status!; end
+
+    sig { returns(T.nilable(::String)) }
+    def review_note; end
+
+    sig { params(value: T.nilable(::String)).returns(T.nilable(::String)) }
+    def review_note=(value); end
+
+    sig { returns(T::Boolean) }
+    def review_note?; end
+
+    sig { returns(T.nilable(::String)) }
+    def review_note_before_last_save; end
+
+    sig { returns(T.untyped) }
+    def review_note_before_type_cast; end
+
+    sig { returns(T::Boolean) }
+    def review_note_came_from_user?; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def review_note_change; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def review_note_change_to_be_saved; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def review_note_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::String)) }
+    def review_note_in_database; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def review_note_previous_change; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def review_note_previously_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::String)) }
+    def review_note_previously_was; end
+
+    sig { returns(T.nilable(::String)) }
+    def review_note_was; end
+
+    sig { void }
+    def review_note_will_change!; end
+
+    sig { returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def reviewed_at; end
+
+    sig { params(value: T.nilable(::ActiveSupport::TimeWithZone)).returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def reviewed_at=(value); end
+
+    sig { returns(T::Boolean) }
+    def reviewed_at?; end
+
+    sig { returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def reviewed_at_before_last_save; end
+
+    sig { returns(T.untyped) }
+    def reviewed_at_before_type_cast; end
+
+    sig { returns(T::Boolean) }
+    def reviewed_at_came_from_user?; end
+
+    sig { returns(T.nilable([T.nilable(::ActiveSupport::TimeWithZone), T.nilable(::ActiveSupport::TimeWithZone)])) }
+    def reviewed_at_change; end
+
+    sig { returns(T.nilable([T.nilable(::ActiveSupport::TimeWithZone), T.nilable(::ActiveSupport::TimeWithZone)])) }
+    def reviewed_at_change_to_be_saved; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def reviewed_at_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def reviewed_at_in_database; end
+
+    sig { returns(T.nilable([T.nilable(::ActiveSupport::TimeWithZone), T.nilable(::ActiveSupport::TimeWithZone)])) }
+    def reviewed_at_previous_change; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def reviewed_at_previously_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def reviewed_at_previously_was; end
+
+    sig { returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def reviewed_at_was; end
+
+    sig { void }
+    def reviewed_at_will_change!; end
+
+    sig { returns(T.nilable(::String)) }
+    def reviewed_by_id; end
+
+    sig { params(value: T.nilable(::String)).returns(T.nilable(::String)) }
+    def reviewed_by_id=(value); end
+
+    sig { returns(T::Boolean) }
+    def reviewed_by_id?; end
+
+    sig { returns(T.nilable(::String)) }
+    def reviewed_by_id_before_last_save; end
+
+    sig { returns(T.untyped) }
+    def reviewed_by_id_before_type_cast; end
+
+    sig { returns(T::Boolean) }
+    def reviewed_by_id_came_from_user?; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def reviewed_by_id_change; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def reviewed_by_id_change_to_be_saved; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def reviewed_by_id_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::String)) }
+    def reviewed_by_id_in_database; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def reviewed_by_id_previous_change; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def reviewed_by_id_previously_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::String)) }
+    def reviewed_by_id_previously_was; end
+
+    sig { returns(T.nilable(::String)) }
+    def reviewed_by_id_was; end
+
+    sig { void }
+    def reviewed_by_id_will_change!; end
 
     sig { returns(T.nilable([::ActiveSupport::TimeWithZone, ::ActiveSupport::TimeWithZone])) }
     def saved_change_to_booked_at; end
@@ -1497,6 +1641,24 @@ class SettlementLine
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def saved_change_to_refund_reference?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def saved_change_to_review_note; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def saved_change_to_review_note?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable([T.nilable(::ActiveSupport::TimeWithZone), T.nilable(::ActiveSupport::TimeWithZone)])) }
+    def saved_change_to_reviewed_at; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def saved_change_to_reviewed_at?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def saved_change_to_reviewed_by_id; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def saved_change_to_reviewed_by_id?(from: T.unsafe(nil), to: T.unsafe(nil)); end
 
     sig { returns(T.nilable([::Date, ::Date])) }
     def saved_change_to_settled_on; end
@@ -1647,6 +1809,15 @@ class SettlementLine
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def will_save_change_to_refund_reference?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def will_save_change_to_review_note?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def will_save_change_to_reviewed_at?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def will_save_change_to_reviewed_by_id?(from: T.unsafe(nil), to: T.unsafe(nil)); end
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def will_save_change_to_settled_on?(from: T.unsafe(nil), to: T.unsafe(nil)); end
