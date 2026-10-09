@@ -1,5 +1,8 @@
 import type { Permission } from "../shared/can";
 import type { PaymentState } from "../shared/pollInterval";
+import type { TimelineEntry } from "../shared/timeline";
+
+export type { TimelineEntry } from "../shared/timeline";
 
 export type Me = {
   user: { id: string; email: string; name: string | null; role: string };
@@ -19,12 +22,6 @@ export type Payment = {
   psp_reference: string;
   created_at: string;
   updated_at: string;
-};
-
-export type TimelineEntry = {
-  kind: "transition" | "capture" | "refund" | "ledger_transfer" | "event";
-  at: string;
-  [key: string]: unknown;
 };
 
 export type PaymentDetail = Payment & {

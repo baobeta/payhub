@@ -10,10 +10,10 @@ import { useIdempotencyKey } from "../../shared/useIdempotencyKey";
 import { formatMoney } from "../../shared/money";
 import StatusBadge from "../../shared/components/StatusBadge.vue";
 import ErrorBanner from "../../shared/components/ErrorBanner.vue";
-import PaymentTimeline from "../components/PaymentTimeline.vue";
+import PaymentTimeline from "../../shared/components/PaymentTimeline.vue";
 import RefundDialog from "../components/RefundDialog.vue";
 import CaptureDialog from "../components/CaptureDialog.vue";
-import ConfirmDialog from "../components/ConfirmDialog.vue";
+import ConfirmDialog from "../../shared/components/ConfirmDialog.vue";
 import type { PaymentDetail } from "../types";
 
 const route = useRoute();

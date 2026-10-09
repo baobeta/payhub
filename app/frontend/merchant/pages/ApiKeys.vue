@@ -7,7 +7,7 @@ import { ApiFailure } from "../../shared/http";
 import BaseModal from "../../shared/components/BaseModal.vue";
 import ErrorBanner from "../../shared/components/ErrorBanner.vue";
 import StatusBadge from "../../shared/components/StatusBadge.vue";
-import ConfirmDialog from "../components/ConfirmDialog.vue";
+import ConfirmDialog from "../../shared/components/ConfirmDialog.vue";
 import OneTimeSecret from "../components/OneTimeSecret.vue";
 
 type Key = {
