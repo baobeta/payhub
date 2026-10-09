@@ -30,7 +30,46 @@ module Demo
 
       def show = render(json: detail(DemoMerchant.payments.find(params[:id])))
 
+      # D-03: the visitor pressing "approve" in their wallet app. A wallet
+      # charges only after redirect approval, and only the simulator can say
+      # yes, so this exists for the same reason the simulator does.
+      def approve_wallet
+        raise ApiError.not_found("resource") if Rails.env.production?
+
+        payment = DemoMerchant.payments.find(params[:id])
+        unless payment.state == "requires_action" && payment.psp_name == "kiripay"
+          raise ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "not_approvable",
+                             message: "Only a wallet redirect waiting for approval can be approved")
+        end
+
+        charge_id = payment.transitions.reload.order(:created_at).last&.metadata&.dig("psp_charge_id")
+        if charge_id.blank?
+          raise ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "not_approvable",
+                             message: "No wallet charge to approve")
+        end
+
+        response = kiripay_conn.post("_sim/charges/#{charge_id}/approve")
+        unless response.status.between?(200, 299)
+          raise ApiError.new(type: ApiError::Type::ApiErrorType, http_status: 503, code: "psp_unavailable",
+                             message: "the wallet did not respond", retriable: true)
+        end
+
+        render(json: detail(payment.reload))
+      end
+
       private
+
+      # A plain connection to the simulator: not the PSP adapter, because this
+      # is not a PSP call — it is the customer's own approval.
+      def kiripay_conn
+        @kiripay_conn ||= Faraday.new(url: ENV.fetch("KIRIPAY_URL", "http://localhost:4002")) do |f|
+          f.request :json
+          f.response :json, content_type: /\bjson$/
+          f.options.open_timeout = 1
+          f.options.timeout = 3
+          f.adapter Faraday.default_adapter
+        end
+      end
 
       def detail(payment)
         PaymentSerializer.call(payment).merge("timeline" => PaymentTimeline.call(payment))

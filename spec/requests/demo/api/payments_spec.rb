@@ -27,7 +27,7 @@ RSpec.describe "Demo payments", type: :request do
 
     it "422s an unknown scenario" do
       post "/demo/api/payments", params: { scenario: "anything" }
-      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response).to have_http_status(:unprocessable_content)
       expect(json_body.dig("error", "code")).to eq("validation_failed")
     end
   end
@@ -51,6 +51,34 @@ RSpec.describe "Demo payments", type: :request do
       payment = create(:payment, merchant: demo.test_twin!, created_at: 1.day.ago)
       get "/demo/api/payments/#{payment.id}"
       expect(response).to have_http_status(:not_found)
+    end
+  end
+
+  describe "POST /demo/api/payments/:id/approve_wallet" do
+    def redirect_payment(**attrs)
+      payment = create(:payment, :vnd, merchant: demo.test_twin!, **attrs)
+      payment.transition!("requires_action", sort_key: Time.current, source: "worker",
+                                         metadata: { "psp_charge_id" => "kp_demo123" })
+      payment
+    end
+
+    it "tells the simulator the customer approved, and returns the payment" do
+      payment = redirect_payment
+      stub = stub_request(:post, "http://localhost:4002/_sim/charges/kp_demo123/approve")
+        .to_return(status: 200, body: { status: "captured" }.to_json, headers: { "Content-Type" => "application/json" })
+
+      post "/demo/api/payments/#{payment.id}/approve_wallet"
+
+      expect(response).to have_http_status(:ok)
+      expect(stub).to have_been_made.once
+    end
+
+    it "409s a card payment: only a wallet redirect waits for approval" do
+      card = create(:payment, merchant: demo.test_twin!, psp_name: "nordpay")
+      card.transition!("requires_action", sort_key: Time.current, source: "worker",
+                                     metadata: { "psp_charge_id" => "ch_card" })
+      post "/demo/api/payments/#{card.id}/approve_wallet"
+      expect(response).to have_http_status(:conflict)
     end
   end
 end
