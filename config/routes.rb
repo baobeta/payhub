@@ -87,6 +87,9 @@ Rails.application.routes.draw do
       resources :events, only: [] do
         post :redeliver, on: :member
       end
+      resources :reconciliation_breaks, only: :index do
+        post :review, on: :member
+      end
       resource :session, only: %i[create destroy] do
         post :otp
         post :recovery
