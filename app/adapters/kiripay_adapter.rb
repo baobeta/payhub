@@ -188,6 +188,12 @@ class KiripayAdapter < PspAdapter
     PspCallLog.record(psp: "kiripay", method:, path:, params:, request_body: body, status: nil, response_body: nil,
                       outcome: "unreachable", started_at: T.must(started_at))
     raise Unavailable, "kiripay unreachable: #{e.message}"
+  rescue Faraday::Error
+    # Any other transport failure (TLS, malformed response); record and surface.
+    Metrics.increment(:psp_calls, psp: "kiripay", operation: operation, outcome: "unreachable")
+    PspCallLog.record(psp: "kiripay", method:, path:, params:, request_body: body, status: nil, response_body: nil,
+                      outcome: "unreachable", started_at: T.must(started_at))
+    raise
   end
 
   sig { params(raw: T.nilable(String)).returns(T.nilable(Result::Status)) }

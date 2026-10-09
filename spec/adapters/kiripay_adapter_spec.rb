@@ -114,4 +114,10 @@ RSpec.describe KiripayAdapter do
       expect { adapter.verify_webhook(bad, { "X-Kiripay-Signature" => sig }) }.to raise_error(PspAdapter::MalformedWebhook)
     end
   end
+
+  it "records an unexpected transport error as unreachable and re-raises it unchanged" do
+    stub_request(:post, "http://kiripay.test/charges").to_raise(Faraday::SSLError.new("tls handshake failed"))
+    expect { adapter.authorize(payment) }.to raise_error(Faraday::SSLError)
+    expect(PspCall.sole).to have_attributes(outcome: "unreachable", http_status: nil)
+  end
 end

@@ -12,8 +12,8 @@ module PspCallLog
   # X-Request-Id; KiriPay looks charges up by ?merchant_reference=.
   def self.record(psp:, method:, path:, request_body:, status:, response_body:, outcome:, started_at:,
                   params: {}, headers: {})
-    # A savepoint, because CancelPayment calls the PSP while holding a row
-    # lock: a failed insert must not abort the caller's transaction.
+    # A savepoint: the caller may already be inside a transaction (jobs and
+    # sweeps), and a failed insert must not abort that work.
     PspCall.transaction(requires_new: true) do
       PspCall.create!(
         psp_name: psp,
