@@ -20,7 +20,7 @@ class ChaosRun
   SETTLE_TIMEOUT = 300 # seconds; an unknown is first polled 2 min after it appears, by a once-a-minute sweeper
   UNSETTLED = %w[pending unknown requires_action].freeze
 
-  sig { params(payments: Integer, merchant: T.nilable(Merchant), api_key: T.nilable(String), out: IO).void }
+  sig { params(payments: Integer, merchant: T.nilable(Merchant), api_key: T.nilable(String), out: T.any(IO, StringIO)).void }
   def initialize(payments:, merchant: nil, api_key: nil, out: $stdout)
     @count = payments
     @out = out
