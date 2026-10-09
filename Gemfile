@@ -58,7 +58,7 @@ end
 
 group :test do
   # Fails the suite on N+1 queries in the payment list endpoint.
-  gem "prosopite", "~> 1.4"
+  gem "prosopite", "~> 2.2"
   gem "pg_query", "~> 6.0" # prosopite needs it to fingerprint queries
   gem "webmock", "~> 3.24"
 end
