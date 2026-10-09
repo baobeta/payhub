@@ -12,7 +12,7 @@ export default defineConfig({
   webServer: {
     command: [
       `${env} bin/rails db:drop db:create db:schema:load`,
-      `${env} bin/rails e2e:seed`,
+      `${env} bin/rails e2e:seed e2e:seed_ops`,
       `${env} bin/vite build --mode=test`,
       `${env} bin/rails s -p 3210 -P tmp/pids/e2e.pid`,
     ].join(" && "),

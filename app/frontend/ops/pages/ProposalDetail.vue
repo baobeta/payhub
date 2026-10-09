@@ -142,18 +142,21 @@ async function withdraw() {
 
     <section
       v-if="proposal.state === 'applied'"
+      data-testid="proposal-outcome"
       class="rounded border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900"
     >
       Applied{{ proposal.applied_transfer_id ? ` (transfer ${proposal.applied_transfer_id})` : "" }}.
     </section>
     <section
       v-else-if="proposal.state === 'failed'"
+      data-testid="proposal-outcome"
       class="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-900"
     >
       Failed: {{ proposal.error }}
     </section>
     <section
       v-else-if="proposal.state === 'rejected'"
+      data-testid="proposal-outcome"
       class="rounded border border-slate-200 bg-slate-50 p-3 text-sm"
     >
       Rejected by {{ proposal.decided_by }}<span v-if="proposal.decision_note"> — {{ proposal.decision_note }}</span>
