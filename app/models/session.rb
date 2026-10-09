@@ -7,6 +7,7 @@ class Session < ApplicationRecord
   ABSOLUTE_LIFETIME = 12.hours
   STEP_UP_WINDOW = 10.minutes
   ACTIVITY_RESOLUTION = 1.minute
+  IMPERSONATION_TTL = 30.minutes
 
   belongs_to :principal, polymorphic: true
 
@@ -29,4 +30,15 @@ class Session < ApplicationRecord
 
   def step_up! = update!(stepped_up_at: Time.current)
   def revoke! = update!(revoked_at: Time.current)
+
+  def impersonating? = impersonating_merchant_id.present? && impersonation_expires_at&.future?
+
+  def start_impersonation!(merchant_id:, case_ref:)
+    update!(impersonating_merchant_id: merchant_id, impersonation_case_ref: case_ref,
+            impersonation_expires_at: IMPERSONATION_TTL.from_now)
+  end
+
+  def stop_impersonation!
+    update!(impersonating_merchant_id: nil, impersonation_case_ref: nil, impersonation_expires_at: nil)
+  end
 end
