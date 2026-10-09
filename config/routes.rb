@@ -83,6 +83,9 @@ Rails.application.routes.draw do
       resources :payments, only: %i[index show] do
         post :poll, on: :member
       end
+      resources :events, only: [] do
+        post :redeliver, on: :member
+      end
       resource :session, only: %i[create destroy] do
         post :otp
         post :recovery

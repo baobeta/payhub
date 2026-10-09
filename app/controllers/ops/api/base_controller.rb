@@ -66,6 +66,11 @@ module Ops
         cookies.signed[COOKIE] = { value: session_row.id, httponly: true, same_site: :strict,
                                    secure: Rails.env.production?, path: "/ops" }
       end
+
+      # Every dangerous operator action carries a free-text reason (design §9).
+      def reason!
+        params[:reason].to_s.strip.presence || raise(ApiError.validation("reason" => ["is required"]))
+      end
     end
   end
 end
