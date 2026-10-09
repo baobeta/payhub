@@ -12,5 +12,8 @@ class DemoEpoch < ApplicationRecord
   validates :started_at, presence: true
 
   def self.current = order(:started_at).last
-  def self.started_at = current&.started_at || Time.zone.at(0)
+  # Named apart from the `started_at` column: Sorbet reads the attribute
+  # getter as an instance method, and a class method of the same name
+  # shadows nothing but reads badly.
+  def self.current_started_at = current&.started_at || Time.zone.at(0)
 end

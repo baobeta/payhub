@@ -138,6 +138,8 @@ Rails.application.routes.draw do
         post :approve_wallet, on: :member
       end
       resources :chaos_runs, only: %i[create show]
+      get "ledger_summary", to: "ledger#show"
+      post "reset", to: "resets#create"
     end
   end
 
