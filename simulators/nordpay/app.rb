@@ -22,7 +22,7 @@ require "csv"
 module Nordpay
   class Store
     Charge = Struct.new(:id, :reference, :status, :code, :amount_minor, :currency,
-                        :captured_minor, :attempts, :created_at, keyword_init: true) do
+                        :captured_minor, :attempts, :created_at, :magic, keyword_init: true) do
       def to_h
         {
           id: id, reference: reference, status: status, code: code,
@@ -84,6 +84,15 @@ module Nordpay
     CURRENCIES = %w[EUR GBP USD].freeze
     API_KEY = ENV.fetch("NORDPAY_API_KEY", "np_test_key")
 
+    # Deterministic outcomes for the public demo. Each token is a default
+    # X-Sim-Force list, remembered on the charge so later reads behave the same.
+    MAGIC_TOKENS = {
+      "tok_demo_success" => %w[none],
+      "tok_demo_decline" => %w[decline],
+      "tok_demo_timeout_webhook" => %w[timeout],
+      "tok_demo_timeout_needs_operator" => %w[timeout webhook_never read_timeout]
+    }.freeze
+
     WEBHOOK_SECRET = ENV.fetch("NORDPAY_WEBHOOK_SECRET", "np_whsec_test")
     WEBHOOK_URL = ENV.fetch("PAYHUB_WEBHOOK_URL", "http://localhost:3000/v1/webhooks/nordpay")
 
@@ -116,9 +125,11 @@ module Nordpay
         error!(400, "invalid_json", "body is not JSON")
       end
 
-      # Rolls the dice once per behaviour, or obeys X-Sim-Force.
-      def inject?(behaviour, forced_header = request.env["HTTP_X_SIM_FORCE"].to_s)
+      # An explicit X-Sim-Force header wins, then the charge's magic list, then
+      # the dice.
+      def inject?(behaviour, forced_header = request.env["HTTP_X_SIM_FORCE"].to_s, charge: @current_charge)
         forced = forced_header.split(",").map(&:strip)
+        forced = MAGIC_TOKENS.fetch(charge&.magic.to_s, []) if forced.empty?
         return true if forced.include?(behaviour)
         return false if forced.any? # forcing one behaviour disables the random others
 
@@ -211,12 +222,15 @@ module Nordpay
       charge = nil
       store.sync do
         charge = store.find_or_create(reference)
+        @current_charge = charge
         charge.attempts += 1
 
         # Idempotency: a repeat X-Request-Id returns the original charge untouched.
         if charge.status.nil?
           charge.amount_minor = amount
           charge.currency = currency
+          token = body["payment_method_token"].to_s
+          charge.magic = token if MAGIC_TOKENS.key?(token)
           if inject?("decline")
             charge.status = "declined"
             charge.code = "insufficient_funds"
@@ -256,6 +270,11 @@ module Nordpay
       authenticate!
       charge = store.find(params[:reference])
       error!(404, "not_found", "no charge with reference #{params[:reference]}") unless charge&.status
+      @current_charge = charge
+      # `read_timeout` has no random rate: only a magic token or X-Sim-Force
+      # triggers it. It makes every later poll of this charge hang too, so the
+      # payment stays `unknown` until an operator resolves it.
+      sleep(config.fetch("timeout_seconds", 5).to_f) if inject?("read_timeout")
       json!(charge.to_h)
     end
 
@@ -264,6 +283,7 @@ module Nordpay
       authenticate!
       charge = store.find(params[:reference])
       error!(404, "not_found", "no such charge") unless charge&.status
+      @current_charge = charge
       error!(409, "not_authorized", "charge is #{charge.status}") unless charge.status == "authorized"
 
       amount = body_json.fetch("amount_minor", charge.amount_minor - charge.captured_minor)
@@ -294,6 +314,7 @@ module Nordpay
       authenticate!
       charge = store.find(params[:reference])
       error!(404, "not_found", "no such charge") unless charge&.status
+      @current_charge = charge
       error!(409, "not_voidable", "charge is #{charge.status}") unless %w[authorized canceled].include?(charge.status)
 
       store.sync { charge.status = "canceled" }
@@ -307,6 +328,7 @@ module Nordpay
       authenticate!
       charge = store.find(params[:reference])
       error!(404, "not_found", "no such charge") unless charge&.status
+      @current_charge = charge
       ref = request.env["HTTP_X_REQUEST_ID"].to_s
       error!(400, "missing_request_id", "X-Request-Id header is required") if ref.empty?
 

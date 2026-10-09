@@ -68,6 +68,35 @@ RSpec.describe Nordpay::App do
     end
   end
 
+  describe "magic demo tokens" do
+    def charge(token, reference: "ph_#{SecureRandom.hex(12)}")
+      post "/charges", JSON.generate(body.merge(payment_method_token: token)),
+           headers.merge("HTTP_X_REQUEST_ID" => reference)
+      reference
+    end
+
+    it "tok_demo_success always authorizes, whatever the dice say" do
+      described_class.failure.merge!("decline_rate" => 1.0) # random chaos ON, to prove tokens override it
+      charge("tok_demo_success")
+      expect(JSON.parse(last_response.body)["status"]).to eq("authorized")
+    end
+
+    it "tok_demo_decline always declines" do
+      described_class.failure.merge!("decline_rate" => 0.0)
+      charge("tok_demo_decline")
+      expect(JSON.parse(last_response.body)["status"]).to eq("declined")
+    end
+
+    it "tok_demo_timeout_needs_operator makes later reads hang too" do
+      described_class.failure.merge!("timeout_seconds" => 0.01)
+      ref = charge("tok_demo_timeout_needs_operator")
+      started = Time.now
+      get "/charges/#{ref}", nil, headers
+      expect(Time.now - started).to be >= 0.01
+      expect(described_class.store.find(ref).magic).to eq("tok_demo_timeout_needs_operator")
+    end
+  end
+
   def charge!(ref, force: nil, **overrides)
     h = headers.merge("HTTP_X_REQUEST_ID" => ref)
     h["HTTP_X_SIM_FORCE"] = force if force
