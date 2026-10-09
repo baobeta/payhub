@@ -13,6 +13,7 @@ module Ops
         render json: {
           "data" => rows.map do |p|
             PaymentSerializer.call(p).merge("merchant" => T.must(p.merchant).name,
+                                            "merchant_id" => p.merchant_id,
                                             "livemode" => T.must(p.merchant).livemode)
           end
         }

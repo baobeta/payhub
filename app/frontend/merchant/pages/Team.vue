@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { useQuery, useQueryClient } from "@tanstack/vue-query";
-import { api } from "../api";
-import { useMe } from "../useMe";
+import { useArea } from "../area";
 import { ApiFailure } from "../../shared/http";
 import BaseModal from "../../shared/components/BaseModal.vue";
 import ErrorBanner from "../../shared/components/ErrorBanner.vue";
@@ -12,9 +11,9 @@ import ConfirmDialog from "../../shared/components/ConfirmDialog.vue";
 type Member = { id: string; email: string; name: string | null; role: string; status: string; invitation_expires_at: string | null };
 
 const ROLES = ["admin", "developer", "support", "viewer"]; // owner only through transfer
-const { data: me, allowed } = useMe();
+const { client, me, allowed } = useArea();
 const queryClient = useQueryClient();
-const members = useQuery({ queryKey: ["members"], queryFn: () => api.get<{ data: Member[] }>("/members") });
+const members = useQuery({ queryKey: ["members"], queryFn: () => client.get<{ data: Member[] }>("/members") });
 
 const error = ref<string | null>(null);
 const inviteOpen = ref(false);
@@ -84,7 +83,7 @@ const editable = (m: Member) => allowed("team.manage") && m.status === "active" 
               :value="m.role"
               :aria-label="`Role for ${m.email}`"
               class="rounded border border-slate-300 px-2 py-1"
-              @change="act(() => api.patch(`/members/${m.id}`, { role: ($event.target as HTMLSelectElement).value }))"
+              @change="act(() => client.patch(`/members/${m.id}`, { role: ($event.target as HTMLSelectElement).value }))"
             >
               <option
                 v-for="r in ROLES"
@@ -127,7 +126,7 @@ const editable = (m: Member) => allowed("team.manage") && m.status === "active" 
     >
       <form
         class="space-y-3"
-        @submit.prevent="act(() => api.post('/invitations', { email: inviteEmail, role: inviteRole }))"
+        @submit.prevent="act(() => client.post('/invitations', { email: inviteEmail, role: inviteRole }))"
       >
         <label class="block text-sm font-medium">Email
           <input
@@ -164,7 +163,7 @@ const editable = (m: Member) => allowed("team.manage") && m.status === "active" 
       confirm-label="Remove"
       :type-to-confirm="removing?.email"
       @update:open="(o: boolean) => { if (!o) removing = null }"
-      @confirm="act(() => api.delete(`/members/${removing!.id}`))"
+      @confirm="act(() => client.delete(`/members/${removing!.id}`))"
     />
     <ConfirmDialog
       :open="!!transferTo"
@@ -173,7 +172,7 @@ const editable = (m: Member) => allowed("team.manage") && m.status === "active" 
       confirm-label="Transfer ownership"
       :type-to-confirm="transferTo?.email"
       @update:open="(o: boolean) => { if (!o) transferTo = null }"
-      @confirm="act(() => api.post('/ownership_transfer', { member_id: transferTo!.id }))"
+      @confirm="act(() => client.post('/ownership_transfer', { member_id: transferTo!.id }))"
     />
   </div>
 </template>

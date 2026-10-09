@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
-import { api } from "../api";
+import { useArea } from "../area";
 import { formatMoney } from "../../shared/money";
 
 type Home = {
@@ -8,7 +8,8 @@ type Home = {
   volume_7d: Record<string, number>;
   balance: Record<string, number> | null;
 };
-const { data } = useQuery({ queryKey: ["home"], queryFn: () => api.get<Home>("/home") });
+const { client, base } = useArea();
+const { data } = useQuery({ queryKey: ["home"], queryFn: () => client.get<Home>("/home") });
 </script>
 
 <template>
@@ -38,7 +39,7 @@ const { data } = useQuery({ queryKey: ["home"], queryFn: () => api.get<Home>("/h
           :key="state"
         >
           <RouterLink
-            :to="{ path: '/payments', query: { state } }"
+            :to="{ path: `${base}/payments`, query: { state } }"
             class="block rounded border border-amber-300 bg-amber-50 px-4 py-3"
           >
             <span class="text-2xl font-semibold">{{ count }}</span>

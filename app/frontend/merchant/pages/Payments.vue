@@ -2,15 +2,14 @@
 import { computed } from "vue";
 import { useInfiniteQuery } from "@tanstack/vue-query";
 import { useRoute, useRouter } from "vue-router";
-import { api } from "../api";
-import { useMe } from "../useMe";
+import { useArea } from "../area";
 import { formatMoney } from "../../shared/money";
 import StatusBadge from "../../shared/components/StatusBadge.vue";
 import type { List, Payment } from "../types";
 
 const route = useRoute();
 const router = useRouter();
-const { allowed } = useMe();
+const { client, me, allowed, base } = useArea();
 
 const STATES = ["pending", "requires_action", "authorized", "unknown", "captured", "part_refunded", "refunded", "canceled", "failed"];
 
@@ -33,12 +32,13 @@ const list = useInfiniteQuery({
   initialPageParam: null as string | null,
   queryFn: ({ pageParam }) => {
     const params = new URLSearchParams({ ...filters.value, ...(pageParam ? { cursor: pageParam } : {}) });
-    return api.get<List<Payment>>(`/payments?${params}`);
+    return client.get<List<Payment>>(`/payments?${params}`);
   },
   getNextPageParam: (last) => (last.has_more ? last.next_cursor : null),
 });
 const rows = computed(() => list.data.value?.pages.flatMap((p) => p.data) ?? []);
 const exportHref = computed(() => `/dashboard/api/payments/export.csv?${new URLSearchParams(filters.value)}`);
+const canExport = computed(() => allowed("payments.export") && !me.value?.impersonating);
 </script>
 
 <template>
@@ -48,7 +48,7 @@ const exportHref = computed(() => `/dashboard/api/payments/export.csv?${new URLS
         Payments
       </h1>
       <a
-        v-if="allowed('payments.export')"
+        v-if="canExport"
         :href="exportHref"
         class="ml-auto text-sm underline"
       >Export CSV</a>
@@ -121,7 +121,7 @@ const exportHref = computed(() => `/dashboard/api/payments/export.csv?${new URLS
           </td>
           <td class="p-2">
             <RouterLink
-              :to="`/payments/${p.id}`"
+              :to="`${base}/payments/${p.id}`"
               class="underline"
             >
               {{ formatMoney(p.amount_minor, p.currency) }} · {{ p.state.replaceAll("_", " ") }}

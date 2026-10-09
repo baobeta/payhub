@@ -1,16 +1,22 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, provide } from "vue";
 import { useQueryClient } from "@tanstack/vue-query";
 import { useRouter } from "vue-router";
 import { api } from "../api";
 import { useMe } from "../useMe";
 import StepUpDialog from "../../shared/components/StepUpDialog.vue";
+import { AREA_BASE, AREA_CLIENT, AREA_ME, type AreaMe } from "../../shared/area";
 import type { Permission } from "../../shared/can";
 import type { Me } from "../types";
 
 const { data: me, allowed } = useMe();
 const queryClient = useQueryClient();
 const router = useRouter();
+
+// The child read pages fetch through this area's client and identity.
+provide(AREA_CLIENT, api);
+provide(AREA_ME, computed<AreaMe | null>(() => me.value ?? null));
+provide(AREA_BASE, "");
 
 const NAV: { to: string; label: string; permission: Permission }[] = [
   { to: "/", label: "Home", permission: "payments.read" },
