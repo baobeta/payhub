@@ -51,6 +51,12 @@ class PspCircuit
 
     sig { params(store: T.nilable(Store)).void }
     attr_writer :store
+
+    # Read-only view for the operator console. Never admits, never records.
+    sig { params(psp: String).returns(T::Hash[String, T.untyped]) }
+    def snapshot(psp)
+      new(psp, store).snapshot
+    end
   end
 
   sig { params(psp: String, store: Store).void }
@@ -70,6 +76,19 @@ class PspCircuit
     end
     succeeded!(probe)
     result
+  end
+
+  # A pure read: the same keys the breaker writes, nothing mutated.
+  sig { returns(T::Hash[String, T.untyped]) }
+  def snapshot
+    open_until = @store.get(key("open_until"))&.to_f
+    calls, fails = window
+    state = if open_until.nil? then "closed"
+    elsif now < open_until then "open"
+    else "half_open"
+    end
+    { "psp" => @psp, "state" => state, "open_until" => open_until && Time.at(open_until).utc.iso8601,
+      "window_calls" => calls, "window_failures" => fails }
   end
 
   private
