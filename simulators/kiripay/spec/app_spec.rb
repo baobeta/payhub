@@ -101,6 +101,28 @@ RSpec.describe Kiripay::App do
     expect(webhooks.map { |w| w["event"]["type"] }).to eq(%w[charge.declined])
   end
 
+  describe "magic demo tokens" do
+    before do
+      described_class.failure.merge!("timeout_rate" => 1.0, "decline_rate" => 1.0,
+                                     "webhook_duplicate_rate" => 1.0, "webhook_out_of_order_rate" => 1.0,
+                                     "webhook_late_rate" => 1.0, "webhook_never_rate" => 1.0,
+                                     "webhook_bad_signature_rate" => 1.0, "timeout_seconds" => 0.01)
+    end
+
+    it "tok_demo_wallet yields one deterministic pending_redirect and one settled webhook pair" do
+      post "/charges", JSON.generate(currency: "THB", amount: "25.00", wallet_token: "tok_demo_wallet",
+                                     merchant_reference: "ph_wallet"), headers
+      expect(last_response.status).to eq(200)
+      charge = JSON.parse(last_response.body)
+      expect(charge["status"]).to eq("pending_redirect")
+      expect(described_class.store.charges.values.length).to eq(1)
+
+      approve!(charge["id"])
+      expect(JSON.parse(get("/charges/#{charge['id']}", nil, headers).body)["status"]).to eq("captured")
+      expect(webhooks.map { |w| w["event"]["type"] }).to eq(%w[charge.created charge.captured])
+    end
+  end
+
   it "refunds in full only, once" do
     c = charge!
     approve!(c["id"])
