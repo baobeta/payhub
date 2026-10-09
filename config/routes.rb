@@ -76,6 +76,22 @@ Rails.application.routes.draw do
     end
   end
 
+  namespace :ops do
+    namespace :api, defaults: { format: :json } do
+      get "me", to: "me#show"
+      resource :session, only: %i[create destroy] do
+        post :otp
+        post :recovery
+        post :step_up
+      end
+      resources :invitations, only: %i[create show], param: :token do
+        post :accept, on: :member
+      end
+      get "otp/setup", to: "otp#setup"
+      post "otp/confirm", to: "otp#confirm"
+    end
+  end
+
   # UI shells: the Vue router owns every path below each prefix (design §1).
   # Keep these LAST so /dashboard/api/* and /ops/api/* routes above them match first.
   get "dashboard(/*path)", to: "dashboard/shell#show", format: false

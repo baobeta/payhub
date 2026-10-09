@@ -13,6 +13,9 @@ module GeneratedPathHelpersModule
   def accept_dashboard_api_invitation_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def accept_ops_api_invitation_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def cancel_dashboard_api_payment_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -103,7 +106,28 @@ module GeneratedPathHelpersModule
   def metrics_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def ops_api_invitation_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_invitations_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_me_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_otp_confirm_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_otp_setup_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_session_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def otp_dashboard_api_session_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def otp_ops_api_session_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def password_dashboard_api_me_path(*args); end
@@ -130,6 +154,9 @@ module GeneratedPathHelpersModule
   def recovery_dashboard_api_session_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def recovery_ops_api_session_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def redeliver_dashboard_api_event_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -149,6 +176,9 @@ module GeneratedPathHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def step_up_dashboard_api_session_path(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def step_up_ops_api_session_path(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def v1_balance_path(*args); end
