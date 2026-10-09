@@ -16,6 +16,42 @@ module GeneratedUrlHelpersModule
   def accept_ops_api_invitation_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def approve_ops_api_proposal_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_api_keys_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_balance_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_events_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_home_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_members_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_payment_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_payments_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_security_history_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_settlements_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def as_merchant_webhook_endpoint_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def cancel_dashboard_api_payment_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
@@ -106,7 +142,19 @@ module GeneratedUrlHelpersModule
   def metrics_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
+  def ops_api_access_review_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_audit_events_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
   def ops_api_circuits_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_impersonations_current_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_impersonations_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def ops_api_invitation_url(*args); end
@@ -116,6 +164,12 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def ops_api_me_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_operator_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def ops_api_operators_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def ops_api_otp_confirm_url(*args); end
@@ -185,6 +239,9 @@ module GeneratedUrlHelpersModule
 
   sig { params(args: T.untyped).returns(String) }
   def redeliver_v1_event_url(*args); end
+
+  sig { params(args: T.untyped).returns(String) }
+  def reject_ops_api_proposal_url(*args); end
 
   sig { params(args: T.untyped).returns(String) }
   def reveal_secret_dashboard_api_webhook_endpoint_url(*args); end
