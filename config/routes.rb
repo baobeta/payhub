@@ -79,6 +79,7 @@ Rails.application.routes.draw do
   namespace :ops do
     namespace :api, defaults: { format: :json } do
       get "me", to: "me#show"
+      get "queue", to: "queue#show"
       resource :session, only: %i[create destroy] do
         post :otp
         post :recovery
