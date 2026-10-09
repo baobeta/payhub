@@ -33,4 +33,18 @@ RSpec.describe "Authorization inventory" do # rubocop:disable RSpec/DescribeClas
     end
     expect(outside).to be_empty, "UI routes outside Web::BaseController:\n  #{outside.join("\n  ")}"
   end
+
+  # Impersonation is read-only (design §4): the route table, not only the
+  # permission shim, must refuse every write.
+  it "exposes only GET routes inside the /ops/api/as scope" do
+    Rails.application.eager_load!
+    writes = Rails.application.routes.routes.filter_map do |route|
+      path = route.path.spec.to_s
+      next unless path.include?("/ops/api/as/")
+
+      verb = route.verb
+      "#{verb} #{path}" unless verb == "GET"
+    end
+    expect(writes).to be_empty, "Non-GET impersonation routes:\n  #{writes.join("\n  ")}"
+  end
 end

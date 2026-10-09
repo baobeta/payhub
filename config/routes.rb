@@ -97,6 +97,8 @@ Rails.application.routes.draw do
           post :reject
         end
       end
+      resources :impersonations, only: %i[create]
+      delete "impersonations/current", to: "impersonations#destroy"
       resource :session, only: %i[create destroy] do
         post :otp
         post :recovery
@@ -108,6 +110,21 @@ Rails.application.routes.draw do
       get "otp/setup", to: "otp#setup"
       post "otp/confirm", to: "otp#confirm"
     end
+  end
+
+  # Read-only merchant view for operators (design §4, O-12). Top-level scope so
+  # `module:` is not nested under ops/api; the path keeps the /ops prefix so the
+  # ops session cookie is sent. GET only.
+  scope "ops/api/as/:as_merchant_id", module: "dashboard/api", as: "as_merchant", defaults: { impersonation: "1" } do
+    get "home", to: "home#show"
+    resources :payments, only: %i[index show]
+    get "balance", to: "balances#show"
+    get "settlements", to: "settlements#index"
+    resources :api_keys, only: :index
+    resource :webhook_endpoint, only: :show
+    resources :events, only: %i[index show]
+    resources :members, only: :index
+    get "security_history", to: "security_history#index"
   end
 
   # UI shells: the Vue router owns every path below each prefix (design §1).
