@@ -134,7 +134,9 @@ Rails.application.routes.draw do
   # twin. Deliberately outside /dashboard and /ops.
   namespace :demo do
     namespace :api, defaults: { format: :json } do
-      resources :payments, only: %i[create show]
+      resources :payments, only: %i[create show] do
+        post :approve_wallet, on: :member
+      end
     end
   end
 
