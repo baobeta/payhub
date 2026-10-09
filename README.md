@@ -57,7 +57,26 @@ The seed prints two keys: `sk_live_…` and `sk_test_…`. A test key opens the 
 | support | reads payments; capture, cancel, refund; no secrets, no balances |
 | viewer | reads payments, balance, settlements; exports CSV; changes nothing |
 
-The full matrix is generated in [docs/permissions.md](docs/permissions.md). Money actions and anything touching secrets or the team ask for a fresh authenticator code. The header switches between live and test data (DECISIONS #22, #25). `/ops` and `/demo` are still placeholders (phases 2 and 3). `docker compose exec web bin/rails "mail:smoke[me@example.com]"` sends a test email.
+The full matrix is generated in [docs/permissions.md](docs/permissions.md). Money actions and anything touching secrets or the team ask for a fresh authenticator code. The header switches between live and test data (DECISIONS #22, #25). `/ops` is the operator console (phase 2); `/demo` is still a placeholder (phase 3). `docker compose exec web bin/rails "mail:smoke[me@example.com]"` sends a test email.
+
+### Operator console (`/ops`)
+
+Staff sign in at <http://localhost:3000/ops> with a separate account and cookie from merchants (DECISIONS #25). Bootstrap the first operator from a console — this prints the invitation link and also emails it (MailCatcher at <http://localhost:1080>):
+
+```bash
+docker compose exec web bin/rails "operators:invite[you@example.com,admin]"
+```
+
+Then invite the rest from **Operators** in the UI. The four roles:
+
+| Role | Can |
+|---|---|
+| support | read the queue, payments, circuits and reconciliation; poll a PSP and redeliver events; start a read-only "view as merchant" session |
+| ops | support, plus review settlement breaks and raise proposals (manual transitions, ledger corrections) |
+| approver | read everything; approve or reject another operator's proposals — and nothing else |
+| admin | read everything; invite operators, change roles, disable accounts, export the access review (cannot decide proposals) |
+
+Money leaves `unknown` only through **proposals**, approved by a *different* operator (DECISIONS #23). Every operator write is guarded by state under a row lock, not an idempotency key (DECISIONS #26). While a "view as merchant" session is active, a fixed red banner shows on every `/ops` screen, the merchant's pages are read-only, and the session ends itself after 30 minutes.
 
 Then, with the key the seed printed:
 
