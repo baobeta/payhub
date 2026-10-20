@@ -56,7 +56,7 @@ test("an operator proposes a resolution and a second operator approves it", asyn
   const approverContext = await browser.newContext();
   const approver = await approverContext.newPage();
   await signIn(approver, "approver@e2e.test", approverTotp);
-  await approver.getByRole("link", { name: "Proposals" }).click();
+  await approver.getByRole("link", { name: "Proposals", exact: true }).click();
   await expect(approver).toHaveURL(/\/ops\/proposals$/);
   await approver.getByRole("link", { name: "OPS-42" }).click();
   await expect(approver).toHaveURL(/\/ops\/proposals\//);
