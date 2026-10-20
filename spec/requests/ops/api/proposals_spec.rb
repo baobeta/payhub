@@ -38,6 +38,38 @@ RSpec.describe "Ops proposals", type: :request do
     expect(json_body["id"]).to eq(first)
   end
 
+  it "TC-N7-1: refuses another operator's client_token with 409, not a 500" do
+    payment = create(:payment, state: "unknown")
+    token = SecureRandom.uuid
+    sign_in_operator(maker, stepped_up: true)
+    create_proposal(payment, client_token: token)
+
+    sign_in_operator(create(:operator, role: "ops"), stepped_up: true)
+    expect { create_proposal(payment, client_token: token) }.not_to change(OperatorProposal, :count)
+
+    expect(response).to have_http_status(:conflict)
+    expect(json_body.dig("error", "code")).to eq("client_token_in_use")
+    expect(response.body).not_to include("PSP confirmed") # nothing of A's proposal leaks
+  end
+
+  it "TC-N7-2: two submits of one token at the same moment make one row and both get it back" do
+    sign_in_operator(maker, stepped_up: true)
+    payment = create(:payment, state: "unknown")
+    token = SecureRandom.uuid
+    create_proposal(payment, client_token: token)
+    expect(response).to have_http_status(:created)
+    first = json_body["id"]
+
+    # The second submit looked before the first committed: its lookup saw
+    # nothing, so its insert hits the unique index.
+    allow(OperatorProposal).to receive(:find_by).and_call_original
+    allow(OperatorProposal).to receive(:find_by).with(client_token: token).and_return(nil)
+    expect { create_proposal(payment, client_token: token) }.not_to change(OperatorProposal, :count)
+
+    expect(response).to have_http_status(:ok)
+    expect(json_body["id"]).to eq(first)
+  end
+
   it "forbids support from proposing" do
     sign_in_operator(create(:operator, role: "support"))
     create_proposal(create(:payment, state: "unknown"))
