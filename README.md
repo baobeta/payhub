@@ -267,6 +267,71 @@ npm run e2e                                     # Playwright: sign in with 2FA, 
 
 Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22 for the UI bundles. Both PSP simulators are standalone Sinatra apps with their own `Gemfile` and specs (`cd simulators/nordpay && bundle exec rspec`).
 
+## Architecture
+
+Everything `docker compose up` starts, and how the pieces talk to each other. Solid arrows are synchronous calls; dotted arrows are asynchronous (webhooks, queued jobs, telemetry).
+
+```mermaid
+flowchart LR
+    subgraph Clients
+        MS["Merchant server<br/>Bearer sk_live_ / sk_test_"]
+        BR["Browsers<br/>merchant team · operators<br/>demo visitors"]
+    end
+
+    subgraph Web["web · Rails 8.1 / Puma · :3000"]
+        API["/v1 JSON API<br/>idempotency · rate limit"]
+        UI["/dashboard · /ops · /demo<br/>cookie session · TOTP<br/>permissions"]
+        WH["/v1/webhooks/:psp<br/>verify signature · dedupe"]
+    end
+
+    PG[("Postgres 16<br/>payments · transitions<br/>ledger · outbox · audit")]
+    RD[("Redis<br/>Sidekiq queues<br/>PSP circuit state")]
+
+    subgraph Worker["worker · Sidekiq"]
+        JOBS["payments + webhooks queues<br/>authorize · capture · refund<br/>apply inbound events"]
+        SWEEP["sweepers · cron<br/>poll stuck · deliver outbox<br/>expire holds · reconcile"]
+        AD["PSP adapters<br/>behind PspCircuit"]
+    end
+
+    subgraph PSPs["PSP simulators"]
+        NP["Nordpay · :4001<br/>EU cards"]
+        KP["Kiripay · :4002<br/>SEA wallets"]
+    end
+
+    MS --> API
+    BR --> UI
+    API -- "payment + outbox event,<br/>one transaction" --> PG
+    UI & WH --> PG
+    API & UI & WH -. enqueue .-> RD
+    RD -. jobs .-> JOBS
+    RD -. cron .-> SWEEP
+    JOBS & SWEEP --> AD
+    JOBS & SWEEP --> PG
+    AD --> NP & KP
+    NP & KP -. "signed webhooks" .-> WH
+    SWEEP -. "signed outbound webhooks" .-> MS
+```
+
+Telemetry runs beside it. Every request, job and PSP call shares one trace id, so a payment can be followed from the merchant's `POST` to the PSP and back:
+
+```mermaid
+flowchart LR
+    W["web"] & K["worker"] -- "OTLP spans" --> OC["otel-collector"]
+    L["log/development.log<br/>JSON request + job lines"] -- tailed --> OC
+    M["/metrics"] -- "scraped every 15s" --> OC
+    OC --> CH[("ClickHouse<br/>otel db · 72h TTL")] --> GF["Grafana · :3300<br/>PayHub tracing"]
+```
+
+| Piece | Job | Why it is separate |
+| --- | --- | --- |
+| **web** | Answers merchants in milliseconds: authenticates, claims the idempotency key, writes the payment and its outbox event in one transaction, enqueues the PSP call. Serves the three dashboards and receives PSP webhooks. | A slow PSP must never hold a Puma thread ([DECISIONS #8](DECISIONS.md#8-post-v1payments-returns-202-and-does-psp-work-in-sidekiq)). |
+| **worker** | All PSP traffic: authorize, capture, refund, status polls, voids. Delivers outbound webhooks and runs the scheduled sweepers and reconciliations. | Retries, backoff and crashes happen here, away from requests. |
+| **Postgres** | The only source of truth. Unique indexes, CHECKs and append-only triggers enforce the invariants ([DECISIONS #3, #5, #23](DECISIONS.md)). | Correctness lives in the database, not in process memory. |
+| **Redis** | Sidekiq's queues, and one circuit-breaker state per PSP shared by every process ([DECISIONS #17](DECISIONS.md#17-a-circuit-breaker-per-psp--and-the-one-rule-any-future-failover-must-obey)). | Holds nothing that must survive. Losing it loses queued jobs, which the sweepers re-drive from Postgres. |
+| **nordpay / kiripay** | Deliberately hostile PSP simulators with their own Gemfiles and specs. | Stand in for real PSPs; misbehave on demand (`X-Sim-Force`). |
+| **otel-collector → ClickHouse → Grafana** | Traces, JSON log lines and `/metrics` in one place, searchable by `payment_id`. | Telemetry is optional; outside compose nothing is exported unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set. |
+| **vite / mailcatcher** | Development only: hot-reloaded UI bundles, and a local inbox for emails. | Production serves precompiled assets and real SMTP. |
+
 ## The domain in ten lines
 
 1. A **payment** is a row whose `state` is a cache of its latest **transition**; transitions are append-only, ordered by the PSP's own timestamp (`sort_key`), and exactly one is `most_recent` (partial unique index).
