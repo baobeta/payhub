@@ -51,6 +51,18 @@ class Payment < ApplicationRecord
     first_sent_at
   end
 
+  # For a PSP that does not deduplicate (DECISIONS #12): claims the right to
+  # send the ONE authorize this reference will ever get. True only for the
+  # caller whose single-statement write found first_sent_at still empty, so a
+  # job and a sweeper racing on a never-sent payment cannot both POST.
+  sig { params(at: ActiveSupport::TimeWithZone).returns(T::Boolean) }
+  def claim_first_send!(at = Time.current)
+    claimed = self.class.where(id: id, first_sent_at: nil).update_all(first_sent_at: at) == 1
+    self.first_sent_at = self.class.where(id: id).pick(:first_sent_at)
+    clear_attribute_changes([:first_sent_at])
+    claimed
+  end
+
   # Every new payment starts life with a `pending` transition row so the
   # history is complete from the first moment.
   after_create :record_initial_transition

@@ -41,6 +41,43 @@ RSpec.describe StuckPaymentSweeperJob do
     expect(payment.reload.state).to eq("authorized")
   end
 
+  context "with a PSP that does not deduplicate authorizes (Kiripay, DECISIONS #12)" do
+    let(:adapter) { FakePspAdapter.new(name: "kiripay", currencies: %w[VND], idempotent_authorize: false) }
+
+    def stuck_vnd(age:)
+      create(:payment, :vnd).tap { |p| p.update_column(:updated_at, age.ago) }
+    end
+
+    it "TC-B8-2: sends the first POST for a payment the worker never sent" do
+      payment = stuck_vnd(age: 5.minutes)
+      adapter.script(:fetch, result(payment, :not_found))
+      adapter.script(:authorize, result(payment, :requires_action))
+
+      described_class.perform_now
+
+      expect(adapter.calls[:authorize].map(&:psp_reference)).to eq([payment.psp_reference])
+      expect(payment.reload.state).to eq("requires_action")
+    end
+
+    it "never re-sends one that was sent: it waits, then fails it as never received" do
+      payment = stuck_vnd(age: 5.minutes)
+      travel_to(5.minutes.ago, with_usec: true) { payment.mark_sent! }
+      adapter.script(:fetch, result(payment, :not_found))
+
+      described_class.perform_now
+      expect(payment.reload.state).to eq("pending")
+
+      travel ResolveUnknownPayment::LOOKUP_GRACE do
+        adapter.script(:fetch, result(payment, :not_found, psp_timestamp: Time.current))
+        described_class.perform_now
+      end
+
+      expect(adapter.calls[:authorize]).to be_empty
+      expect(payment.reload.state).to eq("failed")
+      expect(payment.transitions.find_by(most_recent: true).metadata).to include("decline_code" => "psp_never_received")
+    end
+  end
+
   it "leaves fresh payments alone and resolves only those past the threshold" do
     fresh = stuck("unknown", age: 30.seconds)
     old = stuck("unknown", age: 5.minutes)

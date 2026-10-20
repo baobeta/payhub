@@ -19,6 +19,7 @@ module Metrics
       webhook_duplicates: [:psp],
       webhook_signature_failures: [:psp],
       stuck_payment_alerts: [:psp, :state],
+      psp_never_received: [:psp],
       authorizations_expired: [:psp],
       psp_circuit_opened: [:psp],
       settlement_discrepancies: [:psp, :status],
