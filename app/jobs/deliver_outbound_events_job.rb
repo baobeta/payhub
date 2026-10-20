@@ -3,7 +3,8 @@
 
 # The outbox sweeper. Runs every minute: delivers every due OutboundEvent to
 # its merchant's webhook_url, records one OutboundDeliveryAttempt per try,
-# backs off exponentially, and dead-letters after MAX_ATTEMPTS.
+# backs off exponentially, and dead-letters once the event's attempt_budget
+# (MAX_ATTEMPTS, renewed by each redelivery) is spent.
 #
 # Two sweepers may run at once (scaled Sidekiq). Each row is claimed with
 # FOR UPDATE SKIP LOCKED, so they partition the work instead of double-sending.
@@ -64,7 +65,7 @@ class DeliverOutboundEventsJob < ApplicationJob
     if status && status.between?(200, 299)
       event.update!(state: "delivered", attempts: attempt_number, delivered_at: Time.current, last_error: nil)
       "delivered"
-    elsif attempt_number >= OutboundEvent::MAX_ATTEMPTS
+    elsif attempt_number >= event.attempt_budget # MAX_ATTEMPTS, plus MAX_ATTEMPTS per redelivery
       event.update!(state: "dead", attempts: attempt_number, last_error: error || "HTTP #{status}")
       Rails.logger.error({ event: "outbound.dead_letter", outbound_event_id: event.id, merchant_id: event.merchant_id,
                            type: event.event_type, attempts: attempt_number }.to_json)

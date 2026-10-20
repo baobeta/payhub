@@ -438,6 +438,7 @@ CREATE TABLE public.outbound_events (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     traceparent character varying,
+    attempt_budget integer DEFAULT 8 NOT NULL,
     CONSTRAINT chk_outbound_events_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'delivered'::character varying, 'dead'::character varying])::text[])))
 );
 
@@ -1453,6 +1454,7 @@ ALTER TABLE ONLY public.api_keys
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261020000301'),
 ('20260929000001'),
 ('20260928000001'),
 ('20260927000001'),

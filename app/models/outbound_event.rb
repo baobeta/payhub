@@ -45,11 +45,13 @@ class OutboundEvent < ApplicationRecord
   def dead? = state == "dead"
 
   # Operator replay from the dead-letter state (POST /v1/events/:id/redeliver).
+  # A fresh delivery with its own MAX_ATTEMPTS retries (Stripe). `attempts`
+  # keeps counting, so attempt numbers stay unique per event.
   sig { returns(T::Boolean) }
   def redeliver!
     raise ArgumentError, "only dead events can be redelivered (state: #{state})" unless dead?
 
-    update!(state: "pending", next_attempt_at: Time.current, last_error: nil)
+    update!(state: "pending", next_attempt_at: Time.current, last_error: nil, attempt_budget: attempts + MAX_ATTEMPTS)
   end
 
   # The envelope the merchant receives. `id` lets them dedupe on their side.
