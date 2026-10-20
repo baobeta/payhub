@@ -68,7 +68,8 @@ RSpec.describe "Authorization inventory" do # rubocop:disable RSpec/DescribeClas
       next unless klass && klass < Web::BaseController
 
       key = "#{controller}##{action}"
-      next unless expected.key?(key) # routes not in fixture are caught by the first example
+      # A new route must be added to the fixture deliberately, with its permission.
+      next mismatches << "#{key}: missing from route_permissions.yml" unless expected.key?(key)
 
       # Find the first matching rule (same logic as Authorization#authorize!)
       rules = klass.authorization_rules.select do |rule|
