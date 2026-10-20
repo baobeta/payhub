@@ -38,7 +38,7 @@ class ExpireAuthorizationsJob < ApplicationJob
     # the remainder lapses at the network (#14).
     idle.where(state: %w[captured part_refunded], captures_closed_at: nil).where("captured_minor < amount_minor")
         .order(:updated_at).limit(BATCH).each do |payment|
-      payment.close_captures!(reason: "authorization_expired", source: "sweeper")
+      payment.close_captures!(reason: "authorization_expired", source: "sweeper", unless_capture_in_flight: true)
       Rails.logger.info({ event: "authorization.remainder_closed", payment_id: payment.id, psp_name: payment.psp_name }.to_json)
     end
   end

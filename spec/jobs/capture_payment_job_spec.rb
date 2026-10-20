@@ -18,8 +18,8 @@ RSpec.describe CapturePaymentJob do
   end
 
   # What CapturePayment records when the merchant asks.
-  def capture_request(amount)
-    payment.captures.create!(amount_minor: amount, base_captured_minor: Ledger.captured_minor(payment))
+  def capture_request(amount, final: true)
+    payment.captures.create!(amount_minor: amount, base_captured_minor: Ledger.captured_minor(payment), final: final)
   end
 
   it "reads the PSP first, then captures, books the amount and moves authorized → captured" do
@@ -36,7 +36,7 @@ RSpec.describe CapturePaymentJob do
   end
 
   it "books partial captures cumulatively — the ledger holds the running total" do
-    first = capture_request(1000)
+    first = capture_request(1000, final: false) # a final one would close capturing (DECISIONS #20)
     adapter.script(:fetch, charge(:authorized, captured_minor: 0))
     adapter.script(:capture, charge(:authorized, captured_minor: 1000))
     described_class.perform_now(first.id)
@@ -125,6 +125,17 @@ RSpec.describe CapturePaymentJob do
   describe "several partial captures (DECISIONS #20)" do
     def capture_request(amount, final: true)
       payment.captures.create!(amount_minor: amount, base_captured_minor: Ledger.captured_minor(payment), final: final)
+    end
+
+    it "TC-E3-21: a queued capture on a payment whose capturing was closed fails without calling the PSP" do
+      capture = capture_request(1000, final: false)
+      payment.update_column(:captures_closed_at, Time.current)
+
+      described_class.perform_now(capture.id)
+
+      expect(capture.reload).to have_attributes(state: "failed", failure_code: "captures_closed")
+      expect(adapter.calls[:fetch]).to be_empty
+      expect(OutboundEvent.where(payment: payment, event_type: "capture.failed").count).to eq(1)
     end
 
     it "TC-E3-12: one capture.succeeded per capture, payment.captured once" do

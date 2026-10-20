@@ -33,6 +33,9 @@ class CapturePaymentJob < ApplicationJob
     unless Payment::CAPTURABLE_STATES.include?(payment.state)
       return finish(capture, "failed", failure_code: "payment_#{payment.state}")
     end
+    # Closed while this capture sat in the queue: the merchant was told no more
+    # would be taken, so taking it now would contradict that (DECISIONS #20).
+    return finish(capture, "failed", failure_code: "captures_closed") if payment.captures_closed_at
 
     adapter = PspRouter.adapter(payment.psp_name)
     # Read first. Unavailable or TimedOut here raise: retry later, never send blind.

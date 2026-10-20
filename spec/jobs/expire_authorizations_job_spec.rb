@@ -49,6 +49,19 @@ RSpec.describe ExpireAuthorizationsJob do
     expect(payment.reload.state).to eq("authorized")
   end
 
+  it "TC-E3-20: a capture that arrives between the expiry query and the lock wins; capturing stays open" do
+    partly = authorized(idle_for: 7.days)
+    Ledger.record_capture!(partly, 1000)
+    partly.transition!(:captured, sort_key: partly.created_at + 2.seconds, source: "worker")
+    # The race: the merchant's capture request lands after the job's query ran.
+    partly.captures.create!(amount_minor: 500, base_captured_minor: 1000, final: false)
+
+    partly.close_captures!(reason: "authorization_expired", source: "sweeper", unless_capture_in_flight: true)
+
+    expect(partly.reload.captures_closed_at).to be_nil
+    expect(OutboundEvent.where(payment: partly, event_type: "payment.captures_closed")).to be_empty
+  end
+
   it "TC-E3-16: closes the open remainder of a partly captured payment instead of voiding it" do
     partly = authorized(idle_for: 7.days)
     Ledger.record_capture!(partly, 1000)

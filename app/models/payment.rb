@@ -155,10 +155,14 @@ class Payment < ApplicationRecord
   # uncaptured the merchant hears `payment.captures_closed`. A payment whose
   # captured money is already fully refunded has nothing left in it, so it
   # becomes `refunded` here rather than waiting for a refund that never comes.
-  sig { params(reason: String, source: String).void }
-  def close_captures!(reason:, source:)
+  # `unless_capture_in_flight`: the idle-expiry sweep picks payments with no
+  # capture in flight, but one may be requested between its query and this
+  # lock. The merchant's capture is activity, so it wins; we stay open.
+  sig { params(reason: String, source: String, unless_capture_in_flight: T::Boolean).void }
+  def close_captures!(reason:, source:, unless_capture_in_flight: false)
     with_lock do
       next if captures_closed_at
+      next if unless_capture_in_flight && captures.pending.exists?
 
       captured = Ledger.captured_minor(self)
       released = capturable_minor(captured)
