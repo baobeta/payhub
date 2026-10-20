@@ -332,28 +332,14 @@ The code adds one edge the diagram omits on purpose: `pending → failed`, for a
 
 ## PSP simulators
 
-| | Nordpay (`:4001`) | Kiripay (`:4002`) |
-| --- | --- | --- |
-| Currencies | EUR, GBP, USD | VND, THB, IDR (VND has no minor unit) |
-| Model | Authorize, then capture; synchronous | Capture-only; redirect, then **webhook only** |
-| Refunds | Partial | Full only |
-| Idempotency | Honours `X-Request-Id` | None; PayHub dedupes by its own `merchant_reference` |
-| Webhook signature | `X-Nordpay-Signature: <hmac-sha256 hex of body>` | `X-Kiripay-Signature: t=<unix>,v1=<hmac of "t.body">` |
+Two deliberately unreliable simulators stand in for real PSPs:
 
-Each simulator reads `failure_config.yml` and misbehaves at the configured rates:
-- 30-second timeouts *after* recording the charge
-- a `500` followed by a `200`
-- the same charge twice in one response body
-- a `200` with `status: declined`
-- webhooks that are duplicated five times, reordered, hours late, badly signed or never sent
+- **Nordpay** (`:4001`) handles EU cards. It authorizes and captures separately, and supports partial refunds.
+- **Kiripay** (`:4002`) handles Southeast Asian wallets. It is capture-only, reports results by webhook only, and has no idempotency.
 
-| Admin endpoint | Purpose |
-| --- | --- |
-| `X-Sim-Force: timeout,webhook_duplicate,…` | Request header that forces a behaviour for one request, keeping specs deterministic |
-| `POST /_sim/reset` | Reset the simulator |
-| `GET /_sim/charges` | List the charges it holds |
-| `GET /_sim/webhooks` | List the webhooks it has sent |
-| `PUT /_sim/config` | Change the failure rates |
+They time out, return errors, and send webhooks late, twice, out of order or never. Any of this can be forced per request with the `X-Sim-Force` header.
+
+Behaviour, signatures, failure modes and admin endpoints are documented in **[docs/SIMULATORS.md](docs/SIMULATORS.md)**.
 
 ## Testing and verification
 
@@ -422,28 +408,7 @@ In Grafana (<http://localhost:3300>, no login locally), the *PayHub tracing* das
 
 ## Performance
 
-`GET /v1/payments` uses keyset pagination on `(merchant_id, created_at DESC, id DESC)`. It uses no `OFFSET` and no `COUNT`, and fetches `LIMIT n+1` to learn `has_more`. To reproduce:
-
-```bash
-bin/rails "perf:seed[1000000]"   # one INSERT … SELECT generate_series; ~30s
-bin/rails perf:explain           # EXPLAIN (ANALYZE, BUFFERS) of the page-2+ query
-bin/rails perf:bench             # 20 runs, p50/p95
-```
-
-Result on a laptop (Postgres 16 in Docker), with the cursor in the middle of a 1M-row table:
-
-```
-Limit  (cost=0.42..5.35 rows=26 width=133) (actual time=0.061..0.333 rows=26 loops=1)
-  Buffers: shared hit=12 read=23 written=19
-  ->  Index Scan using idx_payments_cursor on payments  (cost=0.42..94653.31 rows=499316 width=133) (actual time=0.060..0.329 rows=26 loops=1)
-        Index Cond: ((merchant_id = '…'::uuid) AND (ROW(created_at, id) < ROW('2026-08-08 08:30:39.41011', '01a0c84c-…'::uuid)))
-Planning Time: 0.103 ms
-Execution Time: 0.377 ms
-
-p50=0.69ms  p95=1.21ms  max=2.17ms  (n=20, 1001008 rows)
-```
-
-The index goes straight to the page, touching 35 buffers out of 499,316 candidate rows. The list endpoint loads no transitions; `spec/requests/v1/payments_index_spec.rb` asserts exactly one `payments` query.
+`GET /v1/payments` uses keyset pagination and stays under a millisecond at one million rows: **p50 0.69 ms, p95 1.21 ms**. To reproduce with `bin/rails perf:seed[1000000]`, `perf:explain` and `perf:bench`, and to see the query plan, read **[docs/PERFORMANCE.md](docs/PERFORMANCE.md)**.
 
 ## Security
 
@@ -472,4 +437,6 @@ Deliberately out of scope:
 | [RUNBOOK.md](RUNBOOK.md) | On-call | What to do when an alert fires |
 | [docs/permissions.md](docs/permissions.md) | Engineers, security | Generated permission matrix |
 | [docs/schema.dbml](docs/schema.dbml) | Engineers | Full database schema |
+| [docs/SIMULATORS.md](docs/SIMULATORS.md) | Engineers | PSP simulator behaviour, failure modes and admin endpoints |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Engineers | Pagination at 1M rows: how to reproduce, query plan, timings |
 | [docs/ASSIGNMENT.md](docs/ASSIGNMENT.md) | Reviewers | The original brief this repository answers |
