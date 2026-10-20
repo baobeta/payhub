@@ -70,6 +70,27 @@ RSpec.describe "Ops proposals", type: :request do
     expect(json_body["id"]).to eq(first)
   end
 
+  # No role both proposes and decides, so a self-approval can't reach the
+  # service; a double approval hits the same refusal.
+  it "TC-N17-1: a refused double approval is audited as a failure with its code" do
+    sign_in_operator(maker, stepped_up: true)
+    create_proposal(create(:payment, state: "unknown"))
+    id = json_body["id"]
+    sign_in_operator(create(:operator, role: "approver"), stepped_up: true)
+    post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+
+    expect { post "/ops/api/proposals/#{id}/approve", headers: ui_headers }.to change(AuditEvent, :count).by(1)
+
+    expect(response).to have_http_status(:conflict)
+    expect(AuditEvent.last).to have_attributes(action: "ops.proposals.decide", result: "failure")
+    expect(AuditEvent.last.metadata).to include("code" => "refused", "http_status" => 409)
+  end
+
+  it "TC-M14-2: an anonymous ops POST writes no audit row" do
+    expect { create_proposal(create(:payment, state: "unknown")) }.not_to change(AuditEvent, :count)
+    expect(response).to have_http_status(:unauthorized)
+  end
+
   it "forbids support from proposing" do
     sign_in_operator(create(:operator, role: "support"))
     create_proposal(create(:payment, state: "unknown"))

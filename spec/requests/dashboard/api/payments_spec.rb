@@ -119,6 +119,49 @@ RSpec.describe "Dashboard payments", type: :request do
       expect(response).to have_http_status(:forbidden)
     end
 
+    describe "refusals are audited (Bug 10)" do
+      def refund(amount_minor)
+        post "/dashboard/api/payments/#{payment.id}/refunds",
+             params: { amount_minor:, reason: "requested_by_customer" }.to_json, headers: ui_headers
+      end
+
+      it "TC-M14-1: a business-rule refusal writes one failure row with the code, never the body" do
+        sign_in_as(support, stepped_up: true)
+        expect { refund(999_999) }.to change(AuditEvent, :count).by(1)
+        expect(response).to have_http_status(:unprocessable_content)
+
+        row = AuditEvent.last
+        expect(row).to have_attributes(action: "payments.refund", result: "failure", actor_id: support.id,
+                                       merchant_id: merchant.id)
+        expect(row.metadata).to include("code" => "validation_failed", "http_status" => 422)
+        expect(row.metadata.to_json).not_to include("999999", "requested_by_customer")
+      end
+
+      it "TC-M14-3: a missing step-up is audited once as denied" do
+        sign_in_as(support)
+        expect { refund(1000) }.to change(AuditEvent, :count).by(1)
+        expect(response).to have_http_status(:unauthorized)
+
+        expect(AuditEvent.last).to have_attributes(action: "payments.refund", result: "denied")
+        expect(AuditEvent.last.metadata).to include("code" => "step_up_required", "http_status" => 401)
+      end
+
+      it "a 403 is audited once, by the authorization layer" do
+        sign_in_as(viewer, stepped_up: true)
+        expect { refund(1000) }.to change(AuditEvent, :count).by(1)
+        expect(AuditEvent.last.action).to eq("authorization.denied")
+      end
+
+      it "TC-M14-2: an anonymous POST (401) and a GET that 404s write nothing" do
+        expect { refund(1000) }.not_to change(AuditEvent, :count)
+        expect(response).to have_http_status(:unauthorized)
+
+        sign_in_as(viewer)
+        expect { get "/dashboard/api/payments/#{create(:payment).id}" }.not_to change(AuditEvent, :count)
+        expect(response).to have_http_status(:not_found)
+      end
+    end
+
     it "404s a refund of the twin's payment from live mode" do
       twin_payment = create(:payment, merchant: merchant.test_twin!, state: "captured")
       sign_in_as(support, stepped_up: true)

@@ -85,6 +85,13 @@ module Ops
         )
       end
 
+      # Every error answer passes here, so a refused write is audited once.
+      sig { params(error: ApiError).void }
+      def render_api_error(error)
+        audit_refusal(error)
+        super
+      end
+
       sig { params(session_row: Session).void }
       def set_session_cookie(session_row)
         cookies.signed[COOKIE] = { value: session_row.id, httponly: true, same_site: :strict,
