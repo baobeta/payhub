@@ -57,6 +57,36 @@ RSpec.describe RefundPaymentJob do
     expect(Ledger.balances(payment.merchant)).to eq("EUR" => 2500)
   end
 
+  describe "a refund the PSP rejects (bug 2)" do
+    it "TC-BUG2-1: fails the refund, voids its reservation and tells the merchant" do
+      refund = create(:refund, payment: payment, amount_minor: 1000)
+      adapter.script(:refund, PspAdapter::Rejected.new(422, "nordpay 422: refund exceeds captured"))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("failed") # the code travels on the refund.failed event
+      expect(Ledger.reserved_minor(payment)).to eq(0)
+      expect(Ledger.balances(payment.merchant)).to eq("EUR" => 2500)
+      event = OutboundEvent.find_by!(payment: payment, event_type: "refund.failed")
+      expect(event.payload["failure_code"]).to eq("psp_rejected_422")
+      expect(payment.reload.state).to eq("captured")
+    end
+
+    it "TC-BUG2-2: a Kiripay refund whose charge cannot be found fails cleanly, and is not re-driven" do
+      refund = create(:refund, payment: payment, amount_minor: 2500)
+      adapter.script(:refund, PspAdapter::Rejected.new(404, "kiripay charge not found"))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("failed")
+      expect(OutboundEvent.find_by!(event_type: "refund.failed").payload["failure_code"]).to eq("psp_rejected_404")
+      expect(Ledger.reserved_minor(payment)).to eq(0)
+      expect(Refund.where(state: "pending")).to be_empty # nothing left for the sweeper
+      described_class.perform_now(refund.id) # a stray re-run: no scripted answer, so a PSP call would raise
+      expect(adapter.calls[:refund].size).to eq(1)
+    end
+  end
+
   describe "two-phase settlement (DECISIONS #16)" do
     it "holds the amount as reserved until the PSP answers, then posts it" do
       refund = create(:refund, payment: payment, amount_minor: 500)

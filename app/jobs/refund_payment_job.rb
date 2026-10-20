@@ -13,7 +13,6 @@ class RefundPaymentJob < ApplicationJob
   queue_as :payments
 
   retry_on PspAdapter::Unavailable, wait: :polynomially_longer, attempts: 5
-  discard_on PspAdapter::Rejected
 
   sig { params(refund_id: String).void }
   def perform(refund_id)
@@ -30,6 +29,13 @@ class RefundPaymentJob < ApplicationJob
       # by OUR reference. NotFound here means it never landed; the sweeper
       # (Phase 6) re-drives pending refunds, so we just leave it pending.
       adapter.fetch_refund(refund.psp_reference)
+    rescue PspAdapter::Rejected => e
+      # A definitive refusal (4xx; a Kiripay charge that cannot be found).
+      # Retrying cannot help, and discarding would leave the refund pending
+      # with its money reserved forever: fail it, and void the reservation.
+      PspAdapter::RefundResult.new(status: PspAdapter::RefundResult::Status::Failed, psp_reference: refund.psp_reference,
+                                   psp_refund_id: nil, failure_code: "psp_rejected_#{e.http_status}",
+                                   psp_timestamp: Time.current)
     end
 
     apply(refund, payment, result)
