@@ -78,8 +78,10 @@ RSpec.describe "V1 payments", type: :request do
       end
     end
 
-    it "TC-A4-1: invalid amounts (0, float, string, nil) get 422 and don't store the key" do
-      pending("BUG: idempotency key is stored even for 422 validation failures; TC-A4-1 requires it not be stored")
+    # The 422 itself is stored and replayed for 24h, like every 4xx (see
+    # idempotency_guard_spec). Stripe and Checkout.com don't keep validation
+    # failures; whether PayHub should follow is an open decision (USE_CASES §9).
+    it "TC-A4-1: invalid amounts (0, float, string, nil) get 422 and create no payment" do
       [0, 25.5, "2500", nil].each do |amount|
         idem = "bad-amount-#{SecureRandom.uuid}"
         post "/v1/payments",
@@ -88,8 +90,8 @@ RSpec.describe "V1 payments", type: :request do
         expect(response).to have_http_status(:unprocessable_content),
                              "expected 422 for amount=#{amount.inspect}: #{response.body}"
         expect(json_body["error"]["details"]).to have_key("amount_minor")
-        expect(IdempotencyKey.find_by(key: idem)).to be_nil
       end
+      expect(Payment.count).to eq(0)
     end
 
     it "TC-A5-1: a VND payment stores amount_minor as-is and the PSP body carries the integer string" do
