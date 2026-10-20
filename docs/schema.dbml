@@ -1,14 +1,19 @@
 // PayHub schema
 // Render at https://dbdiagram.io (paste this file) or with `dbml-renderer`.
+// Source of truth is db/structure.sql; this file mirrors it table for table.
 //
 // Conventions
-//   - Every money column is `*_minor` (integer, minor units) and sits next to a
-//     `currency` column. No floats, no bare decimals.
+//   - Every money column is `*_minor` (bigint, minor units) and sits next to a
+//     `currency` column. No floats; the only decimal is an FX ratio.
 //   - State columns are strings with a CHECK, not integer enums, so `psql` at
-//     3am is readable.
-//   - Constraints Postgres can enforce are written as Indexes / Notes here and
-//     become real DDL in the migrations. Constraints it cannot enforce (cross-row
-//     sums) are noted explicitly and live in service code under a row lock.
+//     3am is readable. Allowed values are listed in each column's note.
+//   - Primary keys are UUIDv7 (`uuid_generate_v7()`): time-ordered, so they
+//     index like a sequence and double as a tiebreaker in cursors.
+//   - Timestamps are `timestamp(6)` holding UTC (Rails' default).
+//   - DBML cannot express partial or expression indexes, CHECKs or triggers;
+//     they are written as notes. Invariants that span rows (refund totals,
+//     balanced transfers) live in service code under a row lock and are noted.
+//   - Polymorphic columns (`*_type` + `*_id`) have no FK by design.
 
 Project payhub {
   database_type: 'PostgreSQL'
@@ -19,35 +24,75 @@ Project payhub {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// Reference / identity
+// Merchants and their keys
 // ───────────────────────────────────────────────────────────────────────────
 
 Table merchants {
-  id               uuid        [pk, default: `uuid_generate_v7()`]
-  name             varchar     [not null]
-  api_key_digest   varchar     [not null, unique, note: 'SHA-256 of the bearer key. Raw key shown once at creation, never stored.']
-  webhook_secret   varchar     [not null, note: 'HMAC secret for outbound webhooks we send to the merchant.']
-  webhook_url      varchar     [note: 'Where outbound_events are delivered. Null = merchant polls only.']
-  default_currency char(3)     [not null, note: 'ISO-4217. Balance and FX snapshot are expressed in this.']
-  created_at       timestamptz [not null]
-  updated_at       timestamptz [not null]
+  id                                 uuid         [pk, default: `uuid_generate_v7()`]
+  name                               varchar      [not null]
+  livemode                           boolean      [not null, default: true]
+  live_merchant_id                   uuid         [ref: - merchants.id, note: 'Set only on a TEST twin: points at its live merchant. UNIQUE, so one twin per merchant (DECISIONS #22).']
+  default_currency                   varchar(3)   [not null, note: 'ISO-4217. Balance and FX snapshot are expressed in this.']
+  api_key_digest                     varchar      [not null, unique, note: 'LEGACY. Keys moved to api_keys; still written (a placeholder digest nobody holds) until a later migration drops it.']
+  webhook_url                        varchar      [note: 'Where outbound_events are delivered. Null = merchant polls only.']
+  webhook_secret                     varchar      [not null, note: 'HMAC secret for outbound webhooks we send to the merchant.']
+  previous_webhook_secret            varchar      [note: 'Still accepted for signing during a rotation overlap.']
+  previous_webhook_secret_expires_at timestamp
+  created_at                         timestamp    [not null]
+  updated_at                         timestamp    [not null]
 
-  Note: 'Bearer key compared via constant-time secure_compare against api_key_digest.'
+  Indexes {
+    live_merchant_id [unique, name: 'idx_merchants_one_test_twin']
+    api_key_digest   [unique, name: 'index_merchants_on_api_key_digest']
+  }
+
+  Note: '''
+    CHECK chk_merchants_twin_shape: livemode = (live_merchant_id IS NULL).
+    A live merchant has no parent; a test twin always has one. Test-mode data
+    lives on the twin, so live and test rows can never mix (DECISIONS #22).
+  '''
+}
+
+Table api_keys {
+  id            uuid      [pk, default: `uuid_generate_v7()`]
+  merchant_id   uuid      [not null, ref: > merchants.id, note: 'Always the LIVE merchant; livemode picks which twin a request acts on.']
+  livemode      boolean   [not null]
+  name          varchar   [not null]
+  note          varchar
+  prefix        varchar   [not null, note: 'CHECK IN (sk_live_, sk_test_), and must match livemode.']
+  last4         varchar   [note: 'Shown in the dashboard to tell keys apart.']
+  digest        varchar   [not null, unique, note: 'SHA-256 of the raw key. Raw key shown once by ApiKey.issue!, never stored.']
+  created_by_id uuid      [ref: > merchant_users.id]
+  last_used_at  timestamp
+  expires_at    timestamp [note: 'Set when a key is rolled: the old key keeps working until then.']
+  revoked_at    timestamp
+  created_at    timestamp [not null]
+  updated_at    timestamp [not null]
+
+  Indexes {
+    digest      [unique, name: 'index_api_keys_on_digest']
+    merchant_id [name: 'index_api_keys_on_merchant_id']
+  }
+
+  Note: '''
+    CHECK chk_api_keys_mode_matches_prefix: sk_live_ <=> livemode, sk_test_ <=> NOT livemode.
+    SHA-256 (not a slow hash) is safe here: keys carry 192 random bits.
+  '''
 }
 
 Table fx_rates {
   id          uuid          [pk, default: `uuid_generate_v7()`]
-  base        char(3)       [not null]
-  quote       char(3)       [not null]
-  rate        decimal(18,8) [not null, note: 'Only decimal in the schema: a ratio, not money.']
-  captured_at timestamptz   [not null]
-  created_at  timestamptz   [not null]
+  base        varchar(3)    [not null]
+  quote       varchar(3)    [not null]
+  rate        numeric(18,8) [not null, note: 'Only decimal in the schema: a ratio, not money.']
+  captured_at timestamp     [not null]
+  created_at  timestamp     [not null]
 
   Indexes {
-    (base, quote, captured_at) [name: 'idx_fx_rates_latest', note: 'captured_at DESC — "latest rate for pair" lookup']
+    (base, quote, captured_at) [name: 'idx_fx_rates_latest', note: 'captured_at DESC: "latest rate for pair" lookup.']
   }
 
-  Note: 'Source of rates. NEVER joined at read time — the rate is copied onto payments.fx_rate at creation (DECISIONS #9).'
+  Note: 'Source of rates. NEVER joined at read time: the rate is copied onto payments.fx_rate at creation (DECISIONS #9).'
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -55,76 +100,100 @@ Table fx_rates {
 // ───────────────────────────────────────────────────────────────────────────
 
 Table payments {
-  id                   uuid        [pk, default: `uuid_generate_v7()`]
-  merchant_id          uuid        [not null, ref: > merchants.id]
-  state                varchar     [not null, default: 'pending', note: 'CHECK IN (pending, requires_action, authorized, unknown, captured, canceled, failed, part_refunded, refunded)']
-  amount_minor         bigint      [not null, note: 'CHECK > 0. Requested amount.']
-  currency             char(3)     [not null]
-  captured_minor       bigint      [not null, default: 0, note: 'Denormalised for display only. Authoritative value is the ledger sum.']
-  merchant_currency    char(3)     [not null, note: 'Snapshot of merchants.default_currency at creation.']
-  fx_rate              decimal(18,8) [not null, note: 'Snapshot: currency -> merchant_currency at creation. Copied, never joined.']
-  psp_name             varchar     [not null, note: 'nordpay | kiripay — chosen by the routing rule on currency.']
-  psp_reference        varchar     [not null, note: 'WE generate this and write it BEFORE the PSP call (DECISIONS #2).']
-  payment_method_token varchar     [not null, note: 'Opaque token. The service never sees a PAN.']
-  capture_on_authorize boolean     [not null, default: false]
-  metadata             jsonb       [not null, default: '{}']
-  lock_version         integer     [not null, default: 0, note: 'Optimistic locking for sweeper vs webhook races (DECISIONS #7).']
-  created_at           timestamptz [not null]
-  updated_at           timestamptz [not null]
+  id                   uuid          [pk, default: `uuid_generate_v7()`]
+  merchant_id          uuid          [not null, ref: > merchants.id]
+  state                varchar       [not null, default: 'pending', note: 'CHECK IN (pending, requires_action, authorized, unknown, captured, canceled, failed, part_refunded, refunded)']
+  amount_minor         bigint        [not null, note: 'CHECK > 0. Requested amount.']
+  currency             varchar(3)    [not null]
+  captured_minor       bigint        [not null, default: 0, note: 'CHECK >= 0. Denormalised for display only; the ledger sum is authoritative.']
+  merchant_currency    varchar(3)    [not null, note: 'Snapshot of merchants.default_currency at creation.']
+  fx_rate              numeric(18,8) [not null, note: 'Snapshot: currency -> merchant_currency at creation. Copied, never joined.']
+  psp_name             varchar       [not null, note: 'nordpay | kiripay, chosen by the routing rule on currency.']
+  psp_reference        varchar       [not null, note: 'WE generate this and write it BEFORE the PSP call (DECISIONS #2).']
+  payment_method_token varchar       [not null, note: 'Opaque token. The service never sees a PAN; filtered from logs.']
+  capture_on_authorize boolean       [not null, default: false]
+  metadata             jsonb         [not null, default: `'{}'::jsonb`]
+  lock_version         integer       [not null, default: 0, note: 'Optimistic locking for sweeper vs webhook races (DECISIONS #7).']
+  first_sent_at        timestamp     [note: 'When the PSP call first went out. Null = never sent.']
+  next_check_at        timestamp     [note: 'When the sweeper should next ask the PSP about a pending/unknown payment.']
+  check_attempts       integer       [not null, default: 0, note: 'Sweeper backoff counter.']
+  created_at           timestamp     [not null]
+  updated_at           timestamp     [not null]
 
   Indexes {
-    (psp_name, psp_reference) [unique, name: 'idx_payments_psp_ref', note: 'A PSP returning the same charge twice cannot create a second payment.']
-    (merchant_id, created_at, id) [name: 'idx_payments_cursor', note: 'created_at DESC, id DESC — the cursor-pagination index. Must stay < 100ms at 1M rows.']
-    (state, updated_at) [name: 'idx_payments_stuck', note: 'Sweeper: WHERE state IN (pending, unknown) AND updated_at < now() - interval']
+    (psp_name, psp_reference)     [unique, name: 'idx_payments_psp_ref', note: 'A PSP returning the same charge twice cannot create a second payment.']
+    (merchant_id, created_at, id) [name: 'idx_payments_cursor', note: 'created_at DESC, id DESC: the keyset-pagination index (proven < 100ms at 1M rows).']
+    (state, updated_at)           [name: 'idx_payments_stuck']
+    `COALESCE(next_check_at, updated_at + interval '2 minutes')` [name: 'index_payments_on_sweeper_due_at', note: 'PARTIAL: WHERE state IN (pending, unknown). The sweeper\'s "due now" scan.']
   }
 
   Note: '''
     State is a cache of the most_recent payment_transitions row, kept in sync
-    inside the same transaction. Transitions are the source of truth for history;
-    payments.state is for cheap filtering.
+    inside the same transaction. Transitions are the source of truth for
+    history; payments.state is for cheap filtering.
   '''
 }
 
 Table payment_transitions {
-  id          uuid        [pk, default: `uuid_generate_v7()`]
-  payment_id  uuid        [not null, ref: > payments.id]
-  from_state  varchar     [note: 'Null for the initial pending row.']
-  to_state    varchar     [not null]
-  sort_key    timestamptz [not null, note: 'The PSP\'s own event timestamp, NOT our arrival time. Ordering key for out-of-order webhooks (DECISIONS #4).']
-  most_recent boolean     [not null, default: false]
-  source      varchar     [not null, note: 'api | worker | webhook | sweeper — who caused it.']
-  metadata    jsonb       [not null, default: '{}', note: 'PSP payload excerpt, error code, lag in ms for late webhooks.']
-  created_at  timestamptz [not null, note: 'Arrival time. Compare to sort_key to measure webhook lag.']
+  id          uuid      [pk, default: `uuid_generate_v7()`]
+  payment_id  uuid      [not null, ref: > payments.id]
+  from_state  varchar   [note: 'Null for the initial pending row.']
+  to_state    varchar   [not null]
+  sort_key    timestamp [not null, note: 'The PSP\'s own event time, NOT our arrival time. Orders out-of-order webhooks (DECISIONS #4).']
+  most_recent boolean   [not null, default: false]
+  source      varchar   [not null, note: 'api | worker | webhook | sweeper | operator: who caused it.']
+  metadata    jsonb     [not null, default: `'{}'::jsonb`, note: 'PSP payload excerpt, error code, psp_charge_id, operator proposal id.']
+  created_at  timestamp [not null, note: 'Arrival time. Compare to sort_key to measure webhook lag.']
 
   Indexes {
-    (payment_id) [unique, name: 'idx_transitions_most_recent', note: 'PARTIAL: WHERE most_recent — exactly one current row per payment, enforced by Postgres.']
-    (payment_id, sort_key) [name: 'idx_transitions_history', note: 'GET /v1/payments/:id transition history, in PSP-time order.']
+    payment_id             [unique, name: 'idx_transitions_most_recent', note: 'PARTIAL: WHERE most_recent. Exactly one current row per payment, enforced by Postgres.']
+    (payment_id, sort_key) [name: 'idx_transitions_history', note: 'Transition history in PSP-time order.']
   }
 
-  Note: 'Append-only. A stale event (sort_key older than current most_recent) is still inserted with most_recent=false for audit, but does not move state.'
+  Note: 'Append-only. A stale event (sort_key older than the current row) is still inserted with most_recent = false for audit, but does not move state.'
+}
+
+Table captures {
+  id                  uuid      [pk, default: `uuid_generate_v7()`]
+  payment_id          uuid      [not null, ref: > payments.id]
+  amount_minor        bigint    [not null, note: 'CHECK > 0']
+  base_captured_minor bigint    [not null, note: 'The ledger\'s captured total when this request was accepted. The PSP has landed it once its running total reaches base + amount.']
+  state               varchar   [not null, default: 'pending', note: 'CHECK IN (pending, succeeded, failed)']
+  failure_code        varchar
+  created_at          timestamp [not null]
+  updated_at          timestamp [not null]
+
+  Indexes {
+    payment_id               [unique, name: 'idx_captures_one_pending_per_payment', note: 'PARTIAL: WHERE state = pending. A second request gets 409 capture_in_progress.']
+    (payment_id, created_at) [name: 'index_captures_on_payment_id_and_created_at']
+  }
+
+  Note: 'One merchant capture request (DECISIONS #20). The job reads the PSP before it sends, so a retried capture is never sent twice.'
 }
 
 Table refunds {
-  id            uuid        [pk, default: `uuid_generate_v7()`]
-  payment_id    uuid        [not null, ref: > payments.id]
-  state         varchar     [not null, default: 'pending', note: 'CHECK IN (pending, succeeded, failed)']
-  amount_minor  bigint      [not null, note: 'CHECK > 0']
-  currency      char(3)     [not null, note: 'Always equals payments.currency; stored so the row is self-describing.']
-  psp_reference varchar     [not null, note: 'Generated before the PSP call, same rule as payments.']
+  id            uuid       [pk, default: `uuid_generate_v7()`]
+  payment_id    uuid       [not null, ref: > payments.id]
+  state         varchar    [not null, default: 'pending', note: 'CHECK IN (pending, succeeded, failed)']
+  amount_minor  bigint     [not null, note: 'CHECK > 0']
+  currency      varchar(3) [not null, note: 'Always equals payments.currency; stored so the row is self-describing.']
+  psp_reference varchar    [not null, unique, note: 'Generated before the PSP call, same rule as payments.']
   reason        varchar
-  lock_version  integer     [not null, default: 0]
-  created_at    timestamptz [not null]
-  updated_at    timestamptz [not null]
+  lock_version  integer    [not null, default: 0]
+  created_at    timestamp  [not null]
+  updated_at    timestamp  [not null]
 
   Indexes {
-    (payment_id) [name: 'idx_refunds_payment']
-    (psp_reference) [unique, name: 'idx_refunds_psp_ref']
+    psp_reference [unique, name: 'idx_refunds_psp_ref']
+    payment_id    [name: 'index_refunds_on_payment_id']
   }
 
   Note: '''
-    INVARIANT NOT EXPRESSIBLE IN DDL: sum(amount_minor WHERE succeeded) <= payment captured amount.
-    Spans rows, so it is enforced in RefundService under SELECT ... FOR UPDATE on the
-    payment, checked against the LEDGER sum, not this table (DECISIONS #6).
+    INVARIANT NOT EXPRESSIBLE IN DDL: refunds never exceed what was captured.
+    Spans rows, so it is enforced under SELECT ... FOR UPDATE on the payment,
+    against LEDGER sums (captured - refunded - reserved), not this table
+    (DECISIONS #6). A request reserves funds in the ledger in the same
+    transaction as this row.
   '''
 }
 
@@ -133,20 +202,20 @@ Table refunds {
 // ───────────────────────────────────────────────────────────────────────────
 
 Table idempotency_keys {
-  id                  uuid        [pk, default: `uuid_generate_v7()`]
-  merchant_id         uuid        [not null, ref: > merchants.id]
-  key                 varchar     [not null, note: 'The Idempotency-Key header value.']
-  request_fingerprint varchar     [not null, note: 'SHA-256 of method + path + canonical body. Same key + different fingerprint = 422.']
-  response_status     integer     [note: 'Null while in flight.']
-  response_body       jsonb       [note: 'Replayed verbatim with Idempotent-Replayed: true.']
-  locked_at           timestamptz [note: 'Set when claimed. Non-null + null response = in flight -> 409.']
-  expires_at          timestamptz [not null, note: 'Keys are reusable after 24h; a janitor job deletes expired rows.']
-  created_at          timestamptz [not null]
-  updated_at          timestamptz [not null]
+  id                  uuid      [pk, default: `uuid_generate_v7()`]
+  merchant_id         uuid      [not null, ref: > merchants.id]
+  key                 varchar   [not null, note: 'The Idempotency-Key header value.']
+  request_fingerprint varchar   [not null, note: 'SHA-256 of method + path + canonical body. Same key + different fingerprint = 422.']
+  response_status     integer   [note: 'Null while in flight.']
+  response_body       jsonb     [note: 'Replayed verbatim with Idempotent-Replayed: true.']
+  locked_at           timestamp [note: 'Set when claimed. Non-null with a null response = in flight -> 409.']
+  expires_at          timestamp [not null, note: 'Keys are reusable after 24h; a janitor job deletes expired rows.']
+  created_at          timestamp [not null]
+  updated_at          timestamp [not null]
 
   Indexes {
-    (merchant_id, key) [unique, name: 'idx_idempotency_merchant_key', note: 'THE referee. Claimed by INSERT, never by SELECT-then-INSERT (DECISIONS #3).']
-    (expires_at) [name: 'idx_idempotency_expiry']
+    (merchant_id, key) [unique, name: 'idx_idempotency_merchant_key', note: 'THE referee. Claimed by INSERT, never SELECT-then-INSERT (DECISIONS #3).']
+    expires_at         [name: 'idx_idempotency_expiry']
   }
 }
 
@@ -155,41 +224,79 @@ Table idempotency_keys {
 // ───────────────────────────────────────────────────────────────────────────
 
 Table ledger_accounts {
-  id          uuid        [pk, default: `uuid_generate_v7()`]
-  merchant_id uuid        [not null, ref: > merchants.id]
-  kind        varchar     [not null, note: 'CHECK IN (psp_receivable, merchant_payable, refunds_paid)']
-  currency    char(3)     [not null]
-  created_at  timestamptz [not null]
+  id          uuid       [pk, default: `uuid_generate_v7()`]
+  merchant_id uuid       [not null, ref: > merchants.id]
+  kind        varchar    [not null, note: 'CHECK IN (psp_receivable, merchant_payable, refunds_reserved, refunds_paid, psp_payouts, psp_fees)']
+  currency    varchar(3) [not null]
+  created_at  timestamp  [not null]
 
   Indexes {
     (merchant_id, kind, currency) [unique, name: 'idx_ledger_accounts_unique']
   }
 
-  Note: 'One row per (merchant, kind, currency). Created lazily on first use. Balance = SUM over entries, never a column.'
+  Note: '''
+    One row per (merchant, kind, currency), created lazily on first use.
+    Balance = SUM over entries, never a column.
+    refunds_reserved holds a refund between request and PSP answer;
+    psp_payouts / psp_fees are booked from settlement reports (DECISIONS #18).
+  '''
 }
 
 Table ledger_entries {
-  id           uuid        [pk, default: `uuid_generate_v7()`]
-  transfer_id  uuid        [not null, note: 'Groups the two (or more) legs of one movement. Entries per transfer_id MUST sum to zero per currency.']
-  account_id   uuid        [not null, ref: > ledger_accounts.id]
-  payment_id   uuid        [ref: > payments.id, note: 'Which payment this leg belongs to, for per-payment captured/refunded sums.']
-  refund_id    uuid        [ref: > refunds.id]
-  direction    varchar     [not null, note: 'CHECK IN (debit, credit)']
-  amount_minor bigint      [not null, note: 'CHECK > 0. Sign comes from direction, never from the number.']
-  currency     char(3)     [not null]
-  created_at   timestamptz [not null]
+  id           uuid       [pk, default: `uuid_generate_v7()`]
+  transfer_id  uuid       [not null, note: 'Groups the legs of one movement. Legs per transfer_id MUST sum to zero per currency.']
+  account_id   uuid       [not null, ref: > ledger_accounts.id]
+  payment_id   uuid       [ref: > payments.id, note: 'Which payment this leg belongs to, for per-payment captured/refunded sums.']
+  refund_id    uuid       [ref: > refunds.id]
+  direction    varchar    [not null, note: 'CHECK IN (debit, credit)']
+  amount_minor bigint     [not null, note: 'CHECK > 0. Sign comes from direction, never from the number.']
+  currency     varchar(3) [not null]
+  created_at   timestamp  [not null]
 
   Indexes {
-    (transfer_id) [name: 'idx_ledger_entries_transfer', note: 'Reconciliation: GROUP BY transfer_id HAVING SUM(signed) <> 0']
-    (account_id, currency) [name: 'idx_ledger_entries_balance', note: 'GET /v1/balance']
-    (payment_id) [name: 'idx_ledger_entries_payment', note: 'Refund guard: sum captured vs refunded for one payment.']
+    transfer_id                        [name: 'idx_ledger_entries_transfer', note: 'Reconciliation: GROUP BY transfer_id HAVING SUM(signed) <> 0.']
+    (account_id, currency)             [name: 'idx_ledger_entries_balance', note: 'GET /v1/balance']
+    payment_id                         [name: 'index_ledger_entries_on_payment_id']
+    (refund_id, account_id, direction) [unique, name: 'idx_ledger_entries_refund_leg', note: 'PARTIAL: WHERE refund_id IS NOT NULL. A second post, or a post after a void, is a database error.']
   }
 
   Note: '''
-    APPEND-ONLY. No updated_at on purpose: nothing here is ever changed.
-    Corrections are new reversing entries. A DB trigger or revoked UPDATE/DELETE
-    privilege makes this structural rather than conventional.
+    APPEND-ONLY, enforced: trigger trg_ledger_entries_immutable raises on any
+    UPDATE or DELETE. No updated_at on purpose. Corrections are new reversing
+    entries (or an approved operator_proposals ledger_correction).
   '''
+}
+
+Table settlement_lines {
+  id               uuid       [pk, default: `uuid_generate_v7()`]
+  psp_name         varchar    [not null]
+  external_id      varchar    [not null, note: 'The PSP\'s line id. With psp_name, makes ingestion idempotent.']
+  settled_on       date       [not null]
+  kind             varchar    [not null, note: 'CHECK IN (capture, refund)']
+  psp_reference    varchar    [not null]
+  refund_reference varchar
+  payment_id       uuid       [ref: > payments.id, note: 'Null when the line matched nothing.']
+  refund_id        uuid       [ref: > refunds.id]
+  gross_minor      bigint     [not null]
+  fee_minor        bigint     [not null]
+  net_minor        bigint     [not null]
+  currency         varchar(3) [not null]
+  booked_at        timestamp  [not null]
+  status           varchar    [not null, note: 'CHECK IN (matched, unmatched, mismatch). Only matched lines are booked to the ledger.']
+  problem          varchar    [note: 'Why a line was not matched.']
+  reviewed_at      timestamp
+  reviewed_by_id   uuid       [ref: > operators.id]
+  review_note      text
+  created_at       timestamp  [not null]
+
+  Indexes {
+    (psp_name, external_id) [unique, name: 'index_settlement_lines_on_psp_name_and_external_id']
+    payment_id              [name: 'index_settlement_lines_on_payment_id']
+    refund_id               [name: 'index_settlement_lines_on_refund_id']
+    status                  [name: 'index_settlement_lines_on_status', note: 'PARTIAL: WHERE status <> matched. The ops reconciliation queue.']
+  }
+
+  Note: 'One line of a PSP settlement report, ingested exactly once (DECISIONS #18). Reconciled against the ledger, not the bank.'
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -197,60 +304,345 @@ Table ledger_entries {
 // ───────────────────────────────────────────────────────────────────────────
 
 Table inbound_events {
-  id              uuid        [pk, default: `uuid_generate_v7()`]
-  psp_name        varchar     [not null]
-  external_id     varchar     [not null, note: 'The PSP\'s own event id.']
-  event_type      varchar     [not null, note: 'e.g. charge.authorized, charge.captured']
-  psp_reference   varchar     [note: 'Resolved to a payment at processing time. NO FK: a webhook can arrive before our worker wrote the payment row.']
-  payload         jsonb       [not null]
-  signature_valid boolean     [not null, note: 'False = stored, alerted, never processed, 401 returned.']
-  psp_timestamp   timestamptz [note: 'Becomes payment_transitions.sort_key.']
-  received_at     timestamptz [not null]
-  processed_at    timestamptz [note: 'Null = not yet applied (or rejected).']
+  id              uuid      [pk, default: `uuid_generate_v7()`]
+  psp_name        varchar   [not null]
+  external_id     varchar   [not null, note: 'The PSP\'s own event id.']
+  event_type      varchar   [not null, note: 'e.g. charge.authorized, charge.captured']
+  psp_reference   varchar   [note: 'Resolved to a payment at processing time. NO FK: a webhook can arrive before our worker wrote the payment row.']
+  payload         jsonb     [not null]
+  signature_valid boolean   [not null, note: 'False = stored, alerted, never processed, 401 returned.']
+  psp_timestamp   timestamp [note: 'Becomes payment_transitions.sort_key.']
+  received_at     timestamp [not null]
+  processed_at    timestamp [note: 'Null = not yet applied (or rejected).']
   error           varchar
-  created_at      timestamptz [not null]
+  created_at      timestamp [not null]
 
   Indexes {
-    (psp_name, external_id) [unique, name: 'idx_inbound_events_dedupe', note: 'Five identical webhooks -> four RecordNotUnique -> four no-ops with 200.']
+    (psp_name, external_id)   [unique, name: 'idx_inbound_events_dedupe', note: 'Five identical webhooks -> four RecordNotUnique -> four no-ops with 200.']
     (psp_name, psp_reference) [name: 'idx_inbound_events_by_ref']
-    (processed_at) [name: 'idx_inbound_events_unprocessed', note: 'PARTIAL: WHERE processed_at IS NULL AND signature_valid']
+    received_at               [name: 'idx_inbound_events_unprocessed', note: 'PARTIAL: WHERE processed_at IS NULL AND signature_valid.']
   }
 }
 
 Table outbound_events {
-  id              uuid        [pk, default: `uuid_generate_v7()`]
-  merchant_id     uuid        [not null, ref: > merchants.id]
-  payment_id      uuid        [ref: > payments.id]
-  event_type      varchar     [not null, note: 'payment.authorized, payment.captured, payment.failed, refund.succeeded, ...']
-  payload         jsonb       [not null]
-  state           varchar     [not null, default: 'pending', note: 'CHECK IN (pending, delivered, dead)']
-  attempts        integer     [not null, default: 0]
-  next_attempt_at timestamptz [not null]
+  id              uuid      [pk, default: `uuid_generate_v7()`]
+  merchant_id     uuid      [not null, ref: > merchants.id]
+  payment_id      uuid      [ref: > payments.id]
+  event_type      varchar   [not null, note: 'payment.authorized, payment.captured, payment.failed, refund.succeeded, ...']
+  payload         jsonb     [not null]
+  state           varchar   [not null, default: 'pending', note: 'CHECK IN (pending, delivered, dead)']
+  attempts        integer   [not null, default: 0]
+  next_attempt_at timestamp [not null]
   last_error      varchar
-  delivered_at    timestamptz
-  created_at      timestamptz [not null]
-  updated_at      timestamptz [not null]
+  delivered_at    timestamp
+  traceparent     varchar   [note: 'W3C trace context of the request that emitted it; the delivery span links back to it.']
+  created_at      timestamp [not null]
+  updated_at      timestamp [not null]
 
   Indexes {
-    (state, next_attempt_at) [name: 'idx_outbound_events_sweeper', note: 'Delivery sweeper: WHERE state = pending AND next_attempt_at <= now()']
-    (merchant_id, created_at) [name: 'idx_outbound_events_list', note: 'GET /v1/events']
+    (merchant_id, created_at) [name: 'idx_outbound_events_list', note: 'created_at DESC: GET /v1/events']
+    (state, next_attempt_at)  [name: 'idx_outbound_events_sweeper', note: 'Delivery sweeper: WHERE state = pending AND next_attempt_at <= now()']
+    payment_id                [name: 'index_outbound_events_on_payment_id']
   }
 
   Note: 'Written in the same transaction as the state change that caused it (transactional outbox). Delivered by a Sidekiq sweeper with backoff; dead after N attempts; POST /v1/events/:id/redeliver resets to pending.'
 }
 
 Table outbound_delivery_attempts {
-  id                uuid        [pk, default: `uuid_generate_v7()`]
-  outbound_event_id uuid        [not null, ref: > outbound_events.id]
-  attempt_number    integer     [not null]
+  id                uuid      [pk, default: `uuid_generate_v7()`]
+  outbound_event_id uuid      [not null, ref: > outbound_events.id]
+  attempt_number    integer   [not null]
   response_status   integer
   error             varchar
   duration_ms       integer
-  created_at        timestamptz [not null]
+  created_at        timestamp [not null]
 
   Indexes {
-    (outbound_event_id, attempt_number) [unique]
+    (outbound_event_id, attempt_number) [unique, name: 'idx_delivery_attempts_unique']
   }
 
-  Note: 'One row per delivery try, so GET /v1/events can show the history and webhook_deliveries{attempt} can be counted.'
+  Note: 'One row per delivery try, so GET /v1/events can show the history.'
+}
+
+Table psp_calls {
+  id                uuid      [pk, default: `uuid_generate_v7()`]
+  psp_name          varchar   [not null]
+  operation         varchar   [not null, note: 'HTTP method + path with ids masked, e.g. "POST /charges/:ref".']
+  psp_reference     varchar
+  http_status       integer   [note: 'Null when no response came back.']
+  outcome           varchar   [not null, note: 'CHECK IN (ok, http_error, timeout, unreachable)']
+  request_redacted  jsonb     [note: 'Redacted and size-capped before storage (PspCallRedactor).']
+  response_redacted jsonb
+  duration_ms       integer   [not null]
+  sent_at           timestamp [not null]
+  created_at        timestamp [not null, note: 'Stamped by the database (trigger), not the app.']
+
+  Indexes {
+    (psp_name, psp_reference, sent_at) [name: 'index_psp_calls_on_psp_name_and_psp_reference_and_sent_at']
+  }
+
+  Note: '''
+    Every outgoing PSP request, for the ops payment detail view. APPEND-ONLY:
+    trg_psp_calls_append_only rejects UPDATE, and DELETE of rows younger than
+    12 months; trg_psp_calls_no_truncate rejects TRUNCATE.
+  '''
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// People and sessions
+// ───────────────────────────────────────────────────────────────────────────
+
+Table merchant_users {
+  id                    uuid      [pk, default: `uuid_generate_v7()`]
+  merchant_id           uuid      [not null, ref: > merchants.id, note: 'Always the LIVE merchant; the session\'s mode picks live or the test twin.']
+  email                 varchar   [not null]
+  name                  varchar
+  password_digest       varchar   [note: 'bcrypt. Null until the invitation is accepted.']
+  role                  varchar   [not null, note: 'CHECK IN (owner, admin, developer, support, viewer)']
+  otp_secret            text      [note: 'TOTP secret, encrypted with Active Record encryption.']
+  otp_enabled_at        timestamp
+  otp_last_used_step    bigint    [note: 'Last accepted TOTP step: a code cannot be replayed.']
+  failed_attempts       integer   [not null, default: 0]
+  locked_until          timestamp
+  invited_by_id         uuid      [ref: > merchant_users.id]
+  invitation_digest     varchar   [note: 'SHA-256 of the invitation token.']
+  invitation_expires_at timestamp
+  accepted_at           timestamp
+  disabled_at           timestamp
+  created_at            timestamp [not null]
+  updated_at            timestamp [not null]
+
+  Indexes {
+    `lower(email)`    [unique, name: 'idx_merchant_users_email', note: 'Case-insensitive, and global: one email, one merchant.']
+    merchant_id       [unique, name: 'idx_merchant_users_one_owner', note: 'PARTIAL: WHERE role = owner AND disabled_at IS NULL. Exactly one active owner.']
+    invitation_digest [unique, name: 'index_merchant_users_on_invitation_digest', note: 'PARTIAL: WHERE invitation_digest IS NOT NULL']
+    merchant_id       [name: 'index_merchant_users_on_merchant_id']
+  }
+}
+
+Table operators {
+  id                    uuid      [pk, default: `uuid_generate_v7()`]
+  email                 varchar   [not null]
+  name                  varchar
+  password_digest       varchar
+  role                  varchar   [not null, note: 'CHECK IN (support, ops, approver, admin)']
+  otp_secret            text      [note: 'Encrypted, as on merchant_users.']
+  otp_enabled_at        timestamp
+  otp_last_used_step    bigint
+  failed_attempts       integer   [not null, default: 0]
+  locked_until          timestamp
+  invited_by_id         uuid      [ref: > operators.id]
+  invitation_digest     varchar
+  invitation_expires_at timestamp
+  accepted_at           timestamp
+  disabled_at           timestamp
+  created_at            timestamp [not null]
+  updated_at            timestamp [not null]
+
+  Indexes {
+    `lower(email)`    [unique, name: 'idx_operators_email']
+    invitation_digest [unique, name: 'index_operators_on_invitation_digest', note: 'PARTIAL: WHERE invitation_digest IS NOT NULL']
+  }
+
+  Note: 'PayHub staff. Separate from merchant_users: different cookie, different permissions, nothing a merchant can grant.'
+}
+
+Table sessions {
+  id                        uuid      [pk, default: `uuid_generate_v7()`]
+  principal_type            varchar   [not null, note: 'CHECK IN (MerchantUser, Operator). Polymorphic: no FK.']
+  principal_id              uuid      [not null]
+  ip                        varchar
+  user_agent                varchar
+  livemode                  boolean   [not null, default: true, note: 'Merchant sessions: reading live data or the test twin.']
+  last_active_at            timestamp [not null, note: 'Idle timeout.']
+  stepped_up_at             timestamp [note: 'Last fresh TOTP. Money and secret actions require a recent one.']
+  revoked_at                timestamp
+  impersonating_merchant_id uuid      [ref: > merchants.id, note: 'Operator sessions only: read-only view of this merchant.']
+  impersonation_case_ref    varchar   [note: 'Required ticket reference, audited.']
+  impersonation_expires_at  timestamp
+  created_at                timestamp [not null]
+  updated_at                timestamp [not null]
+
+  Indexes {
+    (principal_type, principal_id, created_at) [name: 'idx_on_principal_type_principal_id_created_at_3ad1e69451']
+  }
+
+  Note: 'One signed-in browser. The cookie holds only the signed id; revoking the row signs that browser out everywhere.'
+}
+
+Table recovery_codes {
+  id             uuid      [pk, default: `uuid_generate_v7()`]
+  principal_type varchar   [not null, note: 'MerchantUser | Operator. Polymorphic: no FK.']
+  principal_id   uuid      [not null]
+  code_digest    varchar   [not null, unique, note: 'SHA-256: each code has 50 random bits, so a slow hash adds only latency.']
+  used_at        timestamp [note: 'Single use.']
+  created_at     timestamp [not null]
+
+  Indexes {
+    code_digest                    [unique, name: 'index_recovery_codes_on_code_digest']
+    (principal_type, principal_id) [name: 'index_recovery_codes_on_principal_type_and_principal_id']
+  }
+
+  Note: 'Ten single-use codes per principal, shown once.'
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Operations and audit
+// ───────────────────────────────────────────────────────────────────────────
+
+Table operator_proposals {
+  id                  uuid      [pk, default: `uuid_generate_v7()`]
+  kind                varchar   [not null, note: 'CHECK IN (payment_transition, ledger_correction)']
+  payment_id          uuid      [not null, ref: > payments.id]
+  payload             jsonb     [not null, note: 'to_state, or ledger legs. Shape validated by the model; immutable after insert.']
+  reason_code         varchar   [not null]
+  reason_text         text      [not null]
+  case_reference      varchar   [not null, note: 'Ticket id, e.g. OPS-42.']
+  client_token        varchar   [not null, unique, note: 'Makes a double-submitted proposal a no-op.']
+  proposed_by_id      uuid      [not null, ref: > operators.id]
+  state               varchar   [not null, default: 'pending', note: 'CHECK IN (pending, withdrawn, rejected, applied, failed)']
+  decided_by_id       uuid      [ref: > operators.id, note: 'CHECK: never equal to proposed_by_id (no self-approval).']
+  decided_at          timestamp
+  decision_note       text
+  applied_at          timestamp
+  applied_transfer_id uuid      [note: 'ledger_entries.transfer_id written by a ledger_correction.']
+  error               varchar   [note: 'Why applying failed (stale state, illegal transition, unbalanced legs).']
+  created_at          timestamp [not null]
+  updated_at          timestamp [not null]
+
+  Indexes {
+    client_token        [unique, name: 'index_operator_proposals_on_client_token']
+    payment_id          [name: 'index_operator_proposals_on_payment_id']
+    proposed_by_id      [name: 'index_operator_proposals_on_proposed_by_id']
+    decided_by_id       [name: 'index_operator_proposals_on_decided_by_id']
+    (state, created_at) [name: 'index_operator_proposals_on_state_and_created_at']
+  }
+
+  Note: '''
+    Maker-checker for manual money changes (DECISIONS #23). The database
+    enforces the invariants:
+      - chk_operator_proposals_not_self: decided_by_id <> proposed_by_id
+      - chk_operator_proposals_decided_shape: pending <=> decided_at IS NULL (except withdrawn)
+      - trigger trg_operator_proposals_immutable: payload, kind, payment_id and
+        proposed_by_id cannot change; withdraw and resubmit instead.
+  '''
+}
+
+Table audit_events {
+  id                       uuid      [pk, default: `uuid_generate_v7()`]
+  actor_type               varchar   [note: 'Class name of the actor (MerchantUser, Operator, ...); null for the system. Polymorphic: no FK.']
+  actor_id                 uuid
+  actor_label              varchar   [note: 'Email or key name at the time, so the row reads correctly after the actor is gone.']
+  merchant_id              uuid      [note: 'No FK: audit rows outlive what they describe.']
+  on_behalf_of_merchant_id uuid      [note: 'Set when an operator acts on (or views) a merchant.']
+  action                   varchar   [not null, note: 'Dotted name, e.g. api_key.created, impersonation.started, operator.disabled']
+  target_type              varchar
+  target_id                uuid
+  result                   varchar   [not null, note: 'CHECK IN (success, denied, failure)']
+  ip                       varchar
+  user_agent               varchar
+  request_id               varchar
+  metadata                 jsonb     [not null, default: `'{}'::jsonb`, note: 'Never request bodies, tokens or session ids.']
+  created_at               timestamp [not null, note: 'Stamped by the database (trigger), not the app.']
+
+  Indexes {
+    (created_at, id)                         [name: 'index_audit_events_on_created_at_and_id']
+    (merchant_id, created_at)                [name: 'index_audit_events_on_merchant_id_and_created_at']
+    (on_behalf_of_merchant_id, created_at)   [name: 'index_audit_events_on_behalf_of_merchant_id_and_created_at']
+    (actor_type, actor_id, created_at)       [name: 'index_audit_events_on_actor_type_and_actor_id_and_created_at']
+    (action, created_at)                     [name: 'index_audit_events_on_action_and_created_at']
+  }
+
+  Note: '''
+    Who did what, to what, with what result (PCI DSS 10.2.2). APPEND-ONLY:
+    trg_audit_events_append_only rejects UPDATE, and DELETE of rows younger
+    than 12 months (AuditRetentionJob deletes older ones);
+    trg_audit_events_no_truncate rejects TRUNCATE.
+  '''
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Public demo (use cases D-01..D-06)
+// ───────────────────────────────────────────────────────────────────────────
+
+Table demo_epochs {
+  id            uuid      [pk, default: `uuid_generate_v7()`]
+  started_at    timestamp [not null]
+  started_by_ip varchar
+
+  Indexes {
+    started_at [name: 'index_demo_epochs_on_started_at']
+  }
+
+  Note: '''
+    A demo "reset" starts a new epoch. Payments and ledger entries are
+    append-only, so nothing is deleted: the demo shows only the test twin\'s
+    rows created after the latest epoch\'s started_at. No FK by design.
+  '''
+}
+
+Table demo_chaos_runs {
+  id            uuid      [pk, default: `uuid_generate_v7()`]
+  state         varchar   [not null, default: 'queued', note: 'CHECK IN (queued, running, passed, failed, errored)']
+  payments      integer   [not null, note: 'CHECK BETWEEN 1 AND 20']
+  result        jsonb     [note: 'ChaosRun\'s report: counts, ledger vs PSP check.']
+  error         varchar
+  started_by_ip varchar
+  finished_at   timestamp
+  created_at    timestamp [not null]
+  updated_at    timestamp [not null]
+
+  Indexes {
+    state [unique, name: 'idx_demo_chaos_runs_one_active', note: 'PARTIAL: WHERE state IN (queued, running). One active run system-wide; a second POST gets 409.']
+  }
+
+  Note: 'One press of the demo\'s chaos button, driven by DemoChaosRunJob.'
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Groups (dbdiagram.io colours them)
+// ───────────────────────────────────────────────────────────────────────────
+
+TableGroup merchants_and_keys {
+  merchants
+  api_keys
+  fx_rates
+}
+
+TableGroup payment_spine {
+  payments
+  payment_transitions
+  captures
+  refunds
+  idempotency_keys
+}
+
+TableGroup books {
+  ledger_accounts
+  ledger_entries
+  settlement_lines
+}
+
+TableGroup events {
+  inbound_events
+  outbound_events
+  outbound_delivery_attempts
+  psp_calls
+}
+
+TableGroup people {
+  merchant_users
+  operators
+  sessions
+  recovery_codes
+}
+
+TableGroup operations {
+  operator_proposals
+  audit_events
+}
+
+TableGroup demo {
+  demo_epochs
+  demo_chaos_runs
 }
