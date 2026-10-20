@@ -120,7 +120,8 @@ class SimPsp < PspAdapter
     WebhookEvent.new(
       external_id: payload.fetch("id"), event_type: payload.fetch("type"), psp_reference: data["reference"],
       psp_charge_id: "ch_#{data['reference']}", status: Result::Status.deserialize(data.fetch("status")),
-      decline_code: nil, psp_timestamp: Time.iso8601(payload.fetch("created_at")), payload: payload
+      decline_code: nil, psp_timestamp: Time.iso8601(payload.fetch("created_at")), payload: payload,
+      captured_minor: data["captured_minor"]
     )
   end
 

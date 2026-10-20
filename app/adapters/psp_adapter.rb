@@ -128,6 +128,9 @@ class PspAdapter
     const :decline_code, T.nilable(String)
     const :psp_timestamp, T.any(Time, ActiveSupport::TimeWithZone) # ordering key
     const :payload, T::Hash[String, T.untyped]
+    # The PSP's running captured total, when its event reports one (Nordpay).
+    # nil for a PSP that only ever captures the full amount (Kiripay).
+    const :captured_minor, T.nilable(Integer), default: nil
   end
 
   class InvalidSignature < StandardError; end
