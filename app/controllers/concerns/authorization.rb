@@ -143,6 +143,12 @@ module Authorization
     audit!(@authorized_permission || "#{controller_path}##{action_name}",
            result: step_up ? "denied" : "failure",
            metadata: { "code" => error.code, "http_status" => error.http_status })
+  rescue StandardError => e
+    # The caller must still see the refusal it earned; a lost audit row is
+    # loud here, not a 500 that hides why the action was refused.
+    Metrics.increment(:audit_write_failed, area: authorization_area.to_s)
+    Rails.logger.error({ event: "audit_refusal_failed", route: "#{controller_path}##{action_name}",
+                         error: e.class.name, detail: e.message }.to_json)
   end
 
   sig { void }

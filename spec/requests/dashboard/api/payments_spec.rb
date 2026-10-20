@@ -152,6 +152,17 @@ RSpec.describe "Dashboard payments", type: :request do
         expect(row.metadata.to_json).not_to include("999999", "requested_by_customer")
       end
 
+      it "TC-M14-4: if the audit write itself fails, the merchant still gets the real refusal, not a 500" do
+        sign_in_as(support, stepped_up: true)
+        allow(AuditEvent).to receive(:record!).and_raise(ActiveRecord::ConnectionTimeoutError, "pool exhausted")
+
+        refund(999_999)
+
+        expect(AuditEvent).to have_received(:record!).at_least(:once)
+        expect(response).to have_http_status(:unprocessable_content)
+        expect(json_body["error"]["code"]).to eq("validation_failed")
+      end
+
       it "TC-M14-3: a missing step-up is audited once as denied" do
         sign_in_as(support)
         expect { refund(1000) }.to change(AuditEvent, :count).by(1)

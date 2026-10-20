@@ -136,9 +136,12 @@ class StuckPaymentSweeperJob < ApplicationJob
     return unless result
 
     ApplyPspResult.call(payment, result, source: "sweeper")
-  rescue PspAdapter::Unavailable, PspAdapter::TimedOut, PspAdapter::Rejected => e
-    # Unavailable/TimedOut: try next sweep. Rejected: our bug, alert. Neither
-    # should stop the batch. Another writer getting there first is not an
+  rescue PspAdapter::Unavailable, PspAdapter::TimedOut, PspAdapter::Rejected,
+         PaymentStateMachine::IllegalTransition => e
+    # Unavailable/TimedOut: try next sweep. Rejected: our bug, alert.
+    # IllegalTransition: a webhook moved the payment between our read and our
+    # write (captured, then our verdict says failed); the newer fact stands.
+    # None of them should stop the batch. Another writer getting there first is not an
     # error at all: every write takes the row lock (with_lock reloads it, so
     # no StaleObjectError), and ApplyPspResult treats "already there" as done.
     Rails.logger.warn({ event: "sweeper.skip", payment_id: payment.id, error: e.class.name, detail: e.message }.to_json)

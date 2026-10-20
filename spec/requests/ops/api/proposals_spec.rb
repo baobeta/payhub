@@ -86,6 +86,20 @@ RSpec.describe "Ops proposals", type: :request do
     expect(AuditEvent.last.metadata).to include("code" => "refused", "http_status" => 409)
   end
 
+  it "TC-M14-5: a failing audit write never turns the operator's 409 into a 500" do
+    sign_in_operator(maker, stepped_up: true)
+    create_proposal(create(:payment, state: "unknown"))
+    id = json_body["id"]
+    sign_in_operator(create(:operator, role: "approver"), stepped_up: true)
+    post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+    allow(AuditEvent).to receive(:record!).and_raise(ActiveRecord::ConnectionTimeoutError, "pool exhausted")
+
+    post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+
+    expect(AuditEvent).to have_received(:record!)
+    expect(response).to have_http_status(:conflict)
+  end
+
   it "TC-M14-2: an anonymous ops POST writes no audit row" do
     expect { create_proposal(create(:payment, state: "unknown")) }.not_to change(AuditEvent, :count)
     expect(response).to have_http_status(:unauthorized)

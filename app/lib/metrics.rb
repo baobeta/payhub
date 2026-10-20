@@ -28,6 +28,7 @@ module Metrics
       ledger_imbalance_detected: [],
       psp_call_log_failures: [:psp],
       authz_denied: [:area, :permission],
+      audit_write_failed: [:area],
       authz_undeclared: [:controller],
       tenant_not_found: [:area],
       auth_failed: [:area, :factor]

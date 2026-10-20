@@ -178,6 +178,18 @@ RSpec.describe StuckPaymentSweeperJob do
     expect(b.reload.state).to eq("authorized")
   end
 
+  it "keeps going when a webhook moved the payment between our read and our write (IllegalTransition)" do
+    a = stuck("unknown", age: 5.minutes)
+    b = stuck("unknown", age: 4.minutes)
+    adapter.script(:fetch, result(a, :authorized), result(b, :authorized))
+    allow(ApplyPspResult).to receive(:call).and_call_original
+    allow(ApplyPspResult).to receive(:call).with(a, anything, source: "sweeper")
+                                           .and_raise(PaymentStateMachine::IllegalTransition.new("captured", "failed"))
+
+    expect { described_class.perform_now }.not_to raise_error
+    expect(b.reload.state).to eq("authorized")
+  end
+
   it "fires the 15-minute alert (ERROR log + counter) and sets the unknown gauge" do
     stuck("unknown", age: 20.minutes)
     stuck("unknown", age: 3.minutes)
