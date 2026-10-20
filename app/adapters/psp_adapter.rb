@@ -170,6 +170,10 @@ class PspAdapter
   sig { abstract.returns(T::Boolean) }
   def separate_authorize_and_capture?; end
 
+  # Whether an authorization hold can be released (voided) at the PSP.
+  sig { abstract.returns(T::Boolean) }
+  def supports_void?; end
+
   sig { abstract.returns(T::Array[String]) }
   def currencies; end
 end

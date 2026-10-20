@@ -154,6 +154,35 @@ RSpec.describe "V1 capture / cancel / refunds / balance", type: :request do
     end
   end
 
+  describe "a cancel the PSP refuses (bug 6)" do
+    it "TC-G6-1: refuses a Kiripay cancel up front, with no PSP call" do
+      kiripay = FakePspAdapter.new(name: "kiripay", currencies: %w[VND], void: false)
+      allow(PspRouter).to receive(:adapter).with("kiripay").and_return(kiripay)
+      payment = create(:payment, :vnd, merchant: merchant).tap do |p|
+        p.transition!(:authorized, sort_key: p.created_at + 1.second, source: "worker")
+      end
+
+      post "/v1/payments/#{payment.id}/cancel", params: "{}", headers: auth_headers(key)
+
+      expect(response).to have_http_status(:bad_request)
+      expect(json_body["error"]["code"]).to eq("cancel_unsupported")
+      expect(kiripay.calls[:cancel]).to be_empty
+      expect(KiripayAdapter.new.supports_void?).to be(false)
+      expect(NordpayAdapter.new.supports_void?).to be(true)
+    end
+
+    it "TC-G6-2: a PSP 409 not_voidable becomes a 409 psp_rejected, and the payment is unchanged" do
+      payment = authorized_payment
+      adapter.script(:cancel, PspAdapter::Rejected.new(409, "nordpay 409: not_voidable"))
+
+      post "/v1/payments/#{payment.id}/cancel", params: "{}", headers: auth_headers(key)
+
+      expect(response).to have_http_status(:conflict)
+      expect(json_body["error"]).to include("code" => "psp_rejected", "retriable" => false)
+      expect(payment.reload.state).to eq("authorized")
+    end
+  end
+
   describe "when the PSP cannot be reached" do
     it "answers a synchronous cancel with a retriable 503, not a 500, and leaves the payment untouched" do
       payment = authorized_payment

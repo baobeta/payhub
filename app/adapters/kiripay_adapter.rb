@@ -40,6 +40,9 @@ class KiripayAdapter < PspAdapter
   sig { override.returns(T::Boolean) }
   def separate_authorize_and_capture? = false
 
+  sig { override.returns(T::Boolean) }
+  def supports_void? = false
+
   sig { override.returns(T::Array[String]) }
   def currencies = %w[VND THB IDR]
 

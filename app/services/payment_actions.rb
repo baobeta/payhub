@@ -18,7 +18,7 @@ module PaymentActions
 
     {
       "capture" => granted.call("payments.capture") && capturable.positive? && !payment.captures.pending.exists?,
-      "cancel" => granted.call("payments.cancel") && authorized,
+      "cancel" => granted.call("payments.cancel") && authorized && PspRouter.adapter(payment.psp_name).supports_void?,
       "refund" => granted.call("payments.refund") && refundable.positive?,
       "capturable_minor" => capturable,
       "refundable_minor" => refundable

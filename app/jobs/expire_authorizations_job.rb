@@ -39,6 +39,15 @@ class ExpireAuthorizationsJob < ApplicationJob
 
   sig { params(payment: Payment, now: ActiveSupport::TimeWithZone).void }
   def expire(payment, now)
+    unless PspRouter.adapter(payment.psp_name).supports_void?
+      # Nothing we can do at this PSP: the hold lapses at the network. Say it
+      # once per hold period, not every hour.
+      payment.update_columns(next_check_at: now + HOLD_LIMIT)
+      Rails.logger.warn({ event: "authorization.expiry_unsupported", payment_id: payment.id,
+                          psp_name: payment.psp_name }.to_json)
+      return
+    end
+
     CancelPayment.call(payment, source: "sweeper", reason: "authorization_expired")
     Metrics.increment(:authorizations_expired, psp: payment.psp_name)
     Rails.logger.info({ event: "authorization.expired", payment_id: payment.id, psp_name: payment.psp_name,

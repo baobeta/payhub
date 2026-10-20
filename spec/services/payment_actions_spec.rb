@@ -29,6 +29,13 @@ RSpec.describe PaymentActions do
     expect(described_class.call(payment, granted: grant_all)["capture"]).to be(false)
   end
 
+  it "TC-G6-3: offers no cancel on a PSP that cannot void" do
+    allow(PspRouter).to receive(:adapter).with("kiripay")
+                                         .and_return(FakePspAdapter.new(name: "kiripay", currencies: %w[VND], void: false))
+    payment = create(:payment, :vnd, state: "authorized")
+    expect(described_class.call(payment, granted: grant_all)).to include("cancel" => false)
+  end
+
   it "offers no action on an unknown payment, even to a role that holds every permission" do
     expect(described_class.call(create(:payment, state: "unknown"), granted: grant_all).values_at("capture", "cancel", "refund"))
       .to all(be(false))

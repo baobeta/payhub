@@ -49,6 +49,22 @@ RSpec.describe ExpireAuthorizationsJob do
     expect(payment.reload.state).to eq("authorized")
   end
 
+  it "TC-G6-4: skips a PSP that cannot void, and says so once" do
+    kiripay = FakePspAdapter.new(name: "kiripay", currencies: %w[VND], void: false)
+    allow(PspRouter).to receive(:adapter).with("kiripay").and_return(kiripay)
+    payment = create(:payment, :vnd, created_at: 8.days.ago).tap do |p|
+      p.transition!(:authorized, sort_key: p.created_at + 1.second, source: "worker")
+      p.update_column(:updated_at, 7.days.ago)
+    end
+    allow(Rails.logger).to receive(:warn).and_call_original
+
+    2.times { described_class.perform_now }
+
+    expect(kiripay.calls[:cancel]).to be_empty
+    expect(payment.reload.state).to eq("authorized")
+    expect(Rails.logger).to have_received(:warn).with(a_string_including('"event":"authorization.expiry_unsupported"')).once
+  end
+
   it "backs off a void the PSP refuses, without blocking the rest of the batch" do
     refused = authorized(idle_for: 8.days)
     ok = authorized(idle_for: 7.days)

@@ -35,6 +35,12 @@ module Dashboard
         render_api_error(ApiError.new(type: ApiError::Type::ApiErrorType, http_status: 503, code: "psp_unavailable",
                                       message: e.message, retriable: true))
       end
+      # Same mapping as /v1: a definitive PSP refusal is a 409, not a 500.
+      rescue_from PspAdapter::Rejected do |e|
+        T.bind(self, Dashboard::Api::BaseController)
+        render_api_error(ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "psp_rejected",
+                                      message: e.message, retriable: false))
+      end
 
       private
 
