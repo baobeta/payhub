@@ -78,6 +78,85 @@ RSpec.describe StuckPaymentSweeperJob do
     end
   end
 
+  describe "abandoned customer actions (requires_action)" do
+    let(:adapter) { FakePspAdapter.new(name: "kiripay", currencies: %w[VND], idempotent_authorize: false) }
+
+    # A Kiripay payment that returned a redirect `age` ago; the customer has
+    # not come back.
+    def waiting_on_customer(age:)
+      create(:payment, :vnd).tap do |p|
+        p.mark_sent!(p.created_at)
+        p.transition!(:requires_action, sort_key: p.created_at + 0.001, source: "worker")
+        p.update_column(:updated_at, age.ago)
+      end
+    end
+
+    let(:timeout) { described_class::REQUIRES_ACTION_TIMEOUT }
+
+    it "TC-B3-1: the PSP says captured — books the full amount and moves to captured, as the webhook would" do
+      payment = waiting_on_customer(age: timeout + 1.minute)
+      adapter.script(:fetch, result(payment, :captured))
+
+      described_class.perform_now
+
+      expect(payment.reload.state).to eq("captured")
+      expect(Ledger.captured_minor(payment)).to eq(payment.amount_minor)
+      expect(adapter.calls[:authorize]).to be_empty
+    end
+
+    it "TC-B3-1: the PSP says declined — failed" do
+      payment = waiting_on_customer(age: timeout + 1.minute)
+      adapter.script(:fetch, result(payment, :declined, decline_code: "wallet_declined"))
+
+      described_class.perform_now
+
+      expect(payment.reload.state).to eq("failed")
+      expect(payment.transitions.find_by(most_recent: true).metadata).to include("decline_code" => "wallet_declined")
+    end
+
+    it "TC-B3-1: the PSP still waits on the customer — failed as customer_action_expired, with payment.failed" do
+      payment = waiting_on_customer(age: timeout + 1.minute)
+      adapter.script(:fetch, result(payment, :requires_action))
+
+      described_class.perform_now
+
+      expect(payment.reload.state).to eq("failed")
+      expect(payment.transitions.find_by(most_recent: true).metadata)
+        .to include("decline_code" => "customer_action_expired")
+      expect(OutboundEvent.where(payment: payment, event_type: "payment.failed").count).to eq(1)
+      expect(adapter.calls[:authorize]).to be_empty
+    end
+
+    it "TC-B3-2: leaves a fresh requires_action payment alone — no PSP call, no state change" do
+      payment = waiting_on_customer(age: 2.minutes)
+
+      described_class.perform_now
+
+      expect(adapter.calls[:fetch]).to be_empty
+      expect(payment.reload.state).to eq("requires_action")
+    end
+
+    it "does not expire one an operator polls before the timeout" do
+      payment = waiting_on_customer(age: 2.minutes)
+      adapter.script(:fetch, result(payment, :requires_action))
+
+      described_class.poll_now(payment)
+
+      expect(payment.reload.state).to eq("requires_action")
+    end
+
+    it "pushes the next check out when the PSP cannot be reached, so the next sweep does not repeat it" do
+      payment = waiting_on_customer(age: timeout + 1.minute)
+      adapter.script(:fetch, PspAdapter::Unavailable)
+
+      described_class.perform_now
+      expect { described_class.perform_now }.not_to raise_error # not due again yet: no scripted answer consumed
+
+      expect(payment.reload.state).to eq("requires_action")
+      expect(payment.next_check_at).to be > Time.current
+    end
+  end
+
   it "leaves fresh payments alone and resolves only those past the threshold" do
     fresh = stuck("unknown", age: 30.seconds)
     old = stuck("unknown", age: 5.minutes)

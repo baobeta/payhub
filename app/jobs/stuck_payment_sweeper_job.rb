@@ -5,7 +5,9 @@
 #
 # Runs every minute. For each payment stuck in `pending` or `unknown` past
 # STUCK_AFTER, asks the PSP by our reference and applies the answer — the
-# same read that AuthorizePaymentJob uses after a timeout. Also re-drives
+# same read that AuthorizePaymentJob uses after a timeout. Ends payments left
+# in `requires_action` past REQUIRES_ACTION_TIMEOUT (the customer walked
+# away: DECISIONS #10, "abandonment is failed, not ambiguity"). Also re-drives
 # refunds left pending by a timeout, and re-enqueues inbound webhooks that
 # arrived before their payment row existed.
 #
@@ -32,6 +34,19 @@ class StuckPaymentSweeperJob < ApplicationJob
   STUCK_AFTER = T.let(2.minutes, ActiveSupport::Duration)
   ALERT_AFTER = T.let(15.minutes, ActiveSupport::Duration) # "any payment stuck in pending or unknown for more than 15 minutes"
   BATCH = 200
+  # A customer sent to a wallet or 3DS page who has not come back by now has
+  # walked away. Measured from updated_at, which only a state change moves.
+  REQUIRES_ACTION_TIMEOUT = T.let(30.minutes, ActiveSupport::Duration)
+  # The same schedule as Payment::DUE_AT_SQL, first due after the timeout.
+  ABANDONED_DUE_AT_SQL = T.let(
+    "COALESCE(next_check_at, updated_at + interval '#{REQUIRES_ACTION_TIMEOUT.to_i} seconds')".freeze, String
+  )
+  # PSP answers about a requires_action charge that are a real outcome.
+  VERDICTS = T.let(
+    [PspAdapter::Result::Status::Authorized, PspAdapter::Result::Status::Captured,
+     PspAdapter::Result::Status::Declined].freeze,
+    T::Array[PspAdapter::Result::Status]
+  )
   BACKOFF_BASE = T.let(1.minute, ActiveSupport::Duration)
   BACKOFF_CAP = T.let(30.minutes, ActiveSupport::Duration)
 
@@ -51,6 +66,7 @@ class StuckPaymentSweeperJob < ApplicationJob
   sig { void }
   def perform
     sweep_payments
+    expire_abandoned_actions
     redrive_captures
     redrive_refunds
     redrive_orphan_webhooks
@@ -77,13 +93,16 @@ class StuckPaymentSweeperJob < ApplicationJob
 
   # Claims up to BATCH due payments and reschedules each before any PSP call.
   # The lock is held only for this short transaction, never across HTTP.
-  sig { params(now: ActiveSupport::TimeWithZone).returns(T::Array[Payment]) }
-  def claim_due(now)
+  sig do
+    params(now: ActiveSupport::TimeWithZone, scope: ActiveRecord::Relation, due_at_sql: String)
+      .returns(T::Array[Payment])
+  end
+  def claim_due(now, scope = Payment.due_for_check(now), due_at_sql = Payment::DUE_AT_SQL)
     Payment.transaction do
-      due = Payment.due_for_check(now).lock("FOR UPDATE SKIP LOCKED")
-      overdue = due.order(Arel.sql("#{Payment::DUE_AT_SQL} ASC")).limit(BATCH / 2).to_a
+      due = scope.lock("FOR UPDATE SKIP LOCKED")
+      overdue = due.order(Arel.sql("#{due_at_sql} ASC")).limit(BATCH / 2).to_a
       fresh = due.where.not(id: overdue.map(&:id))
-                 .order(:check_attempts, Arel.sql("#{Payment::DUE_AT_SQL} DESC"))
+                 .order(:check_attempts, Arel.sql("#{due_at_sql} DESC"))
                  .limit(BATCH - overdue.size).to_a
 
       (overdue + fresh).each do |payment|
@@ -93,17 +112,48 @@ class StuckPaymentSweeperJob < ApplicationJob
     end
   end
 
+  # `requires_action` payments whose customer has not come back, scheduled
+  # and claimed exactly like stuck ones (DECISIONS #13), without the stuck
+  # alert: a customer who walks away is normal, not an incident.
+  sig { void }
+  def expire_abandoned_actions
+    now = Time.current
+    due = Payment.where(state: "requires_action").where("#{ABANDONED_DUE_AT_SQL} <= ?", now)
+    claim_due(now, due, ABANDONED_DUE_AT_SQL).each { |payment| resolve(payment) }
+  end
+
   sig { params(payment: Payment).void }
   def resolve(payment)
     adapter = PspRouter.adapter(payment.psp_name)
-    result = ResolveUnknownPayment.call(payment, adapter)
+    result = if payment.state == "requires_action"
+               abandoned_verdict(payment, adapter)
+             else
+               ResolveUnknownPayment.call(payment, adapter)
+             end
     return unless result
 
     ApplyPspResult.call(payment, result, source: "sweeper")
-  rescue PspAdapter::Unavailable, PspAdapter::Rejected, ActiveRecord::StaleObjectError => e
-    # Unavailable: try next sweep. Rejected: our bug, alert. Stale: someone
-    # else wrote first — fine. None of these should stop the rest of the batch.
+  rescue PspAdapter::Unavailable, PspAdapter::TimedOut, PspAdapter::Rejected, ActiveRecord::StaleObjectError => e
+    # Unavailable/TimedOut: try next sweep. Rejected: our bug, alert. Stale:
+    # someone else wrote first — fine. None of these should stop the batch.
     Rails.logger.warn({ event: "sweeper.skip", payment_id: payment.id, error: e.class.name, detail: e.message }.to_json)
+  end
+
+  # The customer was sent to the PSP's page and has not come back. Ask the
+  # PSP (never re-send: the charge exists). A verdict it has reached applies
+  # as the webhook would have: captured is booked, declined fails. Still
+  # waiting, or gone, past the timeout: the customer walked away.
+  sig { params(payment: Payment, adapter: PspAdapter).returns(T.nilable(PspAdapter::Result)) }
+  def abandoned_verdict(payment, adapter)
+    result = adapter.fetch(payment.psp_reference)
+    Metrics.increment(:psp_calls, psp: adapter.name, operation: "fetch", outcome: result.status.serialize)
+    return result if VERDICTS.include?(result.status)
+    return nil if Time.current - payment.updated_at < REQUIRES_ACTION_TIMEOUT # an operator's early poll_now
+
+    Rails.logger.info({ event: "sweeper.customer_action_expired", payment_id: payment.id, psp_name: payment.psp_name,
+                        psp_status: result.status.serialize }.to_json)
+    PspAdapter::Result.new(status: PspAdapter::Result::Status::Declined, psp_reference: payment.psp_reference, psp_charge_id: result.psp_charge_id,
+                           decline_code: "customer_action_expired", psp_timestamp: Time.current)
   end
 
   # A capture left `pending` past the stuck threshold: its job exhausted its
