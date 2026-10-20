@@ -54,13 +54,21 @@ RSpec.describe IdempotencyGuard do
       .to raise_error(ApiError) { |e| expect(e).to have_attributes(http_status: 409, retriable: true) }
   end
 
-  it "memoises a 4xx (it is a repeatable answer) but releases a 5xx (it is our bug)" do
-    guard(key: "bad").call { [422, { "error" => "x" }] }
-    expect(guard(key: "bad").call { raise "must not run" }).to have_attributes(status: 422, replayed: true)
+  it "memoises a 4xx from a request that ran (it is a repeatable answer) but releases a 5xx (it is our bug)" do
+    guard(key: "bad").call { [400, { "error" => { "code" => "invalid_state" } }] }
+    expect(guard(key: "bad").call { raise "must not run" }).to have_attributes(status: 400, replayed: true)
 
     guard(key: "boom").call { [500, {}] }
     expect(IdempotencyKey.find_by(key: "boom")).to be_nil
     expect(guard(key: "boom").call { [202, {}] }).to have_attributes(status: 202, replayed: false)
+  end
+
+  it "TC-A4-2: releases a validation failure, so the corrected request can reuse the key (Stripe)" do
+    guard(key: "typo").call { [422, { "error" => { "code" => "validation_failed" } }] }
+
+    expect(IdempotencyKey.find_by(key: "typo")).to be_nil
+    corrected = guard(key: "typo", body: '{"amount_minor":2500}').call { [202, {}] }
+    expect(corrected).to have_attributes(status: 202, replayed: false)
   end
 
   it "releases the claim if the action raises, so the merchant can retry" do

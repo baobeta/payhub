@@ -23,13 +23,22 @@ RSpec.describe "V1 idempotency", type: :request do
     expect(Payment.count).to eq(1)
   end
 
-  it "replays a 422 validation error too — a bad request is a repeatable answer" do
+  # Stripe saves no result when the parameters fail validation; Checkout.com
+  # caches only 2xx. A merchant who fixes a typo and retries with the same key
+  # gets the payment, not "key reused with a different body".
+  it "TC-A4-2: keeps no result for a validation error, so the corrected request with the same key goes through" do
     create_payment({ amount_minor: -1 })
     expect(response).to have_http_status(:unprocessable_content)
 
-    create_payment({ amount_minor: -1 })
-    expect(response).to have_http_status(:unprocessable_content)
+    create_payment(body)
+
+    expect(response).to have_http_status(:accepted)
+    expect(response.headers["Idempotent-Replayed"]).to be_nil
+    expect(Payment.count).to eq(1)
+
+    create_payment(body) # from here on the key is bound to the corrected request
     expect(response.headers["Idempotent-Replayed"]).to eq("true")
+    expect(Payment.count).to eq(1)
   end
 
   it "returns 422 idempotency_error when the same key is sent with a different body" do

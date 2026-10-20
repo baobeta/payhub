@@ -34,7 +34,7 @@ Each entry: what we chose in plain words, what we chose exactly, what we rejecte
 
 **Rejected:** `SELECT` to check for the key, then `INSERT` if absent.
 
-**Reason:** Check-then-act has a gap. Two identical requests on two threads both pass the check and both proceed. The unique index is the only serialization point the database guarantees. A `request_fingerprint` alongside the key turns a reused key with a different body into a `422` instead of a silent wrong replay.
+**Reason:** Check-then-act has a gap. Two identical requests on two threads both pass the check and both proceed. The unique index is the only serialization point the database guarantees. A `request_fingerprint` alongside the key turns a reused key with a different body into a `422` instead of a silent wrong replay. What is kept follows Stripe: an answer to a request that ran (2xx, or a 4xx such as `invalid_state`) is stored and replayed for 24 hours, but a `validation_failed` 422 or a 5xx releases the key. A request that fails validation never started, so there is nothing to reproduce, and keeping it would refuse the merchant's corrected retry as "key reused" ([Stripe: idempotent requests](https://docs.stripe.com/api/idempotent_requests); Checkout.com caches only 2xx).
 
 **Trade-off:** Every `POST` costs an extra insert, and keys have to be stored for as long as replays are honoured. A duplicate that arrives while the first is still running gets a retriable `409` instead of waiting for the answer.
 

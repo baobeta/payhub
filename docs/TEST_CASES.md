@@ -9,7 +9,7 @@
 >
 > IDs map to USE_CASES.md: `TC-B7-1` tests use case B7. `TC-BUG3-…` tests bug #3 in USE_CASES §1.
 >
-> **Status (2026-10-20):** every case below has a passing spec. That is 107 TC ids: the 98 listed here plus 9 added by the code review (§4). The full suite is 884 examples, 0 failures, 0 pending. Find a case with `grep -rn "TC-E3-2" spec`.
+> **Status (2026-10-20):** every case below has a passing spec. That is 108 TC ids: the 98 listed here, 9 added by the code review, and TC-A4-2 (§4). The full suite is 884 examples, 0 failures, 0 pending. Find a case with `grep -rn "TC-E3-2" spec`.
 
 ---
 
@@ -699,6 +699,12 @@ These were found by reviewing the merged fixes. Each one was written to fail fir
 - **Expected:** The caller still gets the 422 or 409. The metric `audit_write_failed` is incremented and an ERROR log is written.
 - **Spec:** `spec/requests/dashboard/api/payments_spec.rb`, `spec/requests/ops/api/proposals_spec.rb`
 
+**TC-A4-2. A validation failure keeps no request ticket, so the corrected retry goes through** · **Now:** ✅
+- **Situation:** `POST /v1/payments` with key K and `amount_minor: -1` returns 422. The merchant fixes the body and retries with K.
+- **Expected:** The retry gets 202 and creates one payment, not 422 `idempotency_key_reused`. A third send of the corrected body is replayed. Other 4xx answers (`invalid_state`) are still stored and replayed.
+- **Ref:** [Stripe: idempotent requests](https://docs.stripe.com/api/idempotent_requests) (no result saved when parameters fail validation); Checkout.com (only 2xx cached); DECISIONS #3.
+- **Spec:** `spec/requests/v1/idempotency_spec.rb`, `spec/services/idempotency_guard_spec.rb`
+
 **Review fixes that are guarded by an existing TC:**
 - The sweeper keeps going past an `IllegalTransition`: a lost race with a webhook. Spec: `stuck_payment_sweeper_job_spec.rb`.
 - Ops "poll now" is refused for settled payments, so it can never re-send a charge. Spec: `ops/api/payments_spec.rb`.
@@ -710,4 +716,4 @@ These were found by reviewing the merged fixes. Each one was written to fail fir
 - **TC-C4-1:** both racers carry the same PSP timestamp.
 - **TC-D5-3:** an old event whose payment *does* exist is left to Sidekiq's retries; it isn't closed.
 - **TC-B3-1:** a PSP that answers canceled or not-found after the timeout also fails the payment as `customer_action_expired`.
-- **TC-A4-1:** asserts the 422 and no payment. The 422 answer **is** stored and replayed, like every 4xx. See the open decision in USE_CASES §1.
+- **TC-A4-1:** asserts the 422, no payment, and no stored key. That last part became true with TC-A4-2.

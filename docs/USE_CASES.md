@@ -42,7 +42,7 @@ Rows marked ✅ below are fixed or now fully tested.
 | K1 | A call-log row is lost if the caller's transaction rolls back | Design |
 | — | Late wallet successes are listed for ops, but there is no in-product refund for them | Feature (M-4) |
 
-*Open decision.* Request tickets keep a 422 answer for 24h, like every 4xx. Stripe and Checkout.com don't keep validation failures, so a corrected retry with the same key works there. In PayHub the corrected retry gets a 422 for reusing the key. TC-A4-1 asserts today's behaviour.
+*Decided (2026-10-20):* request tickets now follow Stripe and Checkout.com. A `validation_failed` 422 keeps no ticket, so a corrected retry with the same key goes through. Answers to requests that ran (2xx, or a 4xx like `invalid_state`) are still replayed for 24h. See DECISIONS #3, TC-A4-1 and TC-A4-2.
 
 *Deliberately not built:* G5 (releasing a remainder at the PSP), disputes, PSP failover, and the rest of §9.
 
