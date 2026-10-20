@@ -88,6 +88,17 @@ RSpec.describe SettlementReconciliationJob do
       expect(Ledger.settled_minor(payment)).to eq(2500)
     end
 
+    it "TC-J3-4: a line we cannot store (unknown kind) is counted and logged, and the lines after it still land" do
+      allow(Rails.logger).to receive(:error).and_call_original
+
+      expect { run(line(kind: "chargeback", gross: 2500, fee: 0, net: -2500, id: "odd"), line(gross: 2500, fee: 45, id: "after")) }
+        .not_to raise_error
+
+      expect(SettlementLine.find_by(external_id: "stl_odd")).to be_nil
+      expect(SettlementLine.find_by(external_id: "stl_after").status).to eq("matched")
+      expect(Rails.logger).to have_received(:error).with(a_string_including("settlement.line_unreadable", "stl_odd"))
+    end
+
     it "TC-J3-2: a line in another currency than the payment is a mismatch" do
       run(line(currency: "GBP"))
 

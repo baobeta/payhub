@@ -64,6 +64,14 @@ class SettlementReconciliationJob < ApplicationJob
     raise unless e.message.include?("index_settlement_lines_on_psp_name_and_external_id")
 
     "duplicate"
+  rescue ActiveRecord::RecordInvalid, ActiveRecord::StatementInvalid => e
+    # A line we cannot even store (a kind we don't model, such as a chargeback).
+    # Make it loud and keep going: one odd line must not hide the rest of the
+    # report, and every retry would stop at the same line (DECISIONS #18).
+    Metrics.increment(:settlement_discrepancies, psp: psp_name, status: "unreadable")
+    Rails.logger.error({ event: "settlement.line_unreadable", psp: psp_name, line_id: report_line.external_id,
+                         kind: report_line.kind, detail: e.message }.to_json)
+    "unreadable"
   end
 
   sig { params(psp_name: String, line: SettlementLine).void }
