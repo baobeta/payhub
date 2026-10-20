@@ -14,9 +14,10 @@ step() { printf '\n\033[1m== %s ==\033[0m\n' "$1"; }
 step "zeitwerk (autoload layout)"
 bin/rails zeitwerk:check
 
-step "generated files are current (permissions, currencies)"
+step "generated files are current (permissions, currencies, state machine)"
 bin/rails exports:all >/dev/null
 git diff --exit-code -- docs/permissions.md app/frontend/shared/permissions.ts app/frontend/shared/currencies.ts \
+  app/frontend/shared/stateMachine.ts \
   || { echo "Run bin/rails exports:all and commit the result."; exit 1; }
 
 step "authorization (permissions, not role names)"

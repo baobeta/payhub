@@ -187,6 +187,36 @@ CREATE TABLE public.captures (
 
 
 --
+-- Name: demo_chaos_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.demo_chaos_runs (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    state character varying DEFAULT 'queued'::character varying NOT NULL,
+    payments integer NOT NULL,
+    result jsonb,
+    error character varying,
+    started_by_ip character varying,
+    finished_at timestamp(6) without time zone,
+    created_at timestamp(6) without time zone NOT NULL,
+    updated_at timestamp(6) without time zone NOT NULL,
+    CONSTRAINT chk_demo_chaos_runs_size CHECK (((payments >= 1) AND (payments <= 20))),
+    CONSTRAINT chk_demo_chaos_runs_state CHECK (((state)::text = ANY ((ARRAY['queued'::character varying, 'running'::character varying, 'passed'::character varying, 'failed'::character varying, 'errored'::character varying])::text[])))
+);
+
+
+--
+-- Name: demo_epochs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.demo_epochs (
+    id uuid DEFAULT public.uuid_generate_v7() NOT NULL,
+    started_at timestamp(6) without time zone NOT NULL,
+    started_by_ip character varying
+);
+
+
+--
 -- Name: fx_rates; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -608,6 +638,22 @@ ALTER TABLE ONLY public.captures
 
 
 --
+-- Name: demo_chaos_runs demo_chaos_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.demo_chaos_runs
+    ADD CONSTRAINT demo_chaos_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: demo_epochs demo_epochs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.demo_epochs
+    ADD CONSTRAINT demo_epochs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: fx_rates fx_rates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -771,6 +817,13 @@ CREATE UNIQUE INDEX idx_captures_one_pending_per_payment ON public.captures USIN
 --
 
 CREATE UNIQUE INDEX idx_delivery_attempts_unique ON public.outbound_delivery_attempts USING btree (outbound_event_id, attempt_number);
+
+
+--
+-- Name: idx_demo_chaos_runs_one_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_demo_chaos_runs_one_active ON public.demo_chaos_runs USING btree (state) WHERE ((state)::text = ANY ((ARRAY['queued'::character varying, 'running'::character varying])::text[]));
 
 
 --
@@ -988,6 +1041,13 @@ CREATE INDEX index_audit_events_on_merchant_id_and_created_at ON public.audit_ev
 --
 
 CREATE INDEX index_captures_on_payment_id_and_created_at ON public.captures USING btree (payment_id, created_at);
+
+
+--
+-- Name: index_demo_epochs_on_started_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX index_demo_epochs_on_started_at ON public.demo_epochs USING btree (started_at);
 
 
 --
@@ -1393,6 +1453,7 @@ ALTER TABLE ONLY public.api_keys
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20260929000001'),
 ('20260928000001'),
 ('20260927000001'),
 ('20260926000001'),

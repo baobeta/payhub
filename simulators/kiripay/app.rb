@@ -23,7 +23,7 @@ require "time"
 module Kiripay
   class Store
     Charge = Struct.new(:id, :merchant_reference, :status, :code, :amount, :currency, :refunded,
-                        :created_at, :captured_at, keyword_init: true) do
+                        :created_at, :captured_at, :magic, keyword_init: true) do
       def to_h
         { id: id, merchant_reference: merchant_reference, status: status, code: code, amount: amount,
           currency: currency, refunded: refunded, created_at: created_at.utc.iso8601(3),
@@ -59,6 +59,12 @@ module Kiripay
   class App < Sinatra::Base
     CURRENCIES = %w[VND THB IDR].freeze
     API_KEY = ENV.fetch("KIRIPAY_API_KEY", "kp_test_key")
+
+    # Deterministic outcomes for the public demo. Each token is a default
+    # X-Sim-Force list, remembered on the charge so approval behaves the same.
+    MAGIC_TOKENS = {
+      "tok_demo_wallet" => %w[none]
+    }.freeze
     WEBHOOK_SECRET = ENV.fetch("KIRIPAY_WEBHOOK_SECRET", "kp_whsec_test")
     WEBHOOK_URL = ENV.fetch("PAYHUB_WEBHOOK_URL", "http://localhost:3000/v1/webhooks/kiripay")
     PUBLIC_URL = ENV.fetch("KIRIPAY_PUBLIC_URL", "http://localhost:4002")
@@ -87,8 +93,9 @@ module Kiripay
         error!(400, "invalid_json", "body is not JSON")
       end
 
-      def inject?(behaviour, forced = request.env["HTTP_X_SIM_FORCE"].to_s)
+      def inject?(behaviour, forced = request.env["HTTP_X_SIM_FORCE"].to_s, charge: @current_charge)
         forced_list = forced.split(",").map(&:strip)
+        forced_list = MAGIC_TOKENS.fetch(charge&.magic.to_s, []) if forced_list.empty?
         return true if forced_list.include?(behaviour)
         return false if forced_list.any?
 
@@ -128,6 +135,7 @@ module Kiripay
 
       # The customer approved (or declined). Emit the webhooks, misbehaving as configured.
       def settle!(charge, force)
+        @current_charge = charge
         if inject?("decline", force)
           store.sync do
             charge.status = "declined"
@@ -215,6 +223,9 @@ module Kiripay
         id: "kp_#{SecureRandom.hex(10)}", merchant_reference: body["merchant_reference"],
         status: "pending_redirect", amount: amount, currency: currency, refunded: "0", created_at: Time.now
       )
+      @current_charge = charge
+      token = body["wallet_token"].to_s
+      charge.magic = token if MAGIC_TOKENS.key?(token)
       store.sync { store.charges[charge.id] = charge }
 
       sleep(config.fetch("timeout_seconds", 5).to_f) if inject?("timeout")

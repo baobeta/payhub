@@ -130,6 +130,19 @@ Rails.application.routes.draw do
     get "security_history", to: "security_history#index"
   end
 
+  # The public demo (use cases D-01..D-06): no login, one merchant, its test
+  # twin. Deliberately outside /dashboard and /ops.
+  namespace :demo do
+    namespace :api, defaults: { format: :json } do
+      resources :payments, only: %i[create show] do
+        post :approve_wallet, on: :member
+      end
+      resources :chaos_runs, only: %i[create show]
+      get "ledger_summary", to: "ledger#show"
+      post "reset", to: "resets#create"
+    end
+  end
+
   # UI shells: the Vue router owns every path below each prefix (design §1).
   # Keep these LAST so /dashboard/api/* and /ops/api/* routes above them match first.
   get "dashboard(/*path)", to: "dashboard/shell#show", format: false

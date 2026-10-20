@@ -71,12 +71,19 @@ services:
   worker:
     build: .
     command: bundle exec sidekiq
-    environment: *app_env
+    # App env (see &app_env above) plus a key of its own: ChaosRun drives the
+    # real HTTP API from a job (D-04), so the demo's chaos button needs to
+    # reach the web process, not localhost.
+    environment:
+      <<: *app_env
+      CHAOS_API_URL: ${CHAOS_API_URL:-http://web:3000}
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      web:
+        condition: service_started
     volumes:
       - .:/rails
       - /rails/node_modules
