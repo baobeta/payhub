@@ -40,4 +40,22 @@ RSpec.describe WebhookUrlGuard do
   it "allows private addresses when told to (development)" do
     expect(described_class.problem("http://localhost:4000/hook", allow_private: true)).to be_nil
   end
+
+  describe "TC-H6-1: production rejects http://, IPv4-mapped, and 0.0.0.0 URLs" do
+    # Stub Rails.env as production so allow_private? returns false
+    before { allow(Rails).to receive(:env).and_return(ActiveSupport::StringInquirer.new("production")) }
+
+    it "TC-H6-1 refuses a plain http:// URL" do
+      expect(described_class.problem("http://hooks.example.com/payhub")).to include("must use https")
+    end
+
+    it "TC-H6-1 refuses an IPv4-mapped private address (https://[::ffff:10.0.0.1])" do
+      # ::ffff:10.0.0.1 is the IPv4-mapped form of 10.0.0.1 — private range
+      expect(described_class.problem("https://[::ffff:10.0.0.1]/hook")).to include("private or reserved")
+    end
+
+    it "TC-H6-1 refuses https://0.0.0.0" do
+      expect(described_class.problem("https://0.0.0.0/hook")).to include("private or reserved")
+    end
+  end
 end
