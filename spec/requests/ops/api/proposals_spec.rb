@@ -176,4 +176,52 @@ RSpec.describe "Ops proposals", type: :request do
     post "/ops/api/proposals/#{id}/approve", headers: ui_headers
     expect(response).to have_http_status(:forbidden)
   end
+
+  it "TC-N8-1: reject sets state to rejected, persists decision_note, and writes an audit row" do # rubocop:disable RSpec/MultipleExpectations
+    approver = create(:operator, role: "approver")
+    sign_in_operator(maker, stepped_up: true)
+    payment = create(:payment, state: "unknown")
+    create_proposal(payment)
+    id = json_body["id"]
+
+    sign_in_operator(approver, stepped_up: true)
+    expect do
+      post "/ops/api/proposals/#{id}/reject",
+           params: { note: "PSP confirmed the charge never settled" }.to_json,
+           headers: ui_headers
+    end.to change(AuditEvent, :count).by(1)
+
+    expect(response).to have_http_status(:ok)
+    proposal = OperatorProposal.find(id)
+    expect(proposal.state).to eq("rejected")
+    expect(proposal.decision_note).to eq("PSP confirmed the charge never settled")
+    expect(proposal.decided_by).to eq(approver)
+    expect(proposal.decided_at).to be_present
+    expect(json_body["state"]).to eq("rejected")
+    expect(AuditEvent.last).to have_attributes(action: "proposal.rejected", result: "success")
+  end
+
+  it "TC-N9-1: approve where apply fails → state failed, error persisted, decided_by and decided_at set" do # rubocop:disable RSpec/MultipleExpectations
+    approver = create(:operator, role: "approver")
+    sign_in_operator(maker, stepped_up: true)
+    payment = create(:payment, state: "unknown")
+    create_proposal(payment)
+    id = json_body["id"]
+
+    # Move the payment before approval so ApplyProposal raises Stale
+    payment.transition!("authorized", sort_key: Time.current, source: "webhook")
+
+    sign_in_operator(approver, stepped_up: true)
+    post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+
+    expect(response).to have_http_status(:ok)
+    proposal = OperatorProposal.find(id)
+    expect(proposal.state).to eq("failed")
+    expect(proposal.error).to be_present
+    expect(proposal.decided_by).to eq(approver)
+    expect(proposal.decided_at).to be_present
+    expect(json_body["state"]).to eq("failed")
+    # The payment must be unchanged
+    expect(payment.reload.state).to eq("authorized")
+  end
 end

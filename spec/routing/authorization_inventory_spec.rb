@@ -47,4 +47,47 @@ RSpec.describe "Authorization inventory" do # rubocop:disable RSpec/DescribeClas
     end
     expect(writes).to be_empty, "Non-GET impersonation routes:\n  #{writes.join("\n  ")}"
   end
+
+  # TC-M9-1: every controller#action is guarded by exactly the permission the
+  # fixture says. Fails if a route has been re-wired to a different permission
+  # (e.g. capture guarded by payments.read instead of payments.capture) without
+  # updating the fixture. Build the fixture from the code with the rails runner
+  # snippet in the TC description; it is reviewed by a human, then frozen here.
+  it "TC-M9-1: each route is guarded by the permission declared in spec/fixtures/route_permissions.yml" do
+    Rails.application.eager_load!
+    fixture_path = Rails.root.join("spec/fixtures/route_permissions.yml")
+    expected = YAML.load_file(fixture_path)
+
+    mismatches = []
+    Rails.application.routes.routes.each do |route|
+      controller = route.defaults[:controller]
+      action     = route.defaults[:action]
+      next unless controller && action
+
+      klass = "#{controller.camelize}Controller".safe_constantize
+      next unless klass && klass < Web::BaseController
+
+      key = "#{controller}##{action}"
+      next unless expected.key?(key) # routes not in fixture are caught by the first example
+
+      # Find the first matching rule (same logic as Authorization#authorize!)
+      rules = klass.authorization_rules.select do |rule|
+        (rule[:only].nil? || rule[:only].include?(action)) &&
+          (rule[:except].nil? || !rule[:except].include?(action))
+      end
+      actual = if rules.empty?
+                 "UNDECLARED"
+      elsif rules.first[:kind] == :public
+                 "public"
+      else
+                 rules.first[:permission]
+      end
+
+      expected_val = expected[key]
+      mismatches << "#{key}: fixture=#{expected_val.inspect} actual=#{actual.inspect}" if actual != expected_val
+    end
+
+    expect(mismatches).to be_empty,
+      "Routes guarded by the wrong permission:\n  #{mismatches.join("\n  ")}"
+  end
 end
