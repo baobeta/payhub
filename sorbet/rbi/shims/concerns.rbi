@@ -13,6 +13,11 @@ module IdempotentAction
   def render_api_error(error); end
 end
 
+module Authorization
+  sig { params(action: String, target: T.untyped, result: String, metadata: T::Hash[String, T.untyped]).void }
+  def audit!(action, target: nil, result: "success", metadata: {}); end
+end
+
 module Authorization::ClassMethods
   sig { returns(T::Array[T::Hash[Symbol, T.untyped]]) }
   def authorization_rules; end

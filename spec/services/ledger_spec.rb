@@ -41,6 +41,17 @@ RSpec.describe Ledger do
       expect { raw.call("DELETE FROM ledger_entries WHERE id = ?") }
         .to raise_error(ActiveRecord::StatementInvalid, /append-only/)
     end
+
+    it "TC-I2-4: refuses TRUNCATE of ledger_entries" do
+      described_class.record_capture!(payment, 2500)
+
+      expect do
+        ActiveRecord::Base.transaction(requires_new: true) do
+          ActiveRecord::Base.connection.execute("TRUNCATE ledger_entries")
+        end
+      end.to raise_error(ActiveRecord::StatementInvalid, /append-only/)
+      expect(LedgerEntry.where(payment: payment).count).to eq(2)
+    end
   end
 
   describe "sums" do

@@ -98,4 +98,12 @@ module PspCallRedactor
     (sum % 10).zero?
   end
   private_class_method :luhn?
+
+  # The whole value is a card number: 13-19 digits once spaces and dashes are
+  # gone, and Luhn-valid. Used to refuse a PAN sent where a token belongs.
+  sig { params(value: String).returns(T::Boolean) }
+  def self.card_number?(value)
+    digits = value.delete(" -")
+    digits.match?(/\A\d{13,19}\z/) && luhn?(digits)
+  end
 end

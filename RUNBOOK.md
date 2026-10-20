@@ -159,5 +159,5 @@ Lost phone: they sign in with a recovery code, then regenerate codes on their Pr
 | What state, and how did it get there? | `payment_transitions` ordered by `sort_key` |
 | Did money move? | `ledger_entries` for the payment |
 | What did the PSP tell us? | `inbound_events` (`signature_valid=false` rows were rejected, never processed) |
-| What did we tell the merchant? | `outbound_events` + `outbound_delivery_attempts`; `POST /v1/events/:id/redeliver` for dead ones |
+| What did we tell the merchant? | `outbound_events` + `outbound_delivery_attempts`; `POST /v1/events/:id/redeliver` for dead ones. A redelivery gets a fresh 8-attempt budget (backoff from 1 min); attempt numbers continue from where they stopped |
 | Backlog right now | `/metrics`: `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead` |

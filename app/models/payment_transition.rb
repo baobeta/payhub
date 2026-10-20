@@ -16,7 +16,9 @@ class PaymentTransition < ApplicationRecord
 
   # Only Payment#transition! may create these; it holds the row lock.
   # Never updated after creation except the most_recent flip, which
-  # transition! does via update_column under the same lock.
+  # transition! does via update_column under the same lock. These callbacks
+  # are the friendly error; trg_payment_transitions_append_only is the
+  # guarantee (raw SQL, DELETE and TRUNCATE included).
   before_update { raise ActiveRecord::ReadOnlyRecord, "payment_transitions is append-only" }
   before_destroy { raise ActiveRecord::ReadOnlyRecord, "payment_transitions is append-only" }
 

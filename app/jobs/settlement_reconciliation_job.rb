@@ -7,9 +7,11 @@
 #
 # For each PSP that publishes a report, for one UTC day:
 #   1. Ingest every line exactly once (unique on the PSP's line id).
-#   2. Match it: a capture line to a payment, a refund line to a succeeded
-#      refund of the same amount. A capture may not settle more than the
-#      ledger captured — if it does, the PSP took money we never booked.
+#   2. Match it: the line must add up (net = gross − fee), then a capture
+#      line to a payment, a refund line to a succeeded refund of the same
+#      amount that no other line has settled. Captures may settle over several
+#      lines (one per capture), but never more than the ledger captured — if
+#      they do, the PSP took money we never booked.
 #   3. Matched → book it: psp_receivable is cleared, the fee and the payout
 #      land in psp_fees and psp_payouts. Anything else is stored with its
 #      problem, logged at ERROR and counted, and never booked.
@@ -44,6 +46,8 @@ class SettlementReconciliationJob < ApplicationJob
   # Returns the line's status, or "duplicate" if it was ingested before.
   sig { params(psp_name: String, day: Date, report_line: PspAdapter::SettlementReportLine).returns(String) }
   def ingest(psp_name, day, report_line)
+    return "duplicate" if SettlementLine.exists?(psp_name: psp_name, external_id: report_line.external_id)
+
     SettlementLine.transaction do
       line = SettlementLine.create!(
         psp_name: psp_name, external_id: report_line.external_id, settled_on: day, kind: report_line.kind,
@@ -54,7 +58,11 @@ class SettlementReconciliationJob < ApplicationJob
       match(psp_name, line)
       line.status
     end
-  rescue ActiveRecord::RecordNotUnique
+  rescue ActiveRecord::RecordNotUnique => e
+    # Only the race the check above can't see: another run ingested this line
+    # between the check and the insert. Any other conflict is a bug, not a duplicate.
+    raise unless e.message.include?("index_settlement_lines_on_psp_name_and_external_id")
+
     "duplicate"
   end
 
@@ -64,11 +72,41 @@ class SettlementReconciliationJob < ApplicationJob
     return discrepancy!(line, "unmatched", "no payment with reference #{line.psp_reference}") unless payment
     return discrepancy!(line, "mismatch", "currency #{line.currency}, payment is #{payment.currency}", payment:) if line.currency != payment.currency
 
-    problem = line.kind == "capture" ? capture_problem(line, payment) : refund_problem(line, payment)
+    problem = arithmetic_problem(line) ||
+              (line.kind == "capture" ? capture_problem(line, payment) : refund_problem(line, payment))
     return discrepancy!(line, "mismatch", problem, payment:) if problem
 
     line.update!(payment: payment, status: "matched")
-    Ledger.record_settlement!(line)
+    book!(line, payment)
+  end
+
+  # A booking the ledger refuses is a discrepancy on this line, never the end
+  # of the run. The savepoint keeps the line (and the rest of the report)
+  # when the insert itself fails.
+  sig { params(line: SettlementLine, payment: Payment).void }
+  def book!(line, payment)
+    SettlementLine.transaction(requires_new: true) { Ledger.record_settlement!(line) }
+  rescue Ledger::Unbalanced => e
+    discrepancy!(line, "mismatch", "the ledger refused the booking: #{e.message}", payment:)
+  rescue ActiveRecord::RecordNotUnique => e
+    raise unless e.message.include?("idx_ledger_entries_refund_leg")
+
+    # Two lines settling one refund at the same moment; refund_problem catches the sequential case.
+    discrepancy!(line, "mismatch", "refund already settled by another line", payment:)
+  end
+
+  # The line must add up before anything else is believed: a capture pays out
+  # gross less its fee, a refund takes back exactly its gross (no fee).
+  sig { params(line: SettlementLine).returns(T.nilable(String)) }
+  def arithmetic_problem(line)
+    gross = line.gross_minor
+    fee = line.fee_minor
+    net = line.net_minor
+    if line.kind == "capture"
+      "net #{net} ≠ gross #{gross} − fee #{fee}" unless net == gross - fee
+    elsif fee != 0 || net != -gross
+      "refund net #{net} with fee #{fee}, expected net −#{gross} and no fee"
+    end
   end
 
   sig { params(line: SettlementLine, payment: Payment).returns(T.nilable(String)) }
@@ -88,6 +126,9 @@ class SettlementReconciliationJob < ApplicationJob
     line.refund = refund
     return "refund is #{refund.state} in our books" unless refund.state == "succeeded"
     return "refund is #{refund.amount_minor} in our books" unless refund.amount_minor == line.gross_minor
+
+    earlier = SettlementLine.where(refund: refund, status: "matched").where.not(id: line.id).pick(:external_id)
+    return "refund already settled by #{earlier}" if earlier
 
     nil
   end

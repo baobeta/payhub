@@ -233,7 +233,7 @@ erDiagram
 **What it is:** every notification PayHub owes a shop, such as "payment approved" or "refund succeeded".
 **Everyday version:** the outgoing post tray.
 **Example:** *payment.captured* for PH-7Q2K, delivered on the 1st attempt.
-**Status values:** *pending* (waiting to go), *delivered*, *dead* (gave up after many tries; staff or the shop can resend).
+**Status values:** *pending* (waiting to go), *delivered*, *dead* (gave up after many tries; staff or the shop can resend, which gives it a fresh set of tries).
 **Rules that protect it:** the letter is written **at the same moment** as the status change it describes. Either both are saved or neither is, so a letter can never be lost or sent for something that didn't happen.
 
 ### Delivery attempts · `outbound_delivery_attempts`
@@ -311,6 +311,7 @@ erDiagram
 - Written in pen. Rows can't be edited, and can't be deleted until they are 12 months old.
 - The person's email is copied in at the time, so the log still reads correctly after they leave.
 - Request contents, passwords and session details are never stored here.
+- A signed-in person's refused change is logged too (result *failure*, or *denied* for a missing confirmation code), with only the error code. Reads and anonymous requests are not.
 
 ---
 

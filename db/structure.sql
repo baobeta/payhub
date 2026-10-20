@@ -71,6 +71,23 @@ $$;
 
 
 --
+-- Name: payment_transitions_append_only(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.payment_transitions_append_only() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.most_recent AND NOT NEW.most_recent
+     AND (to_jsonb(OLD) - 'most_recent') = (to_jsonb(NEW) - 'most_recent') THEN
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'payment_transitions is append-only (attempted %)', TG_OP;
+END
+$$;
+
+
+--
 -- Name: stamp_created_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -439,6 +456,7 @@ CREATE TABLE public.outbound_events (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     traceparent character varying,
+    attempt_budget integer DEFAULT 8 NOT NULL,
     CONSTRAINT chk_outbound_events_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'delivered'::character varying, 'dead'::character varying])::text[])))
 );
 
@@ -1221,10 +1239,31 @@ CREATE TRIGGER trg_ledger_entries_immutable BEFORE DELETE OR UPDATE ON public.le
 
 
 --
+-- Name: ledger_entries trg_ledger_entries_no_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_ledger_entries_no_truncate BEFORE TRUNCATE ON public.ledger_entries FOR EACH STATEMENT EXECUTE FUNCTION public.append_only_guard();
+
+
+--
 -- Name: operator_proposals trg_operator_proposals_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_operator_proposals_immutable BEFORE UPDATE ON public.operator_proposals FOR EACH ROW EXECUTE FUNCTION public.operator_proposal_payload_immutable();
+
+
+--
+-- Name: payment_transitions trg_payment_transitions_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_payment_transitions_append_only BEFORE DELETE OR UPDATE ON public.payment_transitions FOR EACH ROW EXECUTE FUNCTION public.payment_transitions_append_only();
+
+
+--
+-- Name: payment_transitions trg_payment_transitions_no_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_payment_transitions_no_truncate BEFORE TRUNCATE ON public.payment_transitions FOR EACH STATEMENT EXECUTE FUNCTION public.append_only_guard();
 
 
 --
@@ -1456,6 +1495,8 @@ SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
 ('20261020100001'),
+('20261020000302'),
+('20261020000301'),
 ('20260929000001'),
 ('20260928000001'),
 ('20260927000001'),

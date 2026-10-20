@@ -105,6 +105,7 @@ module TwoFactorSessionActions
            email: T.nilable(String)).void
   end
   def audit_auth_failure(principal, factor:, just_locked:, email: nil)
+    @refusal_audited = true # this row is the audit of the refusal (Authorization#audit_refusal)
     Metrics.increment(:auth_failed, area: session_cookie_path.delete_prefix("/"), factor:)
     context = { actor: principal, actor_label: principal&.email || email.to_s.first(254),
                 merchant_id: principal.try(:merchant_id), ip: request.remote_ip,
