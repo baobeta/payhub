@@ -1,0 +1,539 @@
+{
+  "uid": "payhub-traces",
+  "title": "PayHub tracing",
+  "tags": [
+    "payhub",
+    "otel"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "refresh": "10s",
+  "templating": {
+    "list": [
+      {
+        "type": "textbox",
+        "name": "trace_id",
+        "label": "Trace ID",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        }
+      },
+      {
+        "type": "custom",
+        "name": "roots",
+        "label": "Traces list",
+        "query": "requests,all",
+        "description": "requests: HTTP requests only. all: also the sweeper jobs the scheduler starts every minute.",
+        "current": {
+          "text": "requests",
+          "value": "requests"
+        },
+        "options": [
+          {
+            "text": "requests",
+            "value": "requests",
+            "selected": true
+          },
+          {
+            "text": "all",
+            "value": "all",
+            "selected": false
+          }
+        ]
+      },
+      {
+        "type": "textbox",
+        "name": "payment_id",
+        "label": "Payment ID",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Traces",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT count() AS traces FROM otel.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = ''"
+        }
+      ],
+      "description": "Root spans (one per request or job run) in the time range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Error spans",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT count() AS errors FROM otel.otel_traces WHERE $__timeFilter(Timestamp) AND StatusCode = 'Error'"
+        }
+      ],
+      "description": "Spans an exception passed through, INCLUDING handled ones. A duplicate webhook is rejected by the inbound_events unique index on purpose (the app still answers 200), and that marks its INSERT span as an error. Check the errors column in Slowest operations before worrying.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "p95 request",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT round(quantile(0.95)(Duration) / 1e6, 1) AS p95_ms FROM otel.otel_traces WHERE $__timeFilter(Timestamp) AND SpanKind = 'Server'"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 250
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Traces per interval, by service",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT $__timeInterval(Timestamp) AS time, count() AS web FROM otel.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' AND ServiceName = 'payhub-web' GROUP BY time ORDER BY time"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT $__timeInterval(Timestamp) AS time, count() AS worker FROM otel.otel_traces WHERE $__timeFilter(Timestamp) AND ParentSpanId = '' AND ServiceName = 'payhub-worker' GROUP BY time ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Recent traces: click a trace_id to open its waterfall below",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT r.Timestamp AS time, r.ServiceName AS service, r.SpanName AS root_span,\n       round(r.Duration / 1e6, 1) AS duration_ms, r.StatusCode AS status,\n       p.payment_id AS payment_id, r.TraceId AS trace_id\nFROM otel.otel_traces AS r\nLEFT JOIN (\n  SELECT TraceId, any(SpanAttributes['payhub.payment_id']) AS payment_id\n  FROM otel.otel_traces\n  WHERE $__timeFilter(Timestamp) AND SpanAttributes['payhub.payment_id'] != ''\n  GROUP BY TraceId\n) AS p ON p.TraceId = r.TraceId\nWHERE $__timeFilter(r.Timestamp) AND r.ParentSpanId = ''\n  AND ('${roots}' = 'all' OR r.SpanKind = 'Server')\n  AND ('${payment_id}' = '' OR p.payment_id = '${payment_id}')\nORDER BY r.Timestamp DESC\nLIMIT 200"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "trace_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open waterfall",
+                    "url": "/d/payhub-traces/payhub-tracing?var-trace_id=${__value.raw}&var-payment_id=${payment_id}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "payment_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Only this payment",
+                    "url": "/d/payhub-traces/payhub-tracing?var-payment_id=${__value.raw}&var-trace_id=&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "duration_ms"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background",
+                  "mode": "basic"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 250
+                    },
+                    {
+                      "color": "red",
+                      "value": 1000
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "type": "traces",
+      "title": "Trace waterfall: ${trace_id}",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 13,
+        "w": 24,
+        "h": 16
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "traces",
+          "format": 3,
+          "rawSql": "SELECT TraceId AS traceID, SpanId AS spanID, ParentSpanId AS parentSpanID,\n       ServiceName AS serviceName, SpanName AS operationName,\n       multiply(toUnixTimestamp64Nano(Timestamp), 0.000001) AS startTime,\n       multiply(Duration, 0.000001) AS duration,\n       arrayMap(key -> map('key', key, 'value', SpanAttributes[key]), mapKeys(SpanAttributes)) AS tags,\n       arrayMap(key -> map('key', key, 'value', ResourceAttributes[key]), mapKeys(ResourceAttributes)) AS serviceTags,\n       if(StatusCode = 'Error', 2, if(StatusCode = 'Ok', 1, 0)) AS statusCode\nFROM otel.otel_traces\nWHERE TraceId = '${trace_id}'\nORDER BY startTime ASC"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "logs",
+      "title": "Log lines: this trace (or all, when no trace is picked)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 29,
+        "w": 24,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "logs",
+          "format": 2,
+          "rawSql": "SELECT Timestamp AS timestamp, Body AS body, if(LogAttributes['error'] != '' OR LogAttributes['exception'] != '' OR toInt32OrZero(LogAttributes['status']) >= 500, 'error', 'info') AS level,\n       TraceId AS traceID\nFROM otel.otel_logs\nWHERE ('${trace_id}' != '' AND TraceId = '${trace_id}')\n   OR ('${trace_id}' = '' AND $__timeFilter(Timestamp) AND ('${payment_id}' = '' OR LogAttributes['payment_id'] = '${payment_id}'))\nORDER BY Timestamp DESC\nLIMIT 500"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": true
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Slowest operations (requests and jobs)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT ServiceName AS service, SpanName AS operation, count() AS calls,\n       round(quantile(0.5)(Duration) / 1e6, 1) AS p50_ms,\n       round(quantile(0.95)(Duration) / 1e6, 1) AS p95_ms,\n       round(max(Duration) / 1e6, 1) AS max_ms,\n       countIf(StatusCode = 'Error') AS errors\nFROM otel.otel_traces\nWHERE $__timeFilter(Timestamp) AND SpanKind IN ('Server', 'Consumer')\nGROUP BY service, operation\nORDER BY p95_ms DESC\nLIMIT 50"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "PSP calls",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 38,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT SpanAttributes['server.address'] AS psp, SpanAttributes['http.request.method'] AS method,\n       path(SpanAttributes['url.full']) AS path, SpanAttributes['http.response.status_code'] AS status,\n       count() AS calls,\n       round(quantile(0.5)(Duration) / 1e6, 1) AS p50_ms,\n       round(quantile(0.95)(Duration) / 1e6, 1) AS p95_ms,\n       round(max(Duration) / 1e6, 1) AS max_ms\nFROM otel.otel_traces\nWHERE $__timeFilter(Timestamp) AND ScopeName = 'OpenTelemetry::Instrumentation::Faraday'\n  AND SpanAttributes['server.address'] IN ('nordpay', 'kiripay')\nGROUP BY psp, method, path, status\nORDER BY calls DESC"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Payments created (counter; resets when web restarts)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 47,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT time, max(total) AS payments_created FROM (\n  SELECT $__timeInterval(TimeUnix) AS time, TimeUnix, sum(Value) AS total\n  FROM otel.otel_metrics_sum\n  WHERE MetricName = 'payhub_payments_created_total' AND $__timeFilter(TimeUnix)\n  GROUP BY time, TimeUnix\n) GROUP BY time ORDER BY time"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Queues and stuck payments (gauges)",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 47,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT $__timeInterval(TimeUnix) AS time, max(Value) AS outbound_events_pending FROM otel.otel_metrics_gauge WHERE MetricName = 'payhub_outbound_events_pending' AND $__timeFilter(TimeUnix) GROUP BY time ORDER BY time"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT $__timeInterval(TimeUnix) AS time, max(Value) AS outbound_events_dead FROM otel.otel_metrics_gauge WHERE MetricName = 'payhub_outbound_events_dead' AND $__timeFilter(TimeUnix) GROUP BY time ORDER BY time"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "timeseries",
+          "format": 0,
+          "rawSql": "SELECT $__timeInterval(TimeUnix) AS time, max(Value) AS unknown_state_payments FROM otel.otel_metrics_gauge WHERE MetricName = 'payhub_unknown_state_payments' AND $__timeFilter(TimeUnix) GROUP BY time ORDER BY time"
+        }
+      ]
+    }
+  ]
+}

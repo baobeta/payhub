@@ -41,7 +41,7 @@ flowchart LR
 ## Run it
 
 ```bash
-docker compose up --build          # postgres, redis, web (:3000), worker, vite (:3036), mailcatcher (:1080), nordpay (:4001), kiripay (:4002)
+docker compose up --build          # postgres, redis, web (:3000), worker, vite (:3036), mailcatcher (:1080), nordpay (:4001), kiripay (:4002), grafana (:3300), clickhouse (:8123), otel-collector
 docker compose exec web bin/rails db:prepare db:seed   # schema + FX table + a demo merchant (prints its live AND test API keys ONCE)
 ```
 
@@ -168,6 +168,7 @@ The planner estimates 499,316 candidate rows and touches 35 buffers: the index c
 
 - **Logs**: one JSON line per request (lograge) and per job (`ApplicationJob`), both carrying `request_id`, `merchant_id`, `payment_id`, `psp_name`, `duration_ms`. Jobs inherit the enqueuing request's id, so `grep '"payment_id":"…"' log/*.log` reconstructs a payment's whole life across web and worker. Request bodies are never logged.
 - **Metrics** (`GET /metrics`, Prometheus text): `payhub_payments_created_total{psp,currency}`, `payhub_psp_calls_total{psp,operation,outcome}`, `payhub_webhook_deliveries_total{attempt}`, `payhub_webhook_duplicates_total`, `payhub_webhook_signature_failures_total`, `payhub_stuck_payment_alerts_total`, `payhub_ledger_imbalance_detected_total`; gauges `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead`.
+- **Traces, logs and metrics in Grafana** at <http://localhost:3300> (no login locally; dashboard *PayHub tracing*). `docker compose up` also starts an OpenTelemetry Collector, ClickHouse and Grafana ([observability/](observability/)). The collector stores spans from `web` and `worker` over OTLP, the JSON request and job lines from `log/development.log`, and a scrape of `/metrics` every 15s, all in ClickHouse's `otel` database (72h TTL). A trace follows a payment from `POST /v1/payments` through the Sidekiq job to the PSP call, with every SQL statement as a span. Click a `trace_id` for its waterfall, which shows that trace's log lines under it, or filter by `payment_id`. Ad-hoc SQL: `curl 'localhost:8123/?user=otel&password=otel' -d 'SELECT SpanName, count() FROM otel.otel_traces GROUP BY 1'`. The "Error spans" count includes handled exceptions: a duplicate webhook is rejected by a unique index on purpose. Outside compose nothing is exported unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 - **The alert that pages**: `event=alert.stuck_payment` at ERROR for any payment in `pending`/`unknown` past 15 minutes, raised by the minute-sweeper. Everything else is a dashboard.
 - **Health**: `GET /healthz` checks the database only — a liveness probe that fails on a slow dependency causes restarts, not fixes.
 - **Rate limit**: 300 requests/minute per merchant (bearer-key digest), `429` with `Retry-After` in the standard error shape.
