@@ -262,6 +262,64 @@ RSpec.describe StuckPaymentSweeperJob do
     end
   end
 
+  describe "orphan webhooks (DECISIONS #13)" do
+    def orphan(received_at:, reference: "ph_#{SecureRandom.hex(6)}", payload: { "id" => "x" })
+      InboundEvent.create!(psp_name: "kiripay", external_id: "evt_#{SecureRandom.hex(6)}", event_type: "charge.captured",
+                           psp_reference: reference, payload: payload, signature_valid: true, received_at: received_at)
+    end
+
+    it "TC-D5-1: an orphan is applied once its payment exists" do
+      allow(PspRouter).to receive(:adapter).with("kiripay").and_return(KiripayAdapter.new)
+      at = 3.minutes.ago
+      payload = { "id" => "evt_early", "type" => "charge.captured", "created_at" => at.utc.iso8601(3),
+                  "data" => { "id" => "kp_1", "merchant_reference" => "ph_early", "status" => "captured",
+                              "amount" => "500000", "currency" => "VND", "created_at" => at.utc.iso8601(3) } }
+      event = orphan(received_at: at, reference: "ph_early", payload: payload)
+      ProcessInboundEventJob.perform_now(event.id) # arrives before the payment row: left unprocessed
+      expect(event.reload.processed_at).to be_nil
+
+      # The row our worker wrote (dated before the PSP's event), not yet due a poll of its own.
+      payment = travel_to(at - 1.second) { create(:payment, :vnd, psp_reference: "ph_early") }
+      payment.update_columns(next_check_at: 1.hour.from_now)
+      perform_enqueued_jobs(only: ProcessInboundEventJob) { described_class.perform_now }
+
+      expect(event.reload.processed_at).to be_present
+      expect(payment.reload.state).to eq("captured")
+      expect(Ledger.captured_minor(payment)).to eq(500_000)
+    end
+
+    it "TC-D5-2: old orphans do not block a new one" do
+      stub_const("#{described_class}::BATCH", 4)
+      Array.new(4 + 5) { |i| orphan(received_at: (20 - i).hours.ago) } # a backlog that fills the batch
+      fresh = orphan(received_at: 2.minutes.ago)
+
+      expect { described_class.perform_now }.to have_enqueued_job(ProcessInboundEventJob).with(fresh.id)
+    end
+
+    it "TC-D5-3: an orphan older than 24h is closed with an error and an ERROR log, and not re-driven again" do
+      old = orphan(received_at: 25.hours.ago)
+      allow(Rails.logger).to receive(:error).and_call_original
+      allow(Metrics).to receive(:increment).and_call_original
+
+      expect { described_class.perform_now }.not_to have_enqueued_job(ProcessInboundEventJob)
+
+      expect(old.reload).to have_attributes(processed_at: be_present, error: "orphan: no payment for reference")
+      expect(Rails.logger).to have_received(:error).with(a_string_including('"event":"webhook.orphan_abandoned"'))
+      expect(Metrics).to have_received(:increment).with(:orphan_webhooks_abandoned, psp: "kiripay")
+      expect { described_class.perform_now }.not_to have_enqueued_job(ProcessInboundEventJob)
+    end
+
+    it "does not close an old unprocessed event whose payment exists: that is a processing failure, not an orphan" do
+      payment = create(:payment, :vnd)
+      payment.update_columns(next_check_at: 1.hour.from_now)
+      event = orphan(received_at: 25.hours.ago, reference: payment.psp_reference)
+
+      described_class.perform_now
+
+      expect(event.reload.processed_at).to be_nil
+    end
+  end
+
   it "re-drives pending refunds and orphan webhooks, and expires idempotency keys" do
     payment = create(:payment)
     refund = create(:refund, payment: payment)

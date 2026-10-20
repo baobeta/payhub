@@ -37,6 +37,8 @@ class StuckPaymentSweeperJob < ApplicationJob
   # A customer sent to a wallet or 3DS page who has not come back by now has
   # walked away. Measured from updated_at, which only a state change moves.
   REQUIRES_ACTION_TIMEOUT = T.let(30.minutes, ActiveSupport::Duration)
+  # An inbound webhook whose payment has not appeared after this never will.
+  ORPHAN_WINDOW = T.let(24.hours, ActiveSupport::Duration)
   # The same schedule as Payment::DUE_AT_SQL, first due after the timeout.
   ABANDONED_DUE_AT_SQL = T.let(
     "COALESCE(next_check_at, updated_at + interval '#{REQUIRES_ACTION_TIMEOUT.to_i} seconds')".freeze, String
@@ -179,11 +181,32 @@ class StuckPaymentSweeperJob < ApplicationJob
 
   # Webhooks that arrived before our worker wrote the payment row were left
   # unprocessed (ProcessInboundEventJob logged webhook.orphan). Try again;
-  # the payment probably exists now.
+  # the payment probably exists now. Half the batch is the oldest, half the
+  # newest, so a backlog cannot starve a new orphan (the payment-sweep
+  # fairness rule, DECISIONS #13). Past ORPHAN_WINDOW the payment is not
+  # coming: the event is closed with an error and an alert, not retried forever.
   sig { void }
   def redrive_orphan_webhooks
-    InboundEvent.unprocessed.where(received_at: ..1.minute.ago).limit(BATCH).pluck(:id).each do |id|
-      ProcessInboundEventJob.perform_later(id)
+    abandon_old_orphans
+
+    live = InboundEvent.unprocessed.where(received_at: ORPHAN_WINDOW.ago..1.minute.ago)
+    oldest = live.limit(BATCH / 2).pluck(:id)
+    newest = live.where.not(id: oldest).reorder(received_at: :desc).limit(BATCH - oldest.size).pluck(:id)
+    (oldest + newest).each { |id| ProcessInboundEventJob.perform_later(id) }
+  end
+
+  # Only events whose payment still does not exist: an unprocessed event for a
+  # payment we do have is a processing failure, which Sidekiq's retries own.
+  sig { void }
+  def abandon_old_orphans
+    has_payment = Payment.where("payments.psp_name = inbound_events.psp_name")
+                         .where("payments.psp_reference = inbound_events.psp_reference")
+    old = InboundEvent.unprocessed.where(received_at: ...ORPHAN_WINDOW.ago).where.not(has_payment.arel.exists)
+    old.limit(BATCH).each do |event|
+      event.update!(processed_at: Time.current, error: "orphan: no payment for reference")
+      Rails.logger.error({ event: "webhook.orphan_abandoned", inbound_event_id: event.id, psp_name: event.psp_name,
+                           psp_reference: event.psp_reference, received_at: event.received_at.utc.iso8601 }.to_json)
+      Metrics.increment(:orphan_webhooks_abandoned, psp: event.psp_name)
     end
   end
 
