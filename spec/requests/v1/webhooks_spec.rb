@@ -110,6 +110,82 @@ RSpec.describe "V1 inbound webhooks", type: :request do
     expect(OutboundEvent.where(payment: payment, event_type: "payment.failed").count).to eq(1)
   end
 
+  it "TC-D7-1: a Nordpay charge.authorized webhook resolves unknown → authorized and clears next_check_at" do
+    nordpay_payment = create(:payment, psp_reference: "ph_np_d7")
+    nordpay_payment.update_columns(state: "unknown", first_sent_at: nordpay_payment.created_at,
+                                   next_check_at: 5.minutes.from_now)
+    nordpay_secret = "np_whsec_test"
+
+    t0 = nordpay_payment.created_at + 5.seconds
+    event = {
+      "id" => "evt_d7_#{SecureRandom.hex(4)}",
+      "type" => "charge.authorized",
+      "created_at" => t0.utc.iso8601(3),
+      "data" => { "id" => "np_ch_d7", "reference" => "ph_np_d7", "status" => "authorized", "captured_minor" => 0 }
+    }
+    body = event.to_json
+    sig = OpenSSL::HMAC.hexdigest("SHA256", nordpay_secret, body)
+    post "/v1/webhooks/nordpay", params: body,
+                                 headers: { "Content-Type" => "application/json", "X-Nordpay-Signature" => sig }
+    expect(response).to have_http_status(:ok)
+    perform_enqueued_jobs
+
+    expect(nordpay_payment.reload.state).to eq("authorized")
+    expect(nordpay_payment.next_check_at).to be_nil
+  end
+
+  it "TC-D1-1: a valid signed Nordpay charge.authorized webhook returns 200 and authorizes the payment" do
+    nordpay_payment = create(:payment, psp_reference: "ph_np1")
+    nordpay_secret = "np_whsec_test"
+
+    event = {
+      "id" => "evt_np_#{SecureRandom.hex(4)}",
+      "type" => "charge.authorized",
+      "created_at" => (nordpay_payment.created_at + 5.seconds).utc.iso8601(3),
+      "data" => {
+        "id" => "np_ch_1",
+        "reference" => "ph_np1",
+        "status" => "authorized",
+        "captured_minor" => 0
+      }
+    }
+    body = event.to_json
+    sig = OpenSSL::HMAC.hexdigest("SHA256", nordpay_secret, body)
+
+    post "/v1/webhooks/nordpay", params: body,
+                                 headers: { "Content-Type" => "application/json", "X-Nordpay-Signature" => sig }
+
+    expect(response).to have_http_status(:ok)
+    perform_enqueued_jobs
+
+    stored = InboundEvent.find_by(psp_name: "nordpay", external_id: event["id"])
+    expect(stored).to be_present
+    expect(stored.signature_valid).to be true
+    expect(nordpay_payment.reload.state).to eq("authorized")
+  end
+
+  it "TC-D2-1: a bad Nordpay signature returns 401, stores the event with signature_valid false, never processes" do
+    nordpay_payment = create(:payment, psp_reference: "ph_np2")
+
+    event = {
+      "id" => "evt_np_bad_#{SecureRandom.hex(4)}",
+      "type" => "charge.authorized",
+      "created_at" => (nordpay_payment.created_at + 5.seconds).utc.iso8601(3),
+      "data" => { "id" => "np_ch_2", "reference" => "ph_np2", "status" => "authorized", "captured_minor" => 0 }
+    }
+    body = event.to_json
+
+    post "/v1/webhooks/nordpay", params: body,
+                                 headers: { "Content-Type" => "application/json", "X-Nordpay-Signature" => "wrong_sig" }
+
+    expect(response).to have_http_status(:unauthorized)
+    stored = InboundEvent.find_by(event_type: "unverified", psp_name: "nordpay")
+    expect(stored).to be_present
+    expect(stored.signature_valid).to be false
+    perform_enqueued_jobs
+    expect(nordpay_payment.reload.state).to eq("pending")
+  end
+
   it "400s a malformed body and 404s an unknown PSP" do
     ts = Time.current.to_i
     sig = "t=#{ts},v1=#{OpenSSL::HMAC.hexdigest('SHA256', secret, "#{ts}.{}")}"

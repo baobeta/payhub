@@ -322,6 +322,98 @@ RSpec.describe "V1 capture / cancel / refunds / balance", type: :request do
     end
   end
 
+  describe "TC-E5-1: capture refused in non-capturable states" do
+    %w[unknown failed canceled requires_action refunded].each do |bad_state|
+      it "returns 400 invalid_state for #{bad_state} payment, no Capture row created" do
+        payment = create(:payment, merchant: merchant)
+        payment.transition!(:authorized, sort_key: payment.created_at + 1.second, source: "worker")
+        payment.transition!(:captured, sort_key: payment.created_at + 2.seconds, source: "worker") if bad_state == "refunded"
+        # Force to target state
+        case bad_state
+        when "unknown"
+          payment.update_columns(state: "unknown")
+        when "failed"
+          payment.update_columns(state: "failed")
+        when "canceled"
+          payment.transition!(:canceled, sort_key: payment.created_at + 2.seconds, source: "worker")
+        when "requires_action"
+          payment.update_columns(state: "requires_action")
+        when "refunded"
+          payment.update_columns(state: "refunded")
+        end
+
+        post "/v1/payments/#{payment.id}/capture", params: "{}", headers: auth_headers(key)
+
+        expect(response).to have_http_status(:bad_request),
+                             "expected 400 for state=#{bad_state}, got #{response.status}: #{response.body}"
+        expect(json_body["error"]["code"]).to eq("invalid_state")
+        expect(payment.captures.count).to eq(0)
+      end
+    end
+  end
+
+  describe "TC-E10-1: Kiripay partial capture is refused" do
+    it "returns 400 partial_capture_unsupported for a non-full amount on a Kiripay payment" do
+      # Kiripay: separate_authorize_and_capture? == false (capture-only PSP)
+      kiripay = FakePspAdapter.new(name: "kiripay", currencies: %w[VND], multicapture: false,
+                                   separate_auth: false)
+      allow(PspRouter).to receive(:adapter).with("kiripay").and_return(kiripay)
+      payment = create(:payment, :vnd, merchant: merchant)
+      payment.transition!(:authorized, sort_key: payment.created_at + 1.second, source: "worker")
+
+      # Capture less than the full amount → partial capture → unsupported
+      post "/v1/payments/#{payment.id}/capture",
+           params: { amount_minor: 100_000 }.to_json,
+           headers: auth_headers(key)
+
+      expect(response).to have_http_status(:bad_request)
+      expect(json_body["error"]["code"]).to eq("partial_capture_unsupported")
+    end
+  end
+
+  describe "TC-F7-1: refund refused unless captured" do
+    %w[pending canceled failed refunded].each do |bad_state|
+      it "returns 400 invalid_state for #{bad_state} payment" do
+        payment = create(:payment, merchant: merchant)
+        case bad_state
+        when "pending"
+          # already pending
+        when "canceled"
+          payment.transition!(:authorized, sort_key: payment.created_at + 1.second, source: "worker")
+          payment.transition!(:canceled, sort_key: payment.created_at + 2.seconds, source: "worker")
+        when "failed"
+          payment.update_columns(state: "failed")
+        when "refunded"
+          payment.update_columns(state: "refunded")
+        end
+
+        post "/v1/payments/#{payment.id}/refunds",
+             params: { amount_minor: 500 }.to_json,
+             headers: auth_headers(key)
+
+        expect(response).to have_http_status(:bad_request),
+                             "expected 400 for state=#{bad_state}, got #{response.status}: #{response.body}"
+        expect(json_body["error"]["code"]).to eq("invalid_state")
+      end
+    end
+  end
+
+  describe "TC-G1-2: payment.canceled event is written on API cancel" do
+    it "emits a payment.canceled outbound event in the same transaction as the state change" do
+      payment = authorized_payment
+      adapter.script(:cancel, charge(:canceled, payment))
+
+      expect do
+        post "/v1/payments/#{payment.id}/cancel", params: "{}", headers: auth_headers(key)
+      end.to change { OutboundEvent.where(payment: payment, event_type: "payment.canceled").count }.by(1)
+
+      expect(response).to have_http_status(:ok)
+      event = OutboundEvent.find_by(payment: payment, event_type: "payment.canceled")
+      expect(event).to be_present
+      expect(event.payload).to include("state" => "canceled")
+    end
+  end
+
   describe "a cancel the PSP refuses (bug 6)" do
     it "TC-G6-1: refuses a Kiripay cancel up front, with no PSP call" do
       kiripay = FakePspAdapter.new(name: "kiripay", currencies: %w[VND], void: false)
