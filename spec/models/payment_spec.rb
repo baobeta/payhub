@@ -107,6 +107,24 @@ RSpec.describe Payment do
     end
   end
 
+  describe "TC-B9-1: partial unique index rejects a second most_recent transition" do
+    it "TC-B9-1: raw insert of a second most_recent: true row is rejected by the unique index" do
+      # The partial unique index idx_transitions_most_recent enforces that only
+      # one transition per payment can have most_recent = true.
+      payment.transition!(:authorized, sort_key: t0, source: "worker")
+      expect(payment.transitions.where(most_recent: true).count).to eq(1)
+
+      expect do
+        ActiveRecord::Base.transaction(requires_new: true) do
+          ActiveRecord::Base.connection.execute(
+            "INSERT INTO payment_transitions (id, payment_id, to_state, from_state, most_recent, sort_key, source, metadata, created_at) " \
+            "VALUES (gen_random_uuid(), '#{payment.id}', 'failed', 'authorized', true, NOW(), 'test', '{}', NOW())"
+          )
+        end
+      end.to raise_error(ActiveRecord::RecordNotUnique, /idx_transitions_most_recent/)
+    end
+  end
+
   describe "multicapture migration (DECISIONS #20)" do
     it "TC-E3-18: closes capturing on every payment that was captured before the deploy" do
       require Rails.root.join("db/migrate/20261020100001_add_multicapture_to_payments_and_captures")

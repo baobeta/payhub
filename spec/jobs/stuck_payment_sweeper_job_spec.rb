@@ -370,6 +370,26 @@ RSpec.describe StuckPaymentSweeperJob do
     end
   end
 
+  describe "TC-E8-1: sweeper re-drives a stuck pending capture" do
+    it "TC-E8-1: a capture pending past STUCK_AFTER has CapturePaymentJob enqueued with its id" do
+      payment = create(:payment)
+      payment.transition!(:authorized, sort_key: payment.created_at + 1.second, source: "worker")
+      capture = payment.captures.create!(amount_minor: 2500, base_captured_minor: 0)
+      capture.update_column(:updated_at, (described_class::STUCK_AFTER + 1.minute).ago)
+
+      expect { described_class.perform_now }.to have_enqueued_job(CapturePaymentJob).with(capture.id)
+    end
+
+    it "does not re-drive a capture that is still within STUCK_AFTER" do
+      payment = create(:payment)
+      payment.transition!(:authorized, sort_key: payment.created_at + 1.second, source: "worker")
+      capture = payment.captures.create!(amount_minor: 2500, base_captured_minor: 0)
+      # updated_at is recent (just created), so it is not stuck yet
+
+      expect { described_class.perform_now }.not_to have_enqueued_job(CapturePaymentJob)
+    end
+  end
+
   it "re-drives pending refunds and orphan webhooks, and expires idempotency keys" do
     payment = create(:payment)
     refund = create(:refund, payment: payment)

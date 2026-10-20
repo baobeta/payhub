@@ -99,6 +99,28 @@ RSpec.describe ExpireAuthorizationsJob do
     expect(Rails.logger).to have_received(:warn).with(a_string_including('"event":"authorization.expiry_unsupported"')).once
   end
 
+  describe "TC-G4-1: expiry boundary exactly 6 days vs 6 days − 1 minute" do
+    it "TC-G4-1a: a payment idle for exactly 6 days is expired" do
+      # updated_at = exactly HOLD_LIMIT ago → idle >= HOLD_LIMIT → must expire
+      stale = authorized(idle_for: described_class::HOLD_LIMIT)
+      adapter.script(:cancel, -> { canceled(stale) })
+
+      described_class.perform_now
+
+      expect(stale.reload.state).to eq("canceled")
+    end
+
+    it "TC-G4-1b: a payment idle for 6 days − 1 minute is left alone" do
+      # updated_at = 1 minute under the limit → not yet idle enough
+      fresh_enough = authorized(idle_for: described_class::HOLD_LIMIT - 1.minute)
+
+      described_class.perform_now
+
+      expect(fresh_enough.reload.state).to eq("authorized")
+      expect(adapter.calls[:cancel]).to be_empty
+    end
+  end
+
   it "backs off a void the PSP refuses, without blocking the rest of the batch" do
     refused = authorized(idle_for: 8.days)
     ok = authorized(idle_for: 7.days)

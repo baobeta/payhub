@@ -197,6 +197,34 @@ RSpec.describe CapturePaymentJob do
     end
   end
 
+  describe "TC-E1-2: payment.captured event written once with the state change" do
+    it "TC-E1-2: a single capture emits exactly one payment.captured event, in the same transaction" do
+      capture = capture_request(2500)
+      adapter.script(:fetch, charge(:authorized, captured_minor: 0))
+      adapter.script(:capture, charge(:captured, captured_minor: 2500))
+
+      described_class.perform_now(capture.id)
+
+      events = OutboundEvent.where(payment: payment, event_type: "payment.captured")
+      expect(events.count).to eq(1)
+      # The event exists iff the state change committed — transactional outbox.
+      expect(payment.reload.state).to eq("captured")
+      expect(events.first.created_at).to be_within(1.second).of(payment.transitions.find_by(to_state: "captured").created_at)
+    end
+
+    it "TC-E1-2: a second perform_now on an already-captured payment does not write a duplicate event" do
+      capture = capture_request(2500)
+      adapter.script(:fetch, charge(:authorized, captured_minor: 0))
+      adapter.script(:capture, charge(:captured, captured_minor: 2500))
+      described_class.perform_now(capture.id)
+
+      # Re-run: idempotent, no duplicate events written.
+      described_class.perform_now(capture.id)
+
+      expect(OutboundEvent.where(payment: payment, event_type: "payment.captured").count).to eq(1)
+    end
+  end
+
   it "adopts a job enqueued before captures were rows (payment_id, amount)" do
     adapter.script(:fetch, charge(:authorized, captured_minor: 0))
     adapter.script(:capture, charge(:captured, captured_minor: 2500))
