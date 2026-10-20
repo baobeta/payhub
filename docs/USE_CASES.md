@@ -10,6 +10,42 @@
 - ⛔ not built
 - 🚫 deliberately not built (a non-goal)
 
+## 0. Status after the fixes (2026-10-20, branch `fix/use-case-coverage`)
+
+**Fixed:**
+- All 15 bugs in §1, test-first. The specs are in [TEST_CASES.md](TEST_CASES.md) §1–§2.
+- Several partial captures now match the market: `final` flag, Stripe/Checkout.com defaults, Adyen-style events per capture.
+- 9 more defects the code review found in the fixes themselves (TEST_CASES §4). The worst: a Kiripay refund that had already landed could be failed, and paid out twice.
+- Every ⚪/🟡 test gap in TEST_CASES §3 now has a spec, including the DOMAIN.md walkthrough as a test.
+
+**Verification:**
+- 884 examples, 0 failures, 0 pending
+- Sorbet clean, rubocop clean, frontend 26/26
+- simulation seeds 1–20 green
+
+Rows marked ✅ below are fixed or now fully tested.
+
+**Still open:**
+
+*Not part of the 15 bugs.* Each needs a product decision or a feature, not a test:
+
+| ID | Gap | Why it is still open |
+| --- | --- | --- |
+| M7 | No list / revoke of other sessions | Feature (ASVS 7.5.2) |
+| M11 | No re-invite; a removed member's email is blocked for every shop | The global unique email needs a product decision |
+| M12 | Only 2 security emails; no authenticator reset | Feature |
+| H8 | At-least-once / unordered delivery isn't documented for merchants | Docs |
+| L4, M10 | A twin can point at a twin; the DB allows zero owners | Needs a DB constraint |
+| L6 | Rate limit per key, not per merchant; the dashboard has no limit | Design choice |
+| C6 | `pending` payments never reach the ops queue | Design choice |
+| J5 | The Kiripay settlement skip is silent | Log line |
+| K1 | A call-log row is lost if the caller's transaction rolls back | Design |
+| — | Late wallet successes are listed for ops, but there is no in-product refund for them | Feature (M-4) |
+
+*Open decision.* Request tickets keep a 422 answer for 24h, like every 4xx. Stripe and Checkout.com don't keep validation failures, so a corrected retry with the same key works there. In PayHub the corrected retry gets a 422 for reusing the key. TC-A4-1 asserts today's behaviour.
+
+*Deliberately not built:* G5 (releasing a remainder at the PSP), disputes, PSP failover, and the rest of §9.
+
 ## 1. Bugs and contradictions, ranked by risk
 
 Each one below has been checked against the code.
@@ -45,20 +81,20 @@ Each one below has been checked against the code.
 
 | ID | Use case | Status | Gap |
 | --- | --- | --- | --- |
-| A1 | EUR/GBP/USD payment → 202 pending, routed to Nordpay | 🟡 | GBP and USD routing not asserted |
-| A2 | VND/THB/IDR → Kiripay | ⚪ | No test asserts `psp_name == "kiripay"` |
+| A1 | EUR/GBP/USD payment → 202 pending, routed to Nordpay | ✅ | GBP and USD routing not asserted |
+| A2 | VND/THB/IDR → Kiripay | ✅ | No test asserts `psp_name == "kiripay"` |
 | A3 | Unsupported currency → 422 | ✅ | |
-| A4 | Invalid amount (0, negative, float, string) | 🟡 | 0, 25.5 and "2500" never sent through the API |
-| A5 | Zero-decimal currency stored as-is | 🟡 | No API test with VND 50000 |
+| A4 | Invalid amount (0, negative, float, string) | ✅ | 0, 25.5 and "2500" never sent through the API |
+| A5 | Zero-decimal currency stored as-is | ✅ | No API test with VND 50000 |
 | A6 | Reference saved before the PSP call; safe after a crash | ✅ | Nordpay only (see bug 1) |
-| A7 | FX rate copied at creation | 🟡 | No "new rate later, payment unchanged" test |
+| A7 | FX rate copied at creation | ✅ | No "new rate later, payment unchanged" test |
 | A8 | Same key and body → replay, one payment | ✅ | Real-thread race tested |
 | A9 | Same key, different body → 422 | ✅ | |
 | A10 | In-flight duplicate → 409 | ✅ | Unit only, no request test |
-| A11 | Keys scoped per merchant | 🟡 | Guard level only |
-| A12 | Key kept for 24h | 🟡 | TTL value not asserted |
+| A11 | Keys scoped per merchant | ✅ | Guard level only |
+| A12 | Key kept for 24h | ✅ | TTL value not asserted |
 | A13 | Missing key → 400 | ✅ | |
-| A14 | PAN never logged / never stored | 🔴 | See bug 13 |
+| A14 | PAN never logged / never stored | ✅ | See bug 13 |
 | A15 | Abandoned claim (>60s) can be re-taken | ✅ | |
 | A16 | 4xx replayed; 5xx releases the key | ✅ | |
 | A17 | Supported currency with no FX rate → 503 | ✅ | |
@@ -69,21 +105,21 @@ Each one below has been checked against the code.
 | --- | --- | --- | --- |
 | B1 | Approve → authorized, plus `payment.authorized` in the same transaction | ✅ | |
 | B2 | Decline → failed | ✅ | |
-| B3 | requires_action → authorized / failed / expired | 🔴 | Expiry not built (bug 4); the decline webhook is untested |
+| B3 | requires_action → authorized / failed / expired | ✅ | Expiry not built (bug 4); the decline webhook is untested |
 | B4 | Timeout → unknown; the charge is never re-sent | ✅ | |
 | B5 | unknown dated from the first send | ✅ | |
-| B6 | 5xx / connection error → retry; 4xx → discard | 🟡 | Kiripay error mapping untested |
-| B7 | Kiripay deduped by our reference | 🔴 | Bug 1 |
-| B8 | Job crash after the PSP call doesn't double-charge | 🔴 | Bug 1 |
-| B9 | Ordered by PSP time; stale rows recorded, not applied; one current row | 🟡 | DB uniqueness never attacked directly |
+| B6 | 5xx / connection error → retry; 4xx → discard | ✅ | Kiripay error mapping untested |
+| B7 | Kiripay deduped by our reference | ✅ | Bug 1 |
+| B8 | Job crash after the PSP call doesn't double-charge | ✅ | Bug 1 |
+| B9 | Ordered by PSP time; stale rows recorded, not applied; one current row | ✅ | DB uniqueness never attacked directly |
 | B10 | Illegal transitions refused | ✅ | |
 | C1–C2 | Sweeper resolves unknown → authorized / failed | ✅ | |
 | C3 | Backoff and check count | ✅ | |
-| C4 | Sweeper vs webhook race | 🔴 | Doc mismatch (bug 12); no race test |
+| C4 | Sweeper vs webhook race | ✅ | Doc mismatch (bug 12); no race test |
 | C5 | Half oldest / half newest scheduling | ✅ | SKIP LOCKED split untested |
 | C6 | Long-unknown escalation | 🟡 | No escalation; `pending` payments never reach the ops queue |
 | C7 | Ops resolves unknown by two-person proposal | ✅ | `unknown → authorized` path untested |
-| C8 | Circuit breaker per PSP | 🟡 | "Payments wait rather than fail over" inferred, not tested |
+| C8 | Circuit breaker per PSP | ✅ | "Payments wait rather than fail over" inferred, not tested |
 | C9 | Simulation | 🟡 | Its fake PSP deduplicates authorize and only plays Nordpay, so it cannot see bug 1 |
 
 ## 4. Capture, refund, cancel, expiry
@@ -92,51 +128,51 @@ Each one below has been checked against the code.
 | --- | --- | --- | --- |
 | E1 | Full capture plus balanced ledger | ✅ | `payment.captured` event not asserted |
 | E2 | Partial capture | ✅ | |
-| E3 | Multiple partial captures | 🔴 | Bug 3 |
+| E3 | Multiple partial captures | ✅ | Bug 3 |
 | E4 | Capture > authorized → 422 | ✅ | |
-| E5 | Capture refused in every non-authorized state | 🟡 | Only `pending` tested |
-| E6 | One pending capture at a time | 🟡 | No thread race, no DB-index test |
+| E5 | Capture refused in every non-authorized state | ✅ | Only `pending` tested |
+| E6 | One pending capture at a time | ✅ | No thread race, no DB-index test |
 | E7 | Read PSP total before send (double-charge fix) | ✅ | |
-| E8 | Capture timeout → re-drive | 🟡 | Sweeper capture re-drive untested |
-| E9 | Capture/refund/cancel idempotency via v1 | ⚪ | Only POST /v1/payments tested |
-| E10 | Capability flags | 🟡 | `partial_capture_unsupported` untested |
-| E11 | Late `charge.captured` webhook is a no-op | ⚪ | Nordpay path untested; see bug 14 |
-| F1 | Full refund | 🟡 | No single full refund; the default amount is untested |
+| E8 | Capture timeout → re-drive | ✅ | Sweeper capture re-drive untested |
+| E9 | Capture/refund/cancel idempotency via v1 | ✅ | Only POST /v1/payments tested |
+| E10 | Capability flags | ✅ | `partial_capture_unsupported` untested |
+| E11 | Late `charge.captured` webhook is a no-op | ✅ | Nordpay path untested; see bug 14 |
+| F1 | Full refund | ✅ | No single full refund; the default amount is untested |
 | F2 | Partial → `part_refunded` → `refunded` | ✅ | |
 | F3 | Over-refund refused | ✅ | |
 | F4 | Concurrent €20 + €20 on €25 → one refused | ✅ | Real threads |
 | F5 | Two-phase reservation | ✅ | |
 | F6 | A refund settles once | ✅ | |
-| F7 | Refund refused unless captured | 🟡 | Only `authorized` tested |
+| F7 | Refund refused unless captured | ✅ | Only `authorized` tested |
 | F8 | Refund reference before the call; timeout handling | ✅ | Rejected → bug 2 |
-| F9 | Refund idempotency | 🟡 | v1 replay untested |
-| F10 | `refund.succeeded` / `refund.failed` events | ⚪ | Never asserted |
-| F11 | Dashboard refund: permission, step-up, audit | 🟡 | Step-up only in e2e |
-| G1 | Cancel authorized → canceled plus event | 🟡 | API cancel event not asserted |
-| G2 | Cancel refused when not authorized | 🟡 | Only `captured` tested; Rejected → bug 6 |
+| F9 | Refund idempotency | ✅ | v1 replay untested |
+| F10 | `refund.succeeded` / `refund.failed` events | ✅ | Never asserted |
+| F11 | Dashboard refund: permission, step-up, audit | ✅ | Step-up only in e2e |
+| G1 | Cancel authorized → canceled plus event | ✅ | API cancel event not asserted |
+| G2 | Cancel refused when not authorized | ✅ | Only `captured` tested; Rejected → bug 6 |
 | G3 | Auto-void after 6 idle days plus notify | ✅ | |
-| G4 | Idle boundary | 🟡 | Exactly-6-days not tested |
+| G4 | Idle boundary | ✅ | Exactly-6-days not tested |
 | G5 | Release leftover hold after partial capture | 🚫 | The UI text says otherwise |
-| G6 | Void capability per PSP | 🔴 | Bug 6 |
-| G7 | DOMAIN.md walkthrough (rows per step, €15.00 balance) | ⛔ | No test; the doc miscounts step 9 |
+| G6 | Void capability per PSP | ✅ | Bug 6 |
+| G7 | DOMAIN.md walkthrough (rows per step, €15.00 balance) | ✅ | No test; the doc miscounts step 9 |
 
 ## 5. Messages: PSP webhooks in, shop webhooks out
 
 | ID | Use case | Status | Gap |
 | --- | --- | --- | --- |
-| D1 | Valid webhook stored and applied | 🟡 | Kiripay end to end only; nothing posts to `/v1/webhooks/nordpay` |
-| D2 | Bad signature stored, alerted, never applied | 🟡 | Nordpay request-level test missing |
+| D1 | Valid webhook stored and applied | ✅ | Kiripay end to end only; nothing posts to `/v1/webhooks/nordpay` |
+| D2 | Bad signature stored, alerted, never applied | ✅ | Nordpay request-level test missing |
 | D3 | Same event ×5 → stored once | ✅ | Sequential, not concurrent |
 | D4 | Out of order → no regression | ✅ | |
-| D5 | Webhook before the payment exists → applied later | 🟡 | Re-drive applying is not tested; bug 15 |
+| D5 | Webhook before the payment exists → applied later | ✅ | Re-drive applying is not tested; bug 15 |
 | D6 | PSP secret list | ✅ | |
-| D7 | Webhook resolves unknown → authorized | ⚪ | No deterministic test |
+| D7 | Webhook resolves unknown → authorized | ✅ | No deterministic test |
 | H1 | Outbox written in the same transaction | 🟡 | Refund events untested |
 | H2 | 2xx → delivered | ✅ | |
-| H3 | Retry with backoff | 🟡 | Timeout and `duration_ms` untested |
-| H4 | Dead → resend (ops, shop) | 🔴 | Bug 7 |
+| H3 | Retry with backoff | ✅ | Timeout and `duration_ms` untested |
+| H4 | Dead → resend (ops, shop) | ✅ | Bug 7 |
 | H5 | Merchant secret rotation, 24h overlap | ✅ | A double rotation inside 24h drops the first secret |
-| H6 | SSRF guard on save **and** on delivery | 🟡 | The https-only rule and IPv4-mapped addresses untested |
+| H6 | SSRF guard on save **and** on delivery | ✅ | The https-only rule and IPv4-mapped addresses untested |
 | H7 | `/v1/events` polling | ✅ | |
 | H8 | Tell merchants: at-least-once, unordered | ⛔ | Not documented; no sequence number |
 
@@ -144,28 +180,28 @@ Each one below has been checked against the code.
 
 | ID | Use case | Status | Gap |
 | --- | --- | --- | --- |
-| I1 | Transfers sum to zero; alarm | 🟡 | The alarm itself is untested |
-| I2 | Append-only enforced by the DB | 🔴 | Bug 8 |
+| I1 | Transfers sum to zero; alarm | ✅ | The alarm itself is untested |
+| I2 | Append-only enforced by the DB | ✅ | Bug 8 |
 | I3 | Balances derived (`GET /v1/balance`) | ✅ | |
 | I4 | Manual correction only by two people | ✅ | Not via request; payment-scoped only |
 | I5 | Property-based invariants | 🟡 | One payment, EUR, a PSP that always says yes |
 | I6 | Accounts per merchant × currency × kind | ✅ | |
 | J1 | Matched line → booked | ✅ | |
 | J2 | Unmatched flagged | ✅ | |
-| J3 | Amount mismatch flagged | 🔴 | Bug 9 |
+| J3 | Amount mismatch flagged | ✅ | Bug 9 |
 | J4 | Re-import harmless | ✅ | |
 | J5 | Kiripay has no report | 🟡 | Silent skip; Kiripay receivable never clears |
 | J6 | Breaks reviewed with a note | ✅ | |
-| J7 | Drift checks (reservations, cache, PSP total) | 🟡 | Only reservation drift is tested |
+| J7 | Drift checks (reservations, cache, PSP total) | ✅ | Only reservation drift is tested |
 | K1 | PSP call log, redacted, 12 months | 🟡 | Lost if the caller rolls back; young-row delete refusal untested |
 
 ## 7. Merchant platform: keys, sign-in, roles
 
 | ID | Use case | Status | Gap |
 | --- | --- | --- | --- |
-| L1 | sk_live / sk_test routing; prefix must match mode | 🟡 | DB CHECK never exercised |
+| L1 | sk_live / sk_test routing; prefix must match mode | ✅ | DB CHECK never exercised |
 | L2 | Key shown once, digest only | ✅ | |
-| L3 | Roll with overlap; revoke immediately; never delete | 🔴 | Bug 5 |
+| L3 | Roll with overlap; revoke immediately; never delete | ✅ | Bug 5 |
 | L4 | Test-twin invariant | 🟡 | Twin can point at a twin |
 | L5 | Live and test reported separately | 🟡 | Balances not tested per mode |
 | L6 | Rate limits | 🟡 | Per key; dashboard has none |
@@ -175,15 +211,15 @@ Each one below has been checked against the code.
 | M3 | TOTP not reusable | ✅ | Model level |
 | M4 | Recovery codes | 🟡 | Second use not tested via request |
 | M5 | 15-min idle, 12h absolute | ✅ | |
-| M6 | Step-up for money and secrets | 🟡 | Many actions untested at request level |
+| M6 | Step-up for money and secrets | ✅ | Many actions untested at request level |
 | M7 | List and revoke other sessions | ⛔ | Only "sign out here" |
 | M8 | Email unique case-insensitively | ✅ | Global, includes disabled users |
-| M9 | Role × action matrix | 🟡 | No route→permission fixture: a wrong permission passes CI |
+| M9 | Role × action matrix | ✅ | No route→permission fixture: a wrong permission passes CI |
 | M10 | One owner; transfer ownership | ✅ | DB allows zero owners |
 | M11 | Invite, expire, accept, change role | 🟡 | No re-invite; a removed email is blocked forever |
 | M12 | Security history and emails | 🟡 | Only 2 email types; no TOTP reset |
 | M13 | Live/test mode switch | ✅ | Not audited |
-| M14 | Audit success **and** refusals | 🔴 | Bug 10 |
+| M14 | Audit success **and** refusals | ✅ | Bug 10 |
 | M15 | CSV formula safety | 🟡 | Email starting with `=` not tested end to end |
 | M16 | CSP | 🟡 | Only 2 directives tested |
 
@@ -197,18 +233,18 @@ Each one below has been checked against the code.
 | N4 | Propose with reason and case reference | 🟡 | Ledger correction is API-only, no request spec |
 | N5 | No self-approval (DB CHECK) | ✅ | |
 | N6 | Immutable after submit; withdraw | 🟡 | Reason fields mutable; withdraw success untested |
-| N7 | Double submit → one proposal | 🔴 | Bug 11 |
-| N8 | Reject | 🟡 | Only "note required" tested |
-| N9 | Apply fails → `failed` with error | 🟡 | Error persistence not asserted |
-| N10 | Apply writes transition plus outbox | 🟡 | Outbox not asserted |
+| N7 | Double submit → one proposal | ✅ | Bug 11 |
+| N8 | Reject | ✅ | Only "note required" tested |
+| N9 | Apply fails → `failed` with error | ✅ | Error persistence not asserted |
+| N10 | Apply writes transition plus outbox | ✅ | Outbox not asserted |
 | N11 | Two approvers at once → one wins | ✅ | Real threads |
 | N12 | Read-only impersonation, 30 min, case reference | ✅ | Stop impersonation untested |
 | N13 | Ops queue and payment detail | 🟡 | `unknown` only |
 | N14 | Resend dead event | ✅ | See bug 7 |
 | N15 | Circuit view (reset by design: none) | ✅ / 🚫 | |
 | N16 | Operator invite, role change, disable | ✅ | `POST /operators` untested |
-| N17 | Audit append-only, 12 months, refusals | 🔴 | Bug 10 |
-| O1 | Demo reset deletes nothing | 🟡 | "Nothing deleted" not asserted |
+| N17 | Audit append-only, 12 months, refusals | ✅ | Bug 10 |
+| O1 | Demo reset deletes nothing | ✅ | "Nothing deleted" not asserted |
 | O2 | One chaos run at a time | ✅ | Small race → 500 |
 | O3 | Chaos run checks the PSP's records | ⚪ | CI only |
 | O4 | Demo API | ✅ | |
