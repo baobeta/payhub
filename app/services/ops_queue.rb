@@ -3,8 +3,11 @@
 
 # O-01: exceptions go to a queue, never to a silent fix. Oldest first.
 module OpsQueue
+  extend T::Sig
+
   LIMIT = 50
 
+  sig { returns(T::Hash[String, T.untyped]) }
   def self.call
     {
       "unknown_payments" => Payment.where(state: "unknown").order(:updated_at).limit(LIMIT).includes(:merchant).map do |p|

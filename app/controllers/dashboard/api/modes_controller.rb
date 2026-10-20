@@ -5,8 +5,11 @@ module Dashboard
   module Api
     # M-18: switches which data space this session reads, live or the test twin.
     class ModesController < BaseController
+      extend T::Sig
+
       allow_unauthorized only: :update # every role may look at test data
 
+      sig { void }
       def update
         livemode = ActiveModel::Type::Boolean.new.cast(params.require(:livemode))
         current_session.update!(livemode:)

@@ -6,6 +6,8 @@ module Ops
     # Inviting a fellow operator and the first half of enrolling them. The
     # token in the email is the credential for show/accept.
     class InvitationsController < BaseController
+      extend T::Sig
+
       ENROL_COOKIE = :_payhub_ops_enrol
       ENROL_TTL = 15.minutes
 
@@ -13,6 +15,7 @@ module Ops
       requires_permission "ops.operators.manage", only: :create
       allow_unauthorized only: %i[show accept] # the token is the credential
 
+      sig { void }
       def create
         operator = InviteOperator.call(email: params.require(:email), role: params.require(:role).to_s,
                                        invited_by: current_user)
@@ -20,11 +23,13 @@ module Ops
         render json: { "id" => operator.id, "email" => operator.email, "role" => operator.role }, status: :created
       end
 
+      sig { void }
       def show
         operator = invitation!
         render json: { "email" => operator.email, "role" => operator.role }
       end
 
+      sig { void }
       def accept
         operator = invitation!
         operator.update!(name: params.require(:name).to_s, password: params.require(:password).to_s)
@@ -36,6 +41,7 @@ module Ops
 
       private
 
+      sig { returns(Operator) }
       def invitation!
         Operator.find_by_invitation_token(params[:token].to_s) || raise(ActiveRecord::RecordNotFound)
       end

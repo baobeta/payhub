@@ -7,6 +7,7 @@ module Dashboard
     # tenant scoping via current_merchant (404), permission (403), record
     # rules in services (409/422), step-up (401 step_up_required).
     class BaseController < Web::BaseController
+      extend T::Sig
       include IdempotentAction
       include ImpersonationContext
 
@@ -37,6 +38,7 @@ module Dashboard
 
       private
 
+      sig { void }
       def require_session!
         return require_impersonation_session! if impersonating_request?
 
@@ -51,27 +53,50 @@ module Dashboard
         row.touch_activity! unless request.headers["X-Poll"] == "1"
       end
 
+      sig { returns(Session) }
       def current_session = T.must(@current_session)
+
+      sig { returns(MerchantUser) }
       def current_user = T.must(@current_user)
+
+      sig { returns(Merchant) }
       def live_merchant = impersonating_request? ? T.must(@impersonated_merchant) : T.must(current_user.merchant)
 
       # Tenant scoping (layer 2): every query starts here. Impersonation always
       # shows the live merchant.
+      sig { returns(Merchant) }
       def current_merchant
         return live_merchant if impersonating_request?
 
         current_session.livemode ? live_merchant : live_merchant.test_twin!
       end
 
+      sig { returns(Symbol) }
       def authorization_area = :merchant
+
+      sig { returns(T.nilable(String)) }
       def authorization_role = impersonating_request? ? "impersonation" : @current_user&.role
+
+      sig { returns(T.nilable(T.any(MerchantUser, Operator))) }
       def authorization_actor = impersonating_request? ? @impersonator : @current_user
+
+      sig { returns(T.nilable(String)) }
       def authorization_merchant_id
         impersonating_request? ? @impersonated_merchant&.id : @current_user&.merchant_id
       end
+
+      sig { returns(T::Boolean) }
       def step_up_fresh? = @current_session&.stepped_up? || false
 
       # Security history rows always belong to the LIVE merchant.
+      sig do
+        params(
+          action: String,
+          target: T.untyped,
+          result: String,
+          metadata: T::Hash[String, T.untyped]
+        ).void
+      end
       def audit!(action, target: nil, result: "success", metadata: {})
         if impersonating_request?
           return AuditEvent.record!(
@@ -89,6 +114,7 @@ module Dashboard
         )
       end
 
+      sig { params(session_row: Session).void }
       def set_session_cookie(session_row)
         cookies.signed[COOKIE] = { value: session_row.id, httponly: true, same_site: :strict,
                                    secure: Rails.env.production?, path: "/dashboard" }

@@ -56,7 +56,7 @@ class IdempotencyGuard
       end
 
       span.set_attribute("payhub.idempotency_outcome", "replayed") if span.respond_to?(:set_attribute)
-      Outcome.new(status: record.response_status,
+      Outcome.new(status: T.must(record.response_status),
                   body: T.cast(record.response_body, T::Hash[String, T.untyped]), replayed: true)
     end
   end

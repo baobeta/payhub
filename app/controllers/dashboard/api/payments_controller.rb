@@ -4,6 +4,8 @@
 module Dashboard
   module Api
     class PaymentsController < BaseController
+      extend T::Sig
+
       EXPORT_LIMIT = 10_000
       CSV_COLUMNS = %w[id created_at state amount_minor currency captured_minor psp_name psp_reference].freeze
 
@@ -13,6 +15,7 @@ module Dashboard
       requires_permission "payments.cancel", only: :cancel
       idempotent only: %i[capture cancel] # after requires_permission: denials never claim a key
 
+      sig { void }
       def index
         page = Cursor.paginate(filtered, after: params[:cursor].presence, limit: params[:limit]&.to_i)
         render json: { "object" => "list", "data" => page.records.map { |p| PaymentSerializer.call(p) },
@@ -21,6 +24,7 @@ module Dashboard
         raise ApiError.invalid_request(e.message, param: "cursor", code: "invalid_cursor")
       end
 
+      sig { void }
       def export
         rows = filtered.order(created_at: :desc, id: :desc).limit(EXPORT_LIMIT + 1).to_a
         response.set_header("X-Export-Truncated", "true") if rows.size > EXPORT_LIMIT
@@ -34,11 +38,13 @@ module Dashboard
         send_data csv, type: "text/csv", filename: "payments-#{Time.current.utc.to_date}.csv"
       end
 
+      sig { void }
       def show
         @skip_request_log = request.headers["X-Poll"] == "1"
         render json: detail(current_merchant.payments.find(params[:id]))
       end
 
+      sig { void }
       def capture
         payment = current_merchant.payments.find(params[:id])
         CapturePayment.call(payment, amount_minor: optional_amount)
@@ -46,6 +52,7 @@ module Dashboard
         render json: detail(payment.reload), status: :accepted
       end
 
+      sig { void }
       def cancel
         payment = current_merchant.payments.find(params[:id])
         CancelPayment.call(payment, source: "api", reason: params[:reason].presence&.to_s)
@@ -55,12 +62,14 @@ module Dashboard
 
       private
 
+      sig { returns(ActiveRecord::Relation) }
       def filtered
         PaymentFilters.apply(current_merchant.payments, params)
       rescue ArgumentError => e
         raise ApiError.invalid_request("created_after/created_before must be ISO-8601: #{e.message}", param: "created_after")
       end
 
+      sig { params(payment: Payment).returns(T::Hash[String, T.untyped]) }
       def detail(payment)
         PaymentSerializer.call(payment).merge(
           "timeline" => PaymentTimeline.call(payment),
@@ -68,6 +77,7 @@ module Dashboard
         )
       end
 
+      sig { returns(T.nilable(Integer)) }
       def optional_amount
         raw = params[:amount_minor]
         return nil if raw.nil?

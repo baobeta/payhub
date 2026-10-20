@@ -3,6 +3,9 @@
 
 # Never the secret or its digest: prefix and last 4 identify a key.
 module ApiKeySerializer
+  extend T::Sig
+
+  sig { params(key: ApiKey).returns(T::Hash[String, T.untyped]) }
   def self.call(key)
     {
       "id" => key.id, "name" => key.name, "note" => key.note, "livemode" => key.livemode,

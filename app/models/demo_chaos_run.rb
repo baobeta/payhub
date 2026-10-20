@@ -6,6 +6,8 @@
 # result. A partial unique index allows only one active run system-wide
 # (design §4 abuse limits).
 class DemoChaosRun < ApplicationRecord
+  extend T::Sig
+
   STATES = %w[queued running passed failed errored].freeze
 
   validates :state, inclusion: { in: STATES }

@@ -5,11 +5,14 @@ module Dashboard
   module Api
     # M-07: same service as /v1, but the UI requires a reason (use cases).
     class RefundsController < BaseController
+      extend T::Sig
+
       REASONS = %w[requested_by_customer duplicate fraudulent other].freeze
 
       requires_permission "payments.refund", only: :create
       idempotent only: :create
 
+      sig { void }
       def create
         payment = current_merchant.payments.find(params[:payment_id])
         reason = params[:reason].to_s

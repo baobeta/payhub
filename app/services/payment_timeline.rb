@@ -3,6 +3,9 @@
 
 # M-04: one list of everything that happened to a payment, oldest first.
 module PaymentTimeline
+  extend T::Sig
+
+  sig { params(payment: Payment).returns(T::Array[T::Hash[String, T.untyped]]) }
   def self.call(payment)
     entries = []
     payment.transitions.each do |t|
@@ -20,7 +23,7 @@ module PaymentTimeline
     payment.ledger_entries.includes(:account).group_by(&:transfer_id).each do |transfer_id, legs|
       entries << { "kind" => "ledger_transfer", "at" => legs.map(&:created_at).min, "transfer_id" => transfer_id,
                    "legs" => legs.map do |l|
-                     { "account" => l.account.kind, "direction" => l.direction, "amount_minor" => l.amount_minor }
+                     { "account" => T.must(l.account).kind, "direction" => l.direction, "amount_minor" => l.amount_minor }
                    end }
     end
     OutboundEvent.where(payment_id: payment.id).order(:created_at).each do |e|

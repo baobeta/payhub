@@ -5,8 +5,11 @@ module Dashboard
   module Api
     # M-21: only the owner, only to an enrolled member of the same account.
     class OwnershipTransfersController < BaseController
+      extend T::Sig
+
       requires_permission "ownership.transfer", only: :create
 
+      sig { void }
       def create
         to = live_merchant.merchant_users.find(params.require(:member_id))
         owner = current_user

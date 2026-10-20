@@ -4,6 +4,8 @@
 # timestamp; `created_at` is when we heard about it. Their difference is the
 # webhook lag we log.
 class PaymentTransition < ApplicationRecord
+  extend T::Sig
+
   belongs_to :payment
 
   SOURCES = %w[api worker webhook sweeper operator].freeze
@@ -21,8 +23,12 @@ class PaymentTransition < ApplicationRecord
   # A stale row was recorded for audit but never moved state. An applied row
   # did move state at the time, even if a later transition has since
   # superseded it (most_recent is now false).
+  sig { returns(T::Boolean) }
   def stale? = metadata["stale"] == true
+
+  sig { returns(T::Boolean) }
   def applied? = !stale?
 
+  sig { returns(Integer) }
   def lag_ms = ((created_at - sort_key) * 1000).round
 end

@@ -5,8 +5,11 @@ module Ops
   module Api
     # O-05: a dead webhook can be sent again, but never silently.
     class EventsController < BaseController
+      extend T::Sig
+
       requires_permission "ops.events.redeliver", only: :redeliver
 
+      sig { void }
       def redeliver
         reason = reason!
         event = OutboundEvent.find(params[:id])

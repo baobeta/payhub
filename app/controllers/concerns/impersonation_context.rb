@@ -1,4 +1,4 @@
-# typed: false
+# typed: true
 # frozen_string_literal: true
 
 # Read-only merchant view for operators (design §4, O-12). Included by
@@ -10,11 +10,18 @@
 # even a route added under `as/` later cannot write.
 module ImpersonationContext
   extend ActiveSupport::Concern
+  extend T::Sig
+  extend T::Helpers
+
+  requires_ancestor { ActionController::Base }
+  requires_ancestor { Authorization }
 
   private
 
+  sig { returns(T::Boolean) }
   def impersonating_request? = params[:impersonation].to_s == "1"
 
+  sig { void }
   def require_impersonation_session!
     row = Session.find_by(id: cookies.signed[Ops::Api::BaseController::COOKIE], principal_type: "Operator")
     operator = row&.principal
@@ -28,12 +35,13 @@ module ImpersonationContext
 
     @current_session = T.let(row, T.nilable(Session))
     @impersonator = T.let(operator, T.nilable(Operator))
-    @impersonated_merchant = T.let(Merchant.find(row.impersonating_merchant_id), T.nilable(Merchant))
+    @impersonated_merchant = T.let(Merchant.find(T.must(row.impersonating_merchant_id)), T.nilable(Merchant))
     @current_user = nil
   end
 
   # Read-only: any known merchant permission ending in .read, nothing else,
   # whatever the operator's role (design §3 layer 5).
+  sig { params(permission: String).returns(T::Boolean) }
   def permission_granted?(permission)
     return super unless impersonating_request?
 
@@ -41,6 +49,7 @@ module ImpersonationContext
   end
 
   # A write attempt under `as/` is refused with a clearer code than plain 403.
+  sig { params(permission: String).void }
   def record_denial(permission)
     super
     return unless impersonating_request?

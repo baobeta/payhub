@@ -7,10 +7,10 @@
 
 class OperatorMailer
   class << self
-    sig { params(operator: T.untyped, token: T.untyped).returns(::ActionMailer::MessageDelivery) }
+    sig { params(operator: ::Operator, token: ::String).returns(::ActionMailer::MessageDelivery) }
     def invite(operator, token); end
 
-    sig { params(proposal: T.untyped, approver: T.untyped).returns(::ActionMailer::MessageDelivery) }
+    sig { params(proposal: ::OperatorProposal, approver: ::Operator).returns(::ActionMailer::MessageDelivery) }
     def proposal_waiting(proposal, approver); end
   end
 end

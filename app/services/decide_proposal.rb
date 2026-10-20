@@ -4,6 +4,9 @@
 # The maker-checker decision, under a row lock (design §3 layer 4). The guard
 # is re-checked here even though the serializer already showed a `can` flag.
 module DecideProposal
+  extend T::Sig
+
+  sig { params(proposal_id: String, approver: Operator, approve: T::Boolean, note: T.nilable(String)).returns(OperatorProposal) }
   def self.call(proposal_id, approver:, approve:, note:)
     proposal = OperatorProposal.transaction do
       locked = OperatorProposal.lock.find(proposal_id)
@@ -22,6 +25,7 @@ module DecideProposal
     proposal
   end
 
+  sig { params(proposal: OperatorProposal, approver: Operator).void }
   def self.apply(proposal, approver)
     OperatorProposal.transaction(requires_new: true) { ApplyProposal.call(proposal, approver:) }
     proposal.update!(applied_at: Time.current)

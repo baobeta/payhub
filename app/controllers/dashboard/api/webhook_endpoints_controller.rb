@@ -6,11 +6,15 @@ module Dashboard
     # M-14, M-15. Per mode: the test twin has its own endpoint and secret, so
     # test events can never reach the live endpoint.
     class WebhookEndpointsController < BaseController
+      extend T::Sig
+
       requires_permission "webhooks.read", only: :show
       requires_permission "webhooks.manage", only: %i[update reveal_secret roll_secret]
 
+      sig { void }
       def show = render(json: endpoint_json)
 
+      sig { void }
       def update
         url = params.require(:url).to_s
         problem = WebhookUrlGuard.problem(url)
@@ -21,11 +25,13 @@ module Dashboard
         render json: endpoint_json
       end
 
+      sig { void }
       def reveal_secret
         audit!("webhook.secret_revealed")
         render json: { "secret" => current_merchant.webhook_secret }
       end
 
+      sig { void }
       def roll_secret
         fresh = current_merchant.rotate_webhook_secret!
         audit!("webhook.secret_rolled")
@@ -34,6 +40,7 @@ module Dashboard
 
       private
 
+      sig { returns(T::Hash[String, T.untyped]) }
       def endpoint_json
         m = current_merchant
         expires = m.previous_webhook_secret_expires_at

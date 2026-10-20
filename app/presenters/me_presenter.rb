@@ -4,6 +4,9 @@
 # The Vue app's view of "who am I". permissions[] drives navigation only;
 # the server re-checks every request (design §3).
 module MePresenter
+  extend T::Sig
+
+  sig { params(user: MerchantUser, session: Session).returns(T::Hash[String, T.untyped]) }
   def self.call(user, session)
     merchant = T.must(user.merchant)
     stepped = session.stepped_up_at

@@ -5,12 +5,16 @@ module Dashboard
   # Serves the empty page the merchant Vue app mounts into. The page itself is
   # public; every /dashboard/api endpoint behind it requires a permission.
   class ShellController < Web::BaseController
+    extend T::Sig
+
     allow_unauthorized only: :show
 
+    sig { void }
     def show = render("web/shell", locals: { entry: "merchant", title: "PayHub dashboard" })
 
     private
 
+    sig { returns(Symbol) }
     def authorization_area = :merchant
   end
 end

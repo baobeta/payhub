@@ -4,6 +4,8 @@
 # Strips anything sensitive from a PSP request or response body before it is
 # stored in psp_calls. Runs on every call, so it must never raise.
 module PspCallRedactor
+  extend T::Sig
+
   MASK = "[REDACTED]"
   TRUNCATION = "…[truncated]"
   DEFAULT_CAP = 16_384
@@ -25,6 +27,7 @@ module PspCallRedactor
 
   # @param body [Hash, Array, String, Integer, nil] a parsed JSON value
   # @return the same shape, with sensitive values replaced by MASK
+  sig { params(body: T.untyped).returns(T.untyped) }
   def self.redact(body)
     walk(body)
   rescue StandardError
@@ -36,12 +39,14 @@ module PspCallRedactor
   # Caps every string in an already-redacted structure, so one enormous PSP
   # error page cannot bloat an append-only table (Phase 0 review #14). Never
   # raises: an unknown shape is returned as-is for redact to have handled.
+  sig { params(value: T.untyped, bytes: Integer).returns(T.untyped) }
   def self.cap(value, bytes: DEFAULT_CAP)
     walk_cap(value, bytes)
   rescue StandardError
     value
   end
 
+  sig { params(value: T.untyped, bytes: Integer).returns(T.untyped) }
   def self.walk_cap(value, bytes)
     case value
     when Hash then value.to_h { |k, v| [k, walk_cap(v, bytes)] }
@@ -52,6 +57,7 @@ module PspCallRedactor
   end
   private_class_method :walk_cap
 
+  sig { params(value: T.untyped).returns(T.untyped) }
   def self.walk(value)
     case value
     when Hash then value.to_h { |k, v| [k, sensitive_key?(k) ? MASK : walk(v)] }
@@ -63,6 +69,7 @@ module PspCallRedactor
   end
   private_class_method :walk
 
+  sig { params(value: String).returns(String) }
   def self.redact_string(value)
     masked = value.gsub(QUERY_PARAM) do |pair|
       sep, name = Regexp.last_match(1), Regexp.last_match(2)
@@ -72,6 +79,7 @@ module PspCallRedactor
   end
   private_class_method :redact_string
 
+  sig { params(key: T.untyped).returns(T::Boolean) }
   def self.sensitive_key?(key)
     words = key.to_s.gsub(/([a-z\d])([A-Z])/, '\1_\2').downcase.split(/[^a-z0-9]+/)
     words.any? { |w| SENSITIVE_WORDS.include?(w) } ||
@@ -81,6 +89,7 @@ module PspCallRedactor
 
   # Luhn separates real card numbers from long ids and amounts, which keeps
   # those visible to operators.
+  sig { params(candidate: String).returns(T::Boolean) }
   def self.luhn?(candidate)
     digits = candidate.delete("^0-9").reverse.chars.map(&:to_i)
     return false unless digits.length.between?(13, 19)

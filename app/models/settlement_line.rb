@@ -2,6 +2,8 @@
 
 # One line of a PSP's settlement report, as ingested (DECISIONS #18).
 class SettlementLine < ApplicationRecord
+  extend T::Sig
+
   belongs_to :payment, optional: true
   belongs_to :refund, optional: true
 

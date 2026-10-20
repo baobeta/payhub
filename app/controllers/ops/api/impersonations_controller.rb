@@ -6,9 +6,12 @@ module Ops
     # O-12: an operator views a merchant's live dashboard read-only for 30
     # minutes (Session::IMPERSONATION_TTL), always with a case reference.
     class ImpersonationsController < BaseController
+      extend T::Sig
+
       requires_permission "ops.impersonation.start", only: :create
       allow_unauthorized only: :destroy
 
+      sig { void }
       def create
         merchant = Merchant.where(livemode: true).find(params.require(:merchant_id))
         current_session.start_impersonation!(merchant_id: merchant.id, case_ref: params.require(:case_reference))
@@ -21,6 +24,7 @@ module Ops
                status: :created
       end
 
+      sig { void }
       def destroy
         current_session.stop_impersonation!
         audit!("impersonation.stopped")

@@ -5,6 +5,8 @@ module Dashboard
   module Api
     # M-19, M-20. Members belong to the live merchant whatever the mode.
     class MembersController < BaseController
+      extend T::Sig
+
       requires_permission "team.read", only: :index
       requires_permission "team.manage", only: %i[update destroy]
 
@@ -14,10 +16,12 @@ module Dashboard
                                       message: e.message))
       end
 
+      sig { void }
       def index
         render json: { "data" => live_merchant.merchant_users.order(:created_at).map { |u| MemberSerializer.call(u) } }
       end
 
+      sig { void }
       def update
         member = live_merchant.merchant_users.find(params[:id])
         from = member.role
@@ -26,6 +30,7 @@ module Dashboard
         render json: MemberSerializer.call(member)
       end
 
+      sig { void }
       def destroy
         member = live_merchant.merchant_users.find(params[:id])
         ChangeMemberRole.remove(actor: current_user, member:)

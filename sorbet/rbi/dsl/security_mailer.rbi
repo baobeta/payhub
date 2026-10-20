@@ -7,10 +7,16 @@
 
 class SecurityMailer
   class << self
-    sig { params(principal: T.untyped, ip: T.untyped, user_agent: T.untyped).returns(::ActionMailer::MessageDelivery) }
+    sig do
+      params(
+        principal: T.any(::MerchantUser, ::Operator),
+        ip: T.nilable(::String),
+        user_agent: T.nilable(::String)
+      ).returns(::ActionMailer::MessageDelivery)
+    end
     def new_sign_in(principal, ip:, user_agent:); end
 
-    sig { params(user: T.untyped, from: T.untyped, to: T.untyped).returns(::ActionMailer::MessageDelivery) }
+    sig { params(user: ::MerchantUser, from: ::String, to: ::String).returns(::ActionMailer::MessageDelivery) }
     def ownership_transferred(user, from:, to:); end
   end
 end

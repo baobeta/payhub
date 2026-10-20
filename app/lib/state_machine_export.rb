@@ -4,6 +4,9 @@
 # The demo's diagram is drawn from this file, generated from
 # PaymentStateMachine, so it can never show an edge the code refuses.
 module StateMachineExport
+  extend T::Sig
+
+  sig { returns(String) }
   def self.typescript
     edges = PaymentStateMachine::TRANSITIONS.flat_map { |from, tos| tos.map { |to| [from.to_s, to] } }
     <<~TS

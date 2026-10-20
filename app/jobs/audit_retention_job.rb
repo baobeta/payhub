@@ -4,10 +4,13 @@
 # PCI DSS 10.5.1: keep 12 months. The append-only trigger lets exactly this
 # through (rows older than the window) and nothing else.
 class AuditRetentionJob < ApplicationJob
+  extend T::Sig
+
   queue_as :sweepers
 
   BATCH = 1_000
 
+  sig { void }
   def perform
     cutoff = 12.months.ago - 1.day # a day of slack so we never race the trigger's own clock
     [AuditEvent, PspCall].each do |model|

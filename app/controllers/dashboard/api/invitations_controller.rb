@@ -4,6 +4,8 @@
 module Dashboard
   module Api
     class InvitationsController < BaseController
+      extend T::Sig
+
       ENROL_COOKIE = :_payhub_dashboard_enrol
       ENROL_TTL = 15.minutes
 
@@ -11,6 +13,7 @@ module Dashboard
       requires_permission "team.manage", only: :create
       allow_unauthorized only: %i[show accept] # the token is the credential
 
+      sig { void }
       def create
         role = params.require(:role).to_s
         unless MerchantUser::INVITABLE_ROLES.include?(role)
@@ -26,11 +29,13 @@ module Dashboard
         raise ApiError.validation("email" => ["already belongs to a PayHub user"])
       end
 
+      sig { void }
       def show
         user = invitation!
         render json: { "email" => user.email, "role" => user.role, "merchant_name" => T.must(user.merchant).name }
       end
 
+      sig { void }
       def accept
         user = invitation!
         user.update!(name: params.require(:name).to_s, password: params.require(:password).to_s)
@@ -42,6 +47,7 @@ module Dashboard
 
       private
 
+      sig { returns(MerchantUser) }
       def invitation!
         MerchantUser.find_by_invitation_token(params[:token].to_s) || raise(ActiveRecord::RecordNotFound)
       end

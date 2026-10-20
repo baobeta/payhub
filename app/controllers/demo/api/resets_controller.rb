@@ -7,8 +7,11 @@ module Demo
     # append-only (DECISIONS #27). It starts a new epoch, and the demo shows
     # only what came after it.
     class ResetsController < BaseController
+      extend T::Sig
+
       COOLDOWN = 1.minute
 
+      sig { void }
       def create
         latest = DemoEpoch.order(:started_at).last
         if latest && Time.current - latest.started_at < COOLDOWN

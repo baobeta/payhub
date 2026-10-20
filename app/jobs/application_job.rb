@@ -41,10 +41,12 @@ class ApplicationJob < ActiveJob::Base
   # Carry the originating request's id into the job so the two log lines join.
   attr_accessor :enqueued_request_id
 
+  sig { returns(T::Hash[String, T.untyped]) }
   def serialize
     super.merge("enqueued_request_id" => enqueued_request_id || Current.request_id)
   end
 
+  sig { params(job_data: T::Hash[String, T.untyped]).void }
   def deserialize(job_data)
     super
     self.enqueued_request_id = job_data["enqueued_request_id"]

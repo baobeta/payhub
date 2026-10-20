@@ -4,6 +4,8 @@
 # Transactional outbox: created in the same DB transaction as the state change
 # it announces, delivered later by DeliverOutboundEventsJob with backoff.
 class OutboundEvent < ApplicationRecord
+  extend T::Sig
+
   belongs_to :merchant
   belongs_to :payment, optional: true
   has_many :delivery_attempts, -> { order(:attempt_number) },
@@ -22,8 +24,9 @@ class OutboundEvent < ApplicationRecord
   # Called INSIDE the caller's transaction (Payment#transition!, refund jobs).
   # A merchant with no webhook_url still gets the event — it is queryable via
   # GET /v1/events — but nothing is delivered, so it is born delivered.
+  sig { params(payment: Payment, event_type: String, extra: T::Hash[String, T.untyped]).returns(OutboundEvent) }
   def self.emit!(payment, event_type, extra = {})
-    merchant = payment.merchant
+    merchant = T.must(payment.merchant)
     deliverable = merchant.webhook_url.present?
     create!(
       merchant: merchant, payment: payment, event_type: event_type,
@@ -35,10 +38,14 @@ class OutboundEvent < ApplicationRecord
     )
   end
 
+  sig { returns(T::Boolean) }
   def delivered? = state == "delivered"
+
+  sig { returns(T::Boolean) }
   def dead? = state == "dead"
 
   # Operator replay from the dead-letter state (POST /v1/events/:id/redeliver).
+  sig { returns(T::Boolean) }
   def redeliver!
     raise ArgumentError, "only dead events can be redelivered (state: #{state})" unless dead?
 
@@ -46,6 +53,7 @@ class OutboundEvent < ApplicationRecord
   end
 
   # The envelope the merchant receives. `id` lets them dedupe on their side.
+  sig { returns(T::Hash[String, T.untyped]) }
   def envelope
     { "id" => id, "type" => event_type, "livemode" => T.must(merchant).livemode,
       "created_at" => created_at.utc.iso8601(3), "attempt" => attempts + 1, "data" => payload }

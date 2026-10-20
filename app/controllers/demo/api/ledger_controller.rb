@@ -6,8 +6,11 @@ module Demo
     # D-05: the ledger is the truth, and it is readable here without a login.
     # Only the demo twin's, only since the current epoch.
     class LedgerController < BaseController
+      extend T::Sig
+
       LIMIT = 50
 
+      sig { void }
       def show
         entries = LedgerEntry.joins(:account)
                              .where(ledger_accounts: { merchant_id: merchant.id })

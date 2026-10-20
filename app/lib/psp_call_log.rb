@@ -4,12 +4,23 @@
 # Writes one psp_calls row per outbound PSP request. Logging must never change
 # payment behaviour, so a failure here is logged and counted, never raised.
 module PspCallLog
+  extend T::Sig
+
   REFERENCE = /\bphr?_[a-f0-9]{24}\b/
   PSP_ID = /\bkp_[a-z0-9]+\b/ # KiriPay's own charge ids, which appear in its paths
 
   # params and headers are searched for our reference only and never stored
   # (headers can carry the PSP API key). NordPay sends the reference only in
   # X-Request-Id; KiriPay looks charges up by ?merchant_reference=.
+  sig do
+    params(
+      psp: T.nilable(String), method: T.untyped, path: String,
+      request_body: T.nilable(T::Hash[T.untyped, T.untyped]),
+      status: T.nilable(Integer), response_body: T.untyped,
+      outcome: String, started_at: T.any(Time, ActiveSupport::TimeWithZone),
+      params: T::Hash[T.untyped, T.untyped], headers: T::Hash[T.untyped, T.untyped]
+    ).void
+  end
   def self.record(psp:, method:, path:, request_body:, status:, response_body:, outcome:, started_at:,
                   params: {}, headers: {})
     # A savepoint: the caller may already be inside a transaction (jobs and

@@ -6,9 +6,12 @@ module Ops
     # Enrolment right after accepting an invitation. The short-lived encrypted
     # enrol cookie, set by InvitationsController#accept, is the credential.
     class OtpController < BaseController
+      extend T::Sig
+
       skip_before_action :require_session!
       allow_unauthorized only: %i[setup confirm]
 
+      sig { void }
       def setup
         operator = enrolling_operator!
         uri = Otp.provisioning_uri(T.must(operator.otp_secret), operator.email)
@@ -17,6 +20,7 @@ module Ops
 
       # accepted_at is set only here, so a half-enrolled operator cannot sign in
       # (SignIn requires accepted_at).
+      sig { void }
       def confirm
         operator = enrolling_operator!
         unless operator.verify_otp!(params.require(:code))
@@ -36,6 +40,7 @@ module Ops
 
       private
 
+      sig { returns(Operator) }
       def enrolling_operator!
         data = cookies.encrypted[InvitationsController::ENROL_COOKIE]
         unless data.is_a?(Hash) && data["exp"].to_i > Time.current.to_i

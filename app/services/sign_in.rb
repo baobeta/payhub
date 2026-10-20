@@ -4,6 +4,8 @@
 # First factor. Works for any TwoFactorPrincipal model (MerchantUser now,
 # Operator in phase 2). The second factor is checked by the caller.
 class SignIn
+  extend T::Sig
+
   Result = Struct.new(:status, :principal, :just_locked, keyword_init: true)
 
   LOCKED_FALLBACK = TwoFactorPrincipal::LOCK_FOR
@@ -11,6 +13,7 @@ class SignIn
   # Compared against when the email is unknown, so both paths cost one bcrypt.
   DUMMY_DIGEST = BCrypt::Password.create("payhub-dummy-password").to_s.freeze
 
+  sig { params(scope: T.untyped, email: T.untyped, password: T.untyped).returns(Result) }
   def self.password(scope, email:, password:)
     principal = scope.active.where.not(accepted_at: nil).find_by("lower(email) = ?", email.to_s.strip.downcase)
     unless principal&.password_digest

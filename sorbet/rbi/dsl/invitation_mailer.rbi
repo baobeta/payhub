@@ -7,7 +7,7 @@
 
 class InvitationMailer
   class << self
-    sig { params(user: T.untyped, token: T.untyped).returns(::ActionMailer::MessageDelivery) }
+    sig { params(user: ::MerchantUser, token: ::String).returns(::ActionMailer::MessageDelivery) }
     def invite(user, token); end
   end
 end

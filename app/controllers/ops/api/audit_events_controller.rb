@@ -6,10 +6,13 @@ module Ops
     # O-15: the operator audit stream. Every row is visible, merchant and
     # operator alike; the filters hit the Phase 0 indexes.
     class AuditEventsController < BaseController
+      extend T::Sig
+
       requires_permission "ops.audit.read", only: :index
 
       ACTOR_TYPES = { "operator" => "Operator", "merchant" => "MerchantUser" }.freeze
 
+      sig { void }
       def index
         page = Cursor.paginate(filtered, after: params[:cursor].presence, limit: params[:limit]&.to_i)
         render json: { "object" => "list", "data" => page.records.map { |e| row(e) },
@@ -20,6 +23,7 @@ module Ops
 
       private
 
+      sig { returns(ActiveRecord::Relation) }
       def filtered
         scope = AuditEvent.all
         scope = scope.where(actor_type: actor_type) if params[:actor_type].present?
@@ -34,10 +38,12 @@ module Ops
         scope
       end
 
+      sig { returns(String) }
       def actor_type
         ACTOR_TYPES.fetch(params[:actor_type].to_s, params[:actor_type].to_s)
       end
 
+      sig { returns(T::Range[Time]) }
       def time_range
         from = params[:from].present? ? Time.iso8601(params[:from].to_s) : Time.at(0)
         to = params[:to].present? ? Time.iso8601(params[:to].to_s) : Time.current
@@ -46,6 +52,7 @@ module Ops
         raise ApiError.validation("from" => ["must be an ISO8601 timestamp"])
       end
 
+      sig { params(event: AuditEvent).returns(T::Hash[String, T.untyped]) }
       def row(event)
         { "id" => event.id, "at" => event.created_at.utc.iso8601(3), "actor_type" => event.actor_type,
           "actor" => event.actor_label, "action" => event.action, "result" => event.result,

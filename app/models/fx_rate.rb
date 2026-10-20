@@ -1,6 +1,8 @@
 # typed: true
 
 class FxRate < ApplicationRecord
+  extend T::Sig
+
   validates :base, :quote, inclusion: { in: Currency::SUPPORTED }
   validates :rate, numericality: { greater_than: 0 }
   validates :captured_at, presence: true
@@ -9,6 +11,7 @@ class FxRate < ApplicationRecord
 
   # The latest known rate for a pair. Callers COPY the result onto the payment;
   # nothing ever joins to this table at read time.
+  sig { params(base: String, quote: String).returns(BigDecimal) }
   def self.latest!(base, quote)
     return BigDecimal("1") if base == quote
 

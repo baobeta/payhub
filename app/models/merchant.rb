@@ -1,6 +1,8 @@
 # typed: true
 
 class Merchant < ApplicationRecord
+  extend T::Sig
+
   has_many :payments, dependent: :restrict_with_exception
   has_many :ledger_accounts, dependent: :restrict_with_exception
   has_many :idempotency_keys, dependent: :restrict_with_exception
@@ -19,6 +21,7 @@ class Merchant < ApplicationRecord
   # Returns [merchant, raw_key]. The raw key is shown to the merchant once
   # and never stored — only its digest is. api_key_digest is still written
   # until the column is dropped (design §2, two-step migration).
+  sig { params(attrs: T.untyped).returns([Merchant, String]) }
   def self.create_with_api_key!(attrs)
     transaction do
       merchant = new(attrs.merge(api_key_digest: digest(SecureRandom.hex(32)), webhook_secret: SecureRandom.hex(32)))
@@ -31,6 +34,7 @@ class Merchant < ApplicationRecord
 
   # Constant-time lookup, now through api_keys so revoked and expired keys stop
   # working and many keys can be active at once.
+  sig { params(raw_key: T.nilable(String)).returns(T.nilable(Merchant)) }
   def self.authenticate(raw_key)
     ApiKey.authenticate(raw_key)&.merchant_for_mode
   end
@@ -41,6 +45,7 @@ class Merchant < ApplicationRecord
   #
   # No webhook_url: the live endpoint is production, and test events must
   # never reach it. The twin gets its own endpoint in phase 1.
+  sig { returns(Merchant) }
   def test_twin!
     raise ArgumentError, "a test twin has no twin" unless livemode
 
@@ -55,12 +60,14 @@ class Merchant < ApplicationRecord
     reload.test_twin || raise
   end
 
+  sig { params(raw: String).returns(String) }
   def self.digest(raw) = Digest::SHA256.hexdigest(raw)
 
   ROTATION_GRACE = 24.hours
 
   # Every secret an outbound webhook is signed with right now: the current
   # one, plus the previous one while its grace period lasts (DECISIONS #15).
+  sig { returns(T::Array[String]) }
   def webhook_signing_secrets
     previous = previous_webhook_secret if previous_webhook_secret_expires_at&.future?
     [webhook_secret, previous].compact
@@ -68,6 +75,7 @@ class Merchant < ApplicationRecord
 
   # Returns the new secret — shown once, like the API key. The old one keeps
   # signing for `grace`, so the merchant can deploy the new one at leisure.
+  sig { params(grace: T.untyped).returns(String) }
   def rotate_webhook_secret!(grace: ROTATION_GRACE)
     fresh = SecureRandom.hex(32)
     update!(previous_webhook_secret: webhook_secret, previous_webhook_secret_expires_at: grace.from_now,

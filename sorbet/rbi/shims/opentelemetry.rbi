@@ -1,8 +1,12 @@
 # typed: true
 
 # opentelemetry-api does not ship RBI definitions, so declare the namespaces
-# referenced by the tracing facade. Runtime behavior remains owned by the gem.
+# and methods referenced by the tracing facade. Return types stay untyped:
+# runtime behavior remains owned by the gem.
 module OpenTelemetry
+  def self.tracer_provider; end
+  def self.propagation; end
+
   module SDK
     def self.configure; end
 
@@ -16,6 +20,10 @@ module OpenTelemetry
   end
 
   module Trace
-    class Link; end
+    def self.current_span(context = nil); end
+
+    class Link
+      def initialize(span_context, attributes = nil); end
+    end
   end
 end

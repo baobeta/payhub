@@ -6,9 +6,12 @@ module Ops
     # O-11: reconciliation and settlement breaks. Settlement lines can be
     # marked reviewed; ledger breaks are read-only (fixing them is a proposal).
     class ReconciliationBreaksController < BaseController
+      extend T::Sig
+
       requires_permission "ops.reconciliation.read", only: :index
       requires_permission "ops.reconciliation.review", only: :review
 
+      sig { void }
       def index
         render json: {
           "settlement_lines" => settlement_lines,
@@ -19,6 +22,7 @@ module Ops
         }
       end
 
+      sig { void }
       def review
         line = SettlementLine.find(params[:id])
         if line.reviewed_at.present?
@@ -34,6 +38,7 @@ module Ops
 
       private
 
+      sig { returns(T::Array[T::Hash[String, T.untyped]]) }
       def settlement_lines
         SettlementLine.where(status: %w[unmatched mismatch]).order(booked_at: :desc).limit(200).map do |l|
           { "id" => l.id, "psp_name" => l.psp_name, "external_id" => l.external_id, "kind" => l.kind,

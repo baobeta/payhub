@@ -7,6 +7,9 @@ require "prometheus/client/formats/text"
 # Unauthenticated like /healthz: scraped from inside the network. In a real
 # deployment both sit behind the load balancer's internal listener.
 class MetricsController < ApplicationController
+  extend T::Sig
+
+  sig { void }
   def show
     # Gauges are set by the sweepers; refresh the cheap ones on scrape so a
     # fresh process reports the truth before its first sweep.

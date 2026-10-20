@@ -1,9 +1,12 @@
 # typed: true
 
 class HealthController < ApplicationController
+  extend T::Sig
+
   # Liveness: proves the process is up and can reach the database.
   # Deeper checks (Redis, Sidekiq queue depth) belong on /metrics, not here —
   # a liveness probe that fails on a slow dependency causes restarts, not fixes.
+  sig { void }
   def show
     ActiveRecord::Base.connection.execute("SELECT 1")
     render json: { status: "ok" }
