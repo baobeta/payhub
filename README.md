@@ -88,7 +88,7 @@ Everything inside the PayHub box is ours. Everything outside it belongs to someo
 
 ### A payment's journey
 
-Every payment is always at exactly one stop. A stop exists only where PayHub can honestly say it is true.
+Every payment is always at exactly one stop. A stop exists only where PayHub can honestly say it is true. For what PayHub stores along the way, see [the domain model in plain words](docs/DOMAIN.md).
 
 ```mermaid
 flowchart LR
@@ -398,6 +398,8 @@ It exits non-zero on any violation and restores the simulator's config afterward
 - **A PAN never reaches the log**, proven by capturing everything Rails logs during a request that carries one.
 
 ## Domain model
+
+New to the model? [docs/DOMAIN.md](docs/DOMAIN.md) explains every table in plain words, with an example of each and the rows written at each step of one payment.
 
 ```mermaid
 stateDiagram-v2
