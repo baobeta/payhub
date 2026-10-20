@@ -5,10 +5,13 @@ module Dashboard
   module Api
     # M-22: the merchant's slice of the append-only audit log, 12 months.
     class SecurityHistoryController < BaseController
+      extend T::Sig
+
       EXPORT_LIMIT = 10_000
 
       requires_permission "security_history.read", only: %i[index export]
 
+      sig { void }
       def index
         page = Cursor.paginate(scope, after: params[:cursor].presence, limit: params[:limit]&.to_i)
         render json: { "object" => "list", "data" => page.records.map { |e| row(e) },
@@ -17,6 +20,7 @@ module Dashboard
         raise ApiError.invalid_request(e.message, param: "cursor", code: "invalid_cursor")
       end
 
+      sig { void }
       def export
         csv = CSV.generate do |out|
           out << %w[at actor action result target ip livemode]
@@ -29,8 +33,10 @@ module Dashboard
 
       private
 
+      sig { returns(ActiveRecord::Relation) }
       def scope = AuditEvent.where(merchant_id: live_merchant.id)
 
+      sig { params(event: AuditEvent).returns(T::Hash[String, T.untyped]) }
       def row(event)
         { "id" => event.id, "at" => event.created_at.utc.iso8601, "actor" => event.actor_label, "action" => event.action,
           "result" => event.result, "target_type" => event.target_type, "ip" => event.ip, "metadata" => event.metadata }

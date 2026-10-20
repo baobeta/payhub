@@ -4,6 +4,9 @@
 # The list filters, shared by GET /v1/payments and the dashboard list and
 # export. Raises ArgumentError on a malformed date; callers turn it into 400.
 module PaymentFilters
+  extend T::Sig
+
+  sig { params(scope: ActiveRecord::Relation, params: ActionController::Parameters).returns(ActiveRecord::Relation) }
   def self.apply(scope, params)
     scope = scope.where(state: params[:state]) if params[:state].present?
     scope = scope.where(currency: params[:currency]) if params[:currency].present?

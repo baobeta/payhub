@@ -6,20 +6,24 @@ module Ops
     # O-06/O-07: maker-checker proposals. create/list/withdraw here;
     # approve/reject in the decide flow.
     class ProposalsController < BaseController
+      extend T::Sig
+
       requires_permission "ops.payments.read", only: :index
       requires_permission "ops.proposals.create", only: %i[create withdraw]
       requires_permission "ops.proposals.decide", only: %i[approve reject]
 
+      sig { void }
       def index
         scope = OperatorProposal.includes(:payment, :proposed_by, :decided_by).order(created_at: :desc).limit(100)
         scope = scope.where(state: params[:state]) if params[:state].present?
         render json: { "data" => scope.map { |p| ProposalSerializer.call(p, viewer: current_user) } }
       end
 
+      sig { void }
       def create
         existing = OperatorProposal.find_by(client_token: params.require(:client_token))
         if existing&.proposed_by_id == current_user.id
-          return render(json: ProposalSerializer.call(existing, viewer: current_user))
+          return render(json: ProposalSerializer.call(T.must(existing), viewer: current_user))
         end
 
         proposal = OperatorProposal.create!(
@@ -34,6 +38,7 @@ module Ops
         render json: ProposalSerializer.call(proposal, viewer: current_user), status: :created
       end
 
+      sig { void }
       def withdraw
         proposal = OperatorProposal.find(params[:id])
         unless proposal.proposed_by_id == current_user.id && proposal.state == "pending"
@@ -46,11 +51,15 @@ module Ops
         render json: ProposalSerializer.call(proposal, viewer: current_user)
       end
 
+      sig { void }
       def approve = decide(approve: true)
+
+      sig { void }
       def reject = decide(approve: false)
 
       private
 
+      sig { params(approve: T::Boolean).void }
       def decide(approve:)
         note = params[:note].to_s.strip.presence
         raise ApiError.validation("note" => ["is required to reject"]) if !approve && note.nil?
@@ -62,11 +71,13 @@ module Ops
       end
 
       # Only the keys either payload shape uses; the model validates the shape.
+      sig { returns(T::Hash[String, T.untyped]) }
       def payload_params
         params.require(:payload).permit(:to_state, :currency, legs: %i[account_kind direction amount_minor]).to_h
       end
 
       # A mailing list, not an authorization check: select by permission.
+      sig { params(proposal: OperatorProposal).void }
       def notify_approvers(proposal)
         Operator.active.each do |operator|
           next unless Permissions.granted?(:operator, operator.role, "ops.proposals.decide")

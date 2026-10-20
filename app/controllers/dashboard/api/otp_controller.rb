@@ -6,9 +6,12 @@ module Dashboard
     # Enrolment right after accepting an invitation. The short-lived encrypted
     # enrol cookie, set by InvitationsController#accept, is the credential.
     class OtpController < BaseController
+      extend T::Sig
+
       skip_before_action :require_session!
       allow_unauthorized only: %i[setup confirm]
 
+      sig { void }
       def setup
         user = enrolling_user!
         uri = Otp.provisioning_uri(T.must(user.otp_secret), user.email)
@@ -17,6 +20,7 @@ module Dashboard
 
       # accepted_at is set only here, so a half-enrolled user cannot sign in
       # (SignIn requires accepted_at).
+      sig { void }
       def confirm
         user = enrolling_user!
         unless user.verify_otp!(params.require(:code))
@@ -36,6 +40,7 @@ module Dashboard
 
       private
 
+      sig { returns(MerchantUser) }
       def enrolling_user!
         data = cookies.encrypted[InvitationsController::ENROL_COOKIE]
         unless data.is_a?(Hash) && data["exp"].to_i > Time.current.to_i

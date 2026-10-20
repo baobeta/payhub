@@ -5,6 +5,8 @@
 # enforces the invariants (no self-approval, immutable payload); this model
 # validates the payload's shape on the way in.
 class OperatorProposal < ApplicationRecord
+  extend T::Sig
+
   KINDS = %w[payment_transition ledger_correction].freeze
   STATES = %w[pending withdrawn rejected applied failed].freeze
   REASON_CODES = %w[psp_confirmed_outcome psp_unreachable_timeout duplicate_booking ledger_error other].freeze
@@ -27,11 +29,13 @@ class OperatorProposal < ApplicationRecord
   # to compute the `can.approve` flag, and again under the row lock before
   # applying. The database CHECK is the backstop for self-approval, not the
   # only defence.
+  sig { params(operator: Operator).returns(T::Boolean) }
   def approvable_by?(operator)
     state == "pending" && operator.active? && operator.id != proposed_by_id &&
       Permissions.granted?(:operator, operator.role, "ops.proposals.decide")
   end
 
+  sig { returns(T::Array[Ledger::Leg]) }
   def legs
     Array(payload["legs"]).map do |l|
       Ledger::Leg.new(account_kind: l.fetch("account_kind"), direction: l.fetch("direction"), amount_minor: Integer(l.fetch("amount_minor")))
@@ -40,10 +44,12 @@ class OperatorProposal < ApplicationRecord
 
   private
 
+  sig { void }
   def payload_shape
     kind == "ledger_correction" ? ledger_correction_shape : transition_shape
   end
 
+  sig { void }
   def transition_shape
     from = payment&.state
     to = payload["to_state"]
@@ -52,6 +58,7 @@ class OperatorProposal < ApplicationRecord
     errors.add(:payload, "can move a #{from} payment only to #{ALLOWED_TRANSITIONS.fetch(from.to_s, []).join(' or ').presence || 'nothing'}")
   end
 
+  sig { void }
   def ledger_correction_shape
     unless Currency.supported?(payload["currency"].to_s)
       errors.add(:payload, "currency is not supported")

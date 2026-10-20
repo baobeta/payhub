@@ -65,9 +65,11 @@ class ChaosRun
   sig { returns(Merchant) }
   def merchant = T.must(@merchant)
 
+  sig { returns(ActiveRecord::Relation) }
   def payments = merchant.payments
 
   # Phase 1: every payment is requested COPIES times at once with the same key.
+  sig { void }
   def create_payments
     statuses = Hash.new(0)
     threads = Array.new(@count) do |i|
@@ -82,12 +84,14 @@ class ChaosRun
   end
 
   # Phase 2: two full-amount captures race for each authorized payment.
+  sig { void }
   def race_captures
     targets = payments.where(state: "authorized").to_a
     fire(targets.flat_map { |p| Array.new(2) { ["/v1/payments/#{p.id}/capture", {}] } }, "capture (2 racing per payment)")
   end
 
   # Phase 3: three refunds of 60% race for each captured payment — at most one can fit.
+  sig { void }
   def race_refunds
     targets = payments.where(state: "captured").to_a
     fire(targets.flat_map { |p| Array.new(3) { ["/v1/payments/#{p.id}/refunds", { amount_minor: p.amount_minor * 6 / 10 }] } },
@@ -160,8 +164,10 @@ class ChaosRun
     { passed:, checks: @checks, final_states:, unknown_transitions: }
   end
 
+  sig { returns(T::Hash[String, T.untyped]) }
   def psp_charges = JSON.parse(@psp.get("/_sim/charges").body).index_by { |c| c["reference"] }
 
+  sig { params(refund: Refund).returns(Integer) }
   def psp_refund(refund)
     JSON.parse(@psp.get("/refunds/#{refund.psp_reference}").body).then { |r| r["status"] == "succeeded" ? r["amount_minor"] : 0 }
   end
@@ -176,6 +182,7 @@ class ChaosRun
     bad.each { |r| say "    #{r.inspect}" }
   end
 
+  sig { params(label: String, passed: T::Boolean).void }
   def check(label, passed)
     @failures << label unless passed
     @checks << { label:, passed: }

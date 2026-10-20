@@ -4,6 +4,7 @@
 # A person on a merchant's team. Belongs to the LIVE merchant; the session's
 # mode decides whether they read live data or the test twin's (design §2).
 class MerchantUser < ApplicationRecord
+  extend T::Sig
   include TwoFactorPrincipal
 
   ROLES = %w[owner admin developer support viewer].freeze
@@ -17,6 +18,7 @@ class MerchantUser < ApplicationRecord
   validate :merchant_is_live
 
   # Returns [user, raw_token]. The token goes into the email link only.
+  sig { params(merchant: Merchant, email: String, role: String, invited_by: T.nilable(MerchantUser)).returns([MerchantUser, String]) }
   def self.invite!(merchant:, email:, role:, invited_by:)
     raise ArgumentError, "owner cannot be invited; use ownership transfer" unless INVITABLE_ROLES.include?(role)
 
@@ -28,6 +30,7 @@ class MerchantUser < ApplicationRecord
 
   # The only other way an owner is created (invite! refuses owners): the very
   # first one, from `merchants:invite_owner` or the seed.
+  sig { params(merchant: Merchant, email: String).returns([MerchantUser, String]) }
   def self.invite_first_owner!(merchant:, email:)
     if merchant.merchant_users.active.exists?(role: "owner") # authz-allow-role-check
       raise ArgumentError, "#{merchant.name} already has an owner"
@@ -41,6 +44,7 @@ class MerchantUser < ApplicationRecord
 
   private
 
+  sig { void }
   def merchant_is_live
     errors.add(:merchant, "must be the live merchant") unless merchant&.livemode
   end

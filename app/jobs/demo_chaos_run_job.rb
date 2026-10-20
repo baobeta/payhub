@@ -5,8 +5,11 @@
 # key. ChaosRun makes the Nordpay simulator hostile for its duration, which
 # also affects other demo payments made meanwhile; the UI says so.
 class DemoChaosRunJob < ApplicationJob
+  extend T::Sig
+
   queue_as :default
 
+  sig { params(run_id: String).void }
   def perform(run_id)
     run = DemoChaosRun.find(run_id)
     run.update!(state: "running")

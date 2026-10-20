@@ -1,6 +1,8 @@
 # typed: true
 
 class Payment < ApplicationRecord
+  extend T::Sig
+
   belongs_to :merchant
   has_many :transitions, -> { order(:sort_key, :created_at) },
            class_name: "PaymentTransition", dependent: :restrict_with_exception
@@ -33,6 +35,7 @@ class Payment < ApplicationRecord
 
   # The psp_reference is OURS and exists before any network call, so a timed-out
   # charge can always be looked up (DECISIONS #2).
+  sig { returns(String) }
   def self.generate_psp_reference = "ph_#{SecureRandom.hex(12)}"
 
   # Records that an authorize for this reference is about to be sent, and
@@ -40,6 +43,7 @@ class Payment < ApplicationRecord
   # before the call, keep-earliest in one statement, so two racing senders both
   # get the earlier time. A PSP cannot record a charge before it first receives
   # the reference, so every verdict it reports is at or after this (#11).
+  sig { params(at: ActiveSupport::TimeWithZone).returns(T.nilable(ActiveSupport::TimeWithZone)) }
   def mark_sent!(at = Time.current)
     self.class.where(id: id).update_all(["first_sent_at = COALESCE(first_sent_at, ?)", at])
     self.first_sent_at = self.class.where(id: id).pick(:first_sent_at)
@@ -63,6 +67,14 @@ class Payment < ApplicationRecord
   # Concurrency: the row is locked FOR UPDATE for the duration, and the
   # partial unique index on (payment_id) WHERE most_recent is the last line of
   # defence if two writers somehow both try to flip most_recent.
+  sig do
+    params(
+      to_state: T.any(String, Symbol),
+      sort_key: T.untyped,
+      source: String,
+      metadata: T::Hash[String, T.untyped]
+    ).returns(PaymentTransition)
+  end
   def transition!(to_state, sort_key:, source:, metadata: {})
     to_state = to_state.to_s
 
@@ -102,18 +114,22 @@ class Payment < ApplicationRecord
   end
 
   # Guard against `payment.update!(state: ...)` bypassing the history.
+  sig { params(value: T.untyped).returns(T.untyped) }
   def state=(value)
     raise ArgumentError, "use Payment#transition! — state is not assignable directly" unless new_record?
 
     super
   end
 
+  sig { returns(T::Boolean) }
   def terminal? = PaymentStateMachine.terminal?(state)
 
+  sig { returns(String) }
   def display_amount = Currency.to_display(amount_minor, currency)
 
   private
 
+  sig { void }
   def record_initial_transition
     transitions.create!(
       from_state: nil, to_state: state, sort_key: created_at, source: "api", most_recent: true

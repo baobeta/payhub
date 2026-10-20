@@ -8,6 +8,8 @@ module Ops
     # never grant. Layer order (design §3): session (401), permission (403),
     # step-up (401 step_up_required), record rules in services (409/422).
     class BaseController < Web::BaseController
+      extend T::Sig
+
       COOKIE = :_payhub_ops
       IDLE_TIMEOUT = 10.minutes
 
@@ -34,6 +36,7 @@ module Ops
 
       private
 
+      sig { void }
       def require_session!
         row = Session.find_by(id: cookies.signed[COOKIE], principal_type: "Operator")
         operator = row&.principal
@@ -44,16 +47,36 @@ module Ops
         row.touch_activity! unless request.headers["X-Poll"] == "1"
       end
 
+      sig { returns(Session) }
       def current_session = T.must(@current_session)
+
+      sig { returns(Operator) }
       def current_user = T.must(@current_user)
 
+      sig { returns(Symbol) }
       def authorization_area = :operator
+
+      sig { returns(T.nilable(String)) }
       def authorization_role = @current_user&.role
+
+      sig { returns(T.nilable(Operator)) }
       def authorization_actor = @current_user
+
+      sig { returns(T::Boolean) }
       def step_up_fresh? = @current_session&.stepped_up? || false
 
       # An operator acting on a merchant's data is recorded against that
       # merchant as well as on behalf of them (design §9).
+      sig do
+        params(
+          action: String,
+          target: T.untyped,
+          merchant_id: T.nilable(String),
+          on_behalf_of_merchant_id: T.nilable(String),
+          result: String,
+          metadata: T::Hash[String, T.untyped]
+        ).void
+      end
       def audit!(action, target: nil, merchant_id: nil, on_behalf_of_merchant_id: nil, result: "success", metadata: {})
         AuditEvent.record!(
           action:, result:, actor: current_user, actor_label: current_user.email,
@@ -62,12 +85,14 @@ module Ops
         )
       end
 
+      sig { params(session_row: Session).void }
       def set_session_cookie(session_row)
         cookies.signed[COOKIE] = { value: session_row.id, httponly: true, same_site: :strict,
                                    secure: Rails.env.production?, path: "/ops" }
       end
 
       # Every dangerous operator action carries a free-text reason (design §9).
+      sig { returns(String) }
       def reason!
         params[:reason].to_s.strip.presence || raise(ApiError.validation("reason" => ["is required"]))
       end

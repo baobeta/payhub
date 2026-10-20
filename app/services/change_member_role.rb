@@ -4,8 +4,11 @@
 # Who may give whom which role. The permission check (team.manage) already
 # ran; these are the record rules roles cannot express (design §3, layer 4).
 module ChangeMemberRole
+  extend T::Sig
+
   class Refused < StandardError; end
 
+  sig { params(actor: MerchantUser, member: MerchantUser, role: String).returns(MerchantUser) }
   def self.call(actor:, member:, role:)
     raise Refused, "You cannot change your own role" if member.id == actor.id
     raise Refused, "The owner's role changes only through ownership transfer" if member.role == "owner" # authz-allow-role-check
@@ -17,6 +20,7 @@ module ChangeMemberRole
     member
   end
 
+  sig { params(actor: MerchantUser, member: MerchantUser).returns(MerchantUser) }
   def self.remove(actor:, member:)
     raise Refused, "You cannot remove yourself" if member.id == actor.id
     raise Refused, "The owner cannot be removed; transfer ownership first" if member.role == "owner" # authz-allow-role-check

@@ -6,6 +6,8 @@ module Demo
     # Public by design: no login, test data only, one merchant. Every action
     # is public, so the declaration covers the whole controller.
     class BaseController < Web::BaseController
+      extend T::Sig
+
       wrap_parameters false
       allow_unauthorized
 
@@ -21,7 +23,10 @@ module Demo
 
       private
 
+      sig { returns(Symbol) }
       def authorization_area = :merchant
+
+      sig { returns(Merchant) }
       def merchant = @merchant ||= DemoMerchant.twin
     end
   end

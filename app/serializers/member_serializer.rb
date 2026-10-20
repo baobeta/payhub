@@ -2,6 +2,9 @@
 # frozen_string_literal: true
 
 module MemberSerializer
+  extend T::Sig
+
+  sig { params(user: MerchantUser).returns(T::Hash[String, T.untyped]) }
   def self.call(user)
     {
       "id" => user.id, "email" => user.email, "name" => user.name, "role" => user.role,
@@ -11,6 +14,7 @@ module MemberSerializer
     }
   end
 
+  sig { params(user: MerchantUser).returns(String) }
   def self.status(user)
     if user.disabled_at then "removed"
     elsif user.pending_invitation? then "invited"

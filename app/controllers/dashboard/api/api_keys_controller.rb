@@ -6,14 +6,18 @@ module Dashboard
     # M-10..M-13. Keys belong to the live merchant and carry livemode; the
     # list shows the keys of the session's current mode.
     class ApiKeysController < BaseController
+      extend T::Sig
+
       requires_permission "api_keys.read", only: :index
       requires_permission "api_keys.manage", only: %i[create roll revoke]
 
+      sig { void }
       def index
         keys = keys_in_mode.includes(:created_by).order(created_at: :desc)
         render json: { "data" => keys.map { |k| ApiKeySerializer.call(k) } }
       end
 
+      sig { void }
       def create
         key, raw = ApiKey.issue!(merchant: live_merchant, livemode: current_session.livemode,
                                  name: params.require(:name).to_s, note: params[:note].presence&.to_s,
@@ -22,6 +26,7 @@ module Dashboard
         render json: ApiKeySerializer.call(key).merge("secret" => raw), status: :created # shown once
       end
 
+      sig { void }
       def roll
         key = keys_in_mode.find(params[:id])
         expires_in = params.require(:expires_in).to_s
@@ -33,6 +38,7 @@ module Dashboard
         render json: ApiKeySerializer.call(replacement).merge("secret" => raw), status: :created
       end
 
+      sig { void }
       def revoke
         key = keys_in_mode.find(params[:id])
         key.revoke!
@@ -42,6 +48,7 @@ module Dashboard
 
       private
 
+      sig { returns(ActiveRecord::Relation) }
       def keys_in_mode = live_merchant.api_keys.where(livemode: current_session.livemode)
     end
   end

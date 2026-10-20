@@ -6,6 +6,9 @@
 # permission, and an operator has no merchant, so this payload never carries
 # a merchant except while impersonating.
 module OperatorMePresenter
+  extend T::Sig
+
+  sig { params(operator: Operator, session: Session).returns(T::Hash[String, T.untyped]) }
   def self.call(operator, session)
     stepped = session.stepped_up_at
     {
@@ -16,6 +19,7 @@ module OperatorMePresenter
     }
   end
 
+  sig { params(session: Session).returns(T.nilable(T::Hash[String, T.untyped])) }
   def self.impersonating(session)
     return nil unless session.impersonating?
 

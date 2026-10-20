@@ -1,16 +1,21 @@
-# typed: false
+# typed: true
 # frozen_string_literal: true
 
 # Password → TOTP (or recovery code) → session, plus step-up and sign-out.
 # The including controller defines principal_scope, session_cookie_name,
 # session_cookie_path and session_payload, and gets set_session_cookie and
-# audit! from its area base controller.
-# typed: false: uses the controller API (cookies, params, render).
+# audit! from its area base controller. Those methods are declared in
+# sorbet/rbi/shims/concerns.rbi.
 module TwoFactorSessionActions
   extend ActiveSupport::Concern
+  extend T::Sig
+  extend T::Helpers
+
+  requires_ancestor { ActionController::Base }
 
   PENDING_TTL = 5.minutes
 
+  sig { void }
   def create
     email = params.require(:email).to_s
     result = SignIn.password(principal_scope, email:, password: params.require(:password))
@@ -27,13 +32,16 @@ module TwoFactorSessionActions
     render json: { otp_required: true }
   end
 
+  sig { void }
   def otp = second_factor { |principal| principal.verify_otp!(params.require(:code)) }
+  sig { void }
   def recovery = second_factor { |principal| RecoveryCode.consume!(principal, params.require(:code)) }
 
   # Step-up guards a live session; a stolen cookie must not get unlimited
   # guesses. Ten wrong codes lock the account and end every session.
+  sig { void }
   def step_up
-    raise ApiError.locked(current_user.locked_until) if current_user.locked?
+    raise ApiError.locked(T.must(current_user.locked_until)) if current_user.locked?
 
     unless current_user.verify_otp!(params.require(:code))
       just_locked = current_user.register_failure!
@@ -43,9 +51,10 @@ module TwoFactorSessionActions
     end
     current_session.step_up!
     audit!("session.stepped_up")
-    render json: { stepped_up_until: (current_session.stepped_up_at + Session::STEP_UP_WINDOW).utc.iso8601 }
+    render json: { stepped_up_until: (T.must(current_session.stepped_up_at) + Session::STEP_UP_WINDOW).utc.iso8601 }
   end
 
+  sig { void }
   def destroy
     current_session.revoke!
     audit!("session.revoked")
@@ -55,8 +64,10 @@ module TwoFactorSessionActions
 
   private
 
+  sig { returns(Symbol) }
   def pending_cookie = :"#{session_cookie_name}_2fa"
 
+  sig { returns(T.nilable(T.any(MerchantUser, Operator))) }
   def pending_principal
     data = cookies.encrypted[pending_cookie]
     return nil unless data.is_a?(Hash) && data["exp"].to_i > Time.current.to_i
@@ -64,10 +75,11 @@ module TwoFactorSessionActions
     principal_scope.active.find_by(id: data["id"])
   end
 
-  def second_factor
+  sig { params(blk: T.proc.params(principal: T.any(MerchantUser, Operator)).returns(T::Boolean)).void }
+  def second_factor(&blk)
     principal = pending_principal
     raise ApiError.unauthenticated(code: "password_step_required", message: "Enter your password first") unless principal
-    raise ApiError.locked(principal.locked_until) if principal.locked?
+    raise ApiError.locked(T.must(principal.locked_until)) if principal.locked?
 
     unless yield(principal)
       audit_auth_failure(principal, factor: action_name, just_locked: principal.register_failure!)
@@ -88,6 +100,10 @@ module TwoFactorSessionActions
   # PCI DSS 10.2.1.4: invalid access attempts are logged. Against the
   # principal's merchant when the account exists, so the merchant's security
   # history shows someone guessing.
+  sig do
+    params(principal: T.nilable(T.any(MerchantUser, Operator)), factor: String, just_locked: T.nilable(T::Boolean),
+           email: T.nilable(String)).void
+  end
   def audit_auth_failure(principal, factor:, just_locked:, email: nil)
     Metrics.increment(:auth_failed, area: session_cookie_path.delete_prefix("/"), factor:)
     context = { actor: principal, actor_label: principal&.email || email.to_s.first(254),
@@ -97,6 +113,7 @@ module TwoFactorSessionActions
     AuditEvent.record!(action: "account.locked", result: "denied", metadata: { "factor" => factor }, **context) if just_locked
   end
 
+  sig { params(principal: T.any(MerchantUser, Operator), session_row: Session).void }
   def notify_if_new_device(principal, session_row)
     earlier = principal.sessions.where.not(id: session_row.id)
     return unless earlier.exists?

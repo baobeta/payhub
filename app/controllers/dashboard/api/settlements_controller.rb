@@ -5,8 +5,11 @@ module Dashboard
   module Api
     # M-09: what the PSP paid out and kept in fees, per day and currency.
     class SettlementsController < BaseController
+      extend T::Sig
+
       requires_permission "settlements.read", only: :index
 
+      sig { void }
       def index
         rows = SettlementLine.joins("JOIN payments ON payments.id = settlement_lines.payment_id")
                              .where(payments: { merchant_id: current_merchant.id })

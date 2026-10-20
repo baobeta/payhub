@@ -7,6 +7,8 @@ module Demo
     # method token (and therefore the outcome) on the server. A visitor never
     # chooses the token (use cases D-01..D-06).
     class PaymentsController < BaseController
+      extend T::Sig
+
       SCENARIOS = {
         "success" => { token: "tok_demo_success", currency: "EUR", amount_minor: 2500 },
         "decline" => { token: "tok_demo_decline", currency: "EUR", amount_minor: 2500 },
@@ -15,6 +17,7 @@ module Demo
         "wallet_redirect" => { token: "tok_demo_wallet", currency: "VND", amount_minor: 500_000 }
       }.freeze
 
+      sig { void }
       def create
         scenario = params.require(:scenario).to_s
         choice = SCENARIOS.fetch(scenario) do
@@ -28,11 +31,13 @@ module Demo
         render json: detail(payment), status: :accepted
       end
 
+      sig { void }
       def show = render(json: detail(DemoMerchant.payments.find(params[:id])))
 
       # D-03: the visitor pressing "approve" in their wallet app. A wallet
       # charges only after redirect approval, and only the simulator can say
       # yes, so this exists for the same reason the simulator does.
+      sig { void }
       def approve_wallet
         raise ApiError.not_found("resource") if Rails.env.production?
 
@@ -61,6 +66,7 @@ module Demo
 
       # A plain connection to the simulator: not the PSP adapter, because this
       # is not a PSP call — it is the customer's own approval.
+      sig { returns(Faraday::Connection) }
       def kiripay_conn
         @kiripay_conn ||= Faraday.new(url: ENV.fetch("KIRIPAY_URL", "http://localhost:4002")) do |f|
           f.request :json
@@ -71,6 +77,7 @@ module Demo
         end
       end
 
+      sig { params(payment: Payment).returns(T::Hash[String, T.untyped]) }
       def detail(payment)
         PaymentSerializer.call(payment).merge("timeline" => PaymentTimeline.call(payment))
       end

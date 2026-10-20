@@ -5,9 +5,12 @@ module Ops
   module Api
     # O-02 search, O-03 superset detail, O-04 poll now.
     class PaymentsController < BaseController
+      extend T::Sig
+
       requires_permission "ops.payments.read", only: %i[index show]
       requires_permission "ops.payments.poll", only: :poll
 
+      sig { void }
       def index
         rows = search(params[:q].to_s.strip).includes(:merchant).order(created_at: :desc).limit(50)
         render json: {
@@ -19,8 +22,10 @@ module Ops
         }
       end
 
+      sig { void }
       def show = render(json: OpsPaymentDetail.call(Payment.find(params[:id])))
 
+      sig { void }
       def poll
         payment = Payment.find(params[:id])
         StuckPaymentSweeperJob.poll_now(payment)
@@ -32,6 +37,7 @@ module Ops
 
       # An exact id or psp_reference; otherwise a merchant-name prefix. Never a
       # %term% scan over payments (design §8).
+      sig { params(q: String).returns(ActiveRecord::Relation) }
       def search(q)
         if q.match?(/\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/)
           Payment.where(id: q)

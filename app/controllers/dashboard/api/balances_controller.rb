@@ -5,8 +5,11 @@ module Dashboard
   module Api
     # M-08: available (merchant_payable) and reserved for refunds, per currency.
     class BalancesController < BaseController
+      extend T::Sig
+
       requires_permission "balance.read", only: :show
 
+      sig { void }
       def show
         available = Ledger.balances(current_merchant)
         reserved = Ledger.reserved_balances(current_merchant)

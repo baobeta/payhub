@@ -4,8 +4,11 @@
 module Ops
   module Api
     class MeController < BaseController
+      extend T::Sig
+
       allow_unauthorized only: :show # any signed-in operator may see who they are
 
+      sig { void }
       def show = render(json: OperatorMePresenter.call(current_user, current_session))
     end
   end

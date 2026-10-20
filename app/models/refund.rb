@@ -1,6 +1,8 @@
 # typed: true
 
 class Refund < ApplicationRecord
+  extend T::Sig
+
   belongs_to :payment
   has_many :ledger_entries, dependent: :restrict_with_exception
 
@@ -11,6 +13,7 @@ class Refund < ApplicationRecord
   validates :state, inclusion: { in: STATES }
   validates :psp_reference, presence: true, uniqueness: true
 
+  sig { returns(String) }
   def self.generate_psp_reference = "phr_#{SecureRandom.hex(12)}"
 
   # The "sum of succeeded refunds <= captured" rule is NOT here: it spans rows

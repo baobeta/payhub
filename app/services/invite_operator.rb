@@ -4,6 +4,9 @@
 # Invites a PayHub operator and emails the enrolment link. Shared by
 # InvitationsController and OperatorsController so both stay one-line thin.
 module InviteOperator
+  extend T::Sig
+
+  sig { params(email: T.untyped, role: String, invited_by: Operator).returns(Operator) }
   def self.call(email:, role:, invited_by:)
     unless Operator::ROLES.include?(role)
       raise ApiError.validation("role" => ["must be one of #{Operator::ROLES.join(', ')}"])

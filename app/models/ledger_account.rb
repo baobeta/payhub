@@ -1,6 +1,8 @@
 # typed: true
 
 class LedgerAccount < ApplicationRecord
+  extend T::Sig
+
   belongs_to :merchant
   has_many :entries, class_name: "LedgerEntry", foreign_key: :account_id, dependent: :restrict_with_exception
 
@@ -11,6 +13,7 @@ class LedgerAccount < ApplicationRecord
   validates :kind, uniqueness: { scope: %i[merchant_id currency] }
 
   # Created lazily on first use; the unique index makes a race harmless.
+  sig { params(merchant: Merchant, kind: String, currency: String).returns(LedgerAccount) }
   def self.for(merchant, kind, currency)
     find_or_create_by!(merchant: merchant, kind: kind, currency: currency)
   rescue ActiveRecord::RecordNotUnique
@@ -18,6 +21,7 @@ class LedgerAccount < ApplicationRecord
   end
 
   # Balance is always derived. credits - debits, never a cached column.
+  sig { returns(Integer) }
   def balance_minor
     # SUM over bigint is `numeric` in Postgres; amounts are integers by contract.
     entries.sum(Arel.sql("CASE direction WHEN 'credit' THEN amount_minor ELSE -amount_minor END")).to_i

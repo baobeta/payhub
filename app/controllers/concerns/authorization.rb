@@ -1,4 +1,4 @@
-# typed: false
+# typed: true
 # frozen_string_literal: true
 
 # Fail-closed authorization for UI controllers (design §3).
@@ -11,11 +11,14 @@
 # with neither declaration raises NotDeclared in development and test; the
 # route-inventory spec makes that a CI failure before it can reach production.
 #
-# typed: false because Sorbet cannot see the controller API (request,
-# before_action, class_attribute) from inside an ActiveSupport::Concern.
+# The class_attribute accessors are declared in sorbet/rbi/shims/concerns.rbi.
 # spec/controllers/web/base_controller_authorization_spec.rb covers it.
 module Authorization
   extend ActiveSupport::Concern
+  extend T::Sig
+  extend T::Helpers
+
+  requires_ancestor { ActionController::Metal }
 
   class NotDeclared < StandardError; end
 
@@ -25,24 +28,45 @@ module Authorization
   end
 
   class_methods do
+    extend T::Sig
+    extend T::Helpers
+
+    requires_ancestor { Kernel }
+    requires_ancestor { AbstractController::Callbacks::ClassMethods }
+
+    sig do
+      params(permission: String, only: T.nilable(T.any(Symbol, T::Array[Symbol])),
+             except: T.nilable(T.any(Symbol, T::Array[Symbol]))).void
+    end
     def requires_permission(permission, only: nil, except: nil)
       raise Permissions::Unknown, "unknown permission #{permission.inspect}" unless Permissions.known?(permission)
 
       add_authorization_rule(kind: :permission, permission:, only:, except:)
-      before_action(**{ only:, except: }.compact) { authorize!(permission) }
+      before_action(**{ only:, except: }.compact) do
+        T.bind(self, Authorization)
+        authorize!(permission)
+      end
     end
 
+    sig do
+      params(only: T.nilable(T.any(Symbol, T::Array[Symbol])), except: T.nilable(T.any(Symbol, T::Array[Symbol]))).void
+    end
     def allow_unauthorized(only: nil, except: nil)
       add_authorization_rule(kind: :public, permission: nil, only:, except:)
       before_action(**{ only:, except: }.compact) { @authorization_checked = true }
     end
 
+    sig { params(action: T.any(String, Symbol)).returns(T::Boolean) }
     def authorization_declared_for?(action)
       authorization_rules.any? { |rule| rule_applies?(rule, action.to_s) }
     end
 
     private
 
+    sig do
+      params(kind: Symbol, permission: T.nilable(String), only: T.nilable(T.any(Symbol, T::Array[Symbol])),
+             except: T.nilable(T.any(Symbol, T::Array[Symbol]))).void
+    end
     def add_authorization_rule(kind:, permission:, only:, except:)
       self.authorization_rules = authorization_rules + [{
         kind:, permission:,
@@ -50,6 +74,7 @@ module Authorization
       }]
     end
 
+    sig { params(rule: T::Hash[Symbol, T.untyped], action: String).returns(T::Boolean) }
     def rule_applies?(rule, action)
       return false if rule[:only] && !rule[:only].include?(action)
       return false if rule[:except]&.include?(action)
@@ -63,6 +88,7 @@ module Authorization
   # Layer order (design §3): no principal → 401 with no audit row (anonymous
   # traffic must not fill an append-only table); no grant → audited 403;
   # sensitive permission without a fresh step-up → 401 step_up_required.
+  sig { params(permission: String).void }
   def authorize!(permission)
     @authorization_checked = true
     raise ApiError.unauthenticated if authorization_role.nil?
@@ -75,14 +101,16 @@ module Authorization
   end
 
   # Phase 2 narrows this for read-only impersonation.
+  sig { params(permission: String).returns(T::Boolean) }
   def permission_granted?(permission)
-    Permissions.granted?(authorization_area, authorization_role, permission)
+    Permissions.granted?(authorization_area, T.must(authorization_role), permission)
   rescue ArgumentError => e
     raise if e.is_a?(Permissions::Unknown) # a typo in code is a bug, not a denial
 
     false # unknown role: deny (and audit), never 500
   end
 
+  sig { params(permission: String).void }
   def record_denial(permission)
     Metrics.increment(:authz_denied, area: authorization_area.to_s, permission:)
     AuditEvent.record!(
@@ -95,6 +123,7 @@ module Authorization
     )
   end
 
+  sig { void }
   def verify_authorization_declared
     return if @authorization_checked
 
@@ -106,10 +135,15 @@ module Authorization
   end
 
   # Overridden by the area base controllers in phases 1 and 2.
+  sig { returns(Symbol) }
   def authorization_area = raise(NotImplementedError, "#{self.class} must define authorization_area")
+  sig { returns(T.nilable(String)) }
   def authorization_role = nil
+  sig { returns(T.nilable(T.any(MerchantUser, Operator))) }
   def authorization_actor = nil
+  sig { returns(T.nilable(String)) }
   def authorization_merchant_id = nil
   # Fail closed: only an area base controller that tracks step-up says yes.
+  sig { returns(T::Boolean) }
   def step_up_fresh? = false
 end

@@ -5,8 +5,11 @@ module Dashboard
   module Api
     # M-01: attention first, then volume and balance.
     class HomeController < BaseController
+      extend T::Sig
+
       requires_permission "payments.read", only: :show
 
+      sig { void }
       def show
         payments = current_merchant.payments
         render json: {

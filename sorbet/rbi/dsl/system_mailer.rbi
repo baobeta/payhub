@@ -7,7 +7,7 @@
 
 class SystemMailer
   class << self
-    sig { params(to: T.untyped).returns(::ActionMailer::MessageDelivery) }
+    sig { params(to: ::String).returns(::ActionMailer::MessageDelivery) }
     def smoke(to); end
   end
 end

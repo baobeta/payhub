@@ -5,6 +5,9 @@
 # PSP (psp_calls, redacted), every webhook the PSP sent (inbound_events,
 # signature valid or not), and the proposals raised against the payment.
 module OpsPaymentDetail
+  extend T::Sig
+
+  sig { params(payment: Payment).returns(T::Hash[String, T.untyped]) }
   def self.call(payment)
     PaymentSerializer.call(payment).merge(
       "merchant" => { "id" => payment.merchant_id, "name" => T.must(payment.merchant).name,
@@ -16,6 +19,7 @@ module OpsPaymentDetail
     )
   end
 
+  sig { params(payment: Payment).returns(T::Array[T::Hash[String, T.untyped]]) }
   def self.psp_calls(payment)
     PspCall.where(psp_name: payment.psp_name, psp_reference: payment.psp_reference).order(:sent_at).map do |c|
       c.slice(:operation, :http_status, :outcome, :duration_ms, :request_redacted, :response_redacted)
@@ -23,6 +27,7 @@ module OpsPaymentDetail
     end
   end
 
+  sig { params(payment: Payment).returns(T::Array[T::Hash[String, T.untyped]]) }
   def self.inbound_events(payment)
     InboundEvent.where(psp_name: payment.psp_name, psp_reference: payment.psp_reference).order(:received_at).map do |e|
       e.slice(:event_type, :signature_valid, :error)
@@ -32,6 +37,7 @@ module OpsPaymentDetail
     end
   end
 
+  sig { params(payment: Payment).returns(T::Array[T::Hash[String, T.untyped]]) }
   def self.proposals(payment)
     OperatorProposal.where(payment:).order(:created_at).map { |pr| ProposalSerializer.call(pr) }
   end

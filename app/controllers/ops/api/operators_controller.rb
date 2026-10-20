@@ -7,14 +7,18 @@ module Ops
     # can never change their own record (design §9), so a staff account cannot
     # escalate or erase itself.
     class OperatorsController < BaseController
+      extend T::Sig
+
       requires_permission "ops.operators.manage", only: %i[index create update destroy]
       requires_permission "ops.access_review.export", only: :access_review
 
+      sig { void }
       def index
         last = Session.where(principal_type: "Operator").group(:principal_id).maximum(:created_at)
         render json: { "data" => Operator.order(:created_at).map { |op| row(op, last[op.id]) } }
       end
 
+      sig { void }
       def create
         operator = InviteOperator.call(email: params.require(:email), role: params.require(:role).to_s,
                                        invited_by: current_user)
@@ -22,6 +26,7 @@ module Ops
         render json: row(operator, nil), status: :created
       end
 
+      sig { void }
       def update
         operator = Operator.find(params[:id])
         raise self_change if operator.id == current_user.id
@@ -32,6 +37,7 @@ module Ops
         render json: row(operator, nil)
       end
 
+      sig { void }
       def destroy
         operator = Operator.find(params[:id])
         raise self_change if operator.id == current_user.id
@@ -44,6 +50,7 @@ module Ops
 
       # PCI 7.2.4 covers everyone with access to cardholder-data systems, so the
       # export lists staff AND merchant users.
+      sig { void }
       def access_review
         operator_last = Session.where(principal_type: "Operator").group(:principal_id).maximum(:created_at)
         member_last = Session.where(principal_type: "MerchantUser").group(:principal_id).maximum(:created_at)
@@ -63,18 +70,31 @@ module Ops
 
       private
 
+      sig { params(operator: Operator, last_sign_in_at: T.nilable(Time)).returns(T::Hash[String, T.untyped]) }
       def row(operator, last_sign_in_at)
         { "id" => operator.id, "email" => operator.email, "role" => operator.role,
           "disabled_at" => operator.disabled_at&.utc&.iso8601(3),
           "last_sign_in_at" => last_sign_in_at&.utc&.iso8601(3) }
       end
 
+      sig do
+        params(
+          area: String,
+          merchant: String,
+          email: String,
+          role: String,
+          created_at: T.untyped,
+          disabled_at: T.untyped,
+          last_sign_in_at: T.nilable(Time)
+        ).returns(T::Array[T.untyped])
+      end
       def row_for(area, merchant, email, role, created_at, disabled_at, last_sign_in_at)
         permissions = Permissions::CATALOGUE.keys.select { |p| Permissions.granted?(area.to_sym, role, p) }.join(" ")
         CsvSafe.row([area, merchant, email, role, permissions, last_sign_in_at&.utc&.iso8601,
                      created_at.utc.iso8601, disabled_at&.utc&.iso8601])
       end
 
+      sig { returns(ApiError) }
       def self_change
         ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "refused",
                      message: "You cannot change your own operator record")

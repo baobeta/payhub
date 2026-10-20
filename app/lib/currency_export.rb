@@ -4,6 +4,9 @@
 # The Vue app formats money with the same exponents the server uses, so a
 # refund typed as "12.34" IDR is the same minor-unit amount on both sides.
 module CurrencyExport
+  extend T::Sig
+
+  sig { returns(String) }
   def self.typescript
     body = Currency::EXPONENT.map { |code, exp| %(  "#{code}": #{exp},) }.join("\n")
     <<~TS

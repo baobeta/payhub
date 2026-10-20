@@ -4,6 +4,7 @@
 # PayHub staff. Separate from MerchantUser: different cookie, different
 # permissions, and nothing a merchant can ever grant.
 class Operator < ApplicationRecord
+  extend T::Sig
   include TwoFactorPrincipal
 
   ROLES = %w[support ops approver admin].freeze
@@ -12,6 +13,7 @@ class Operator < ApplicationRecord
   belongs_to :invited_by, class_name: "Operator", optional: true
   validates :role, inclusion: { in: ROLES }
 
+  sig { params(email: String, role: String, invited_by: T.nilable(Operator)).returns([Operator, String]) }
   def self.invite!(email:, role:, invited_by:)
     raise ArgumentError, "unknown operator role #{role.inspect}" unless ROLES.include?(role)
 

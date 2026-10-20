@@ -5,9 +5,12 @@ module Dashboard
   module Api
     # M-16, M-17: the delivery log. Same serializer as /v1/events.
     class EventsController < BaseController
+      extend T::Sig
+
       requires_permission "webhooks.read", only: %i[index show]
       requires_permission "events.redeliver", only: :redeliver
 
+      sig { void }
       def index
         scope = current_merchant.outbound_events
         scope = scope.where(state: params[:state]) if params[:state].present?
@@ -19,8 +22,10 @@ module Dashboard
         raise ApiError.invalid_request(e.message, param: "cursor", code: "invalid_cursor")
       end
 
+      sig { void }
       def show = render(json: EventSerializer.call(current_merchant.outbound_events.find(params[:id])))
 
+      sig { void }
       def redeliver
         event = current_merchant.outbound_events.find(params[:id])
         unless event.dead?
