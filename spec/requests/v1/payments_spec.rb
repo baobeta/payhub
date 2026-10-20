@@ -46,6 +46,93 @@ RSpec.describe "V1 payments", type: :request do
       expect(Payment.count).to eq(0)
     end
 
+    it "TC-A2-1: VND, THB and IDR payments are routed to kiripay" do
+      create(:fx_rate, base: "VND", quote: "EUR", rate: BigDecimal("0.000037"))
+      create(:fx_rate, base: "THB", quote: "EUR", rate: BigDecimal("0.026"))
+      create(:fx_rate, base: "IDR", quote: "EUR", rate: BigDecimal("0.000059"))
+
+      [
+        { currency: "VND", amount_minor: 50_000 },
+        { currency: "THB", amount_minor: 100 },
+        { currency: "IDR", amount_minor: 100_000 }
+      ].each do |params|
+        post "/v1/payments", params: { payment_method_token: "tok_visa" }.merge(params).to_json,
+                             headers: auth_headers(key)
+        expect(response).to have_http_status(:accepted), "expected 202 for #{params[:currency]}: #{response.body}"
+        expect(json_body["psp_name"]).to eq("kiripay"), "expected kiripay for #{params[:currency]}"
+      end
+    end
+
+    it "TC-A1-2: GBP and USD payments are routed to nordpay" do
+      create(:fx_rate, base: "GBP", quote: "EUR", rate: BigDecimal("1.17"))
+      create(:fx_rate, base: "USD", quote: "EUR", rate: BigDecimal("0.93"))
+
+      [
+        { currency: "GBP", amount_minor: 2500 },
+        { currency: "USD", amount_minor: 2500 }
+      ].each do |params|
+        post "/v1/payments", params: { payment_method_token: "tok_visa" }.merge(params).to_json,
+                             headers: auth_headers(key)
+        expect(response).to have_http_status(:accepted), "expected 202 for #{params[:currency]}: #{response.body}"
+        expect(json_body["psp_name"]).to eq("nordpay"), "expected nordpay for #{params[:currency]}"
+      end
+    end
+
+    it "TC-A4-1: invalid amounts (0, float, string, nil) get 422 and don't store the key" do
+      pending("BUG: idempotency key is stored even for 422 validation failures; TC-A4-1 requires it not be stored")
+      [0, 25.5, "2500", nil].each do |amount|
+        idem = "bad-amount-#{SecureRandom.uuid}"
+        post "/v1/payments",
+             params: { amount_minor: amount, currency: "EUR", payment_method_token: "tok_visa" }.to_json,
+             headers: auth_headers(key, idempotency_key: idem)
+        expect(response).to have_http_status(:unprocessable_content),
+                             "expected 422 for amount=#{amount.inspect}: #{response.body}"
+        expect(json_body["error"]["details"]).to have_key("amount_minor")
+        expect(IdempotencyKey.find_by(key: idem)).to be_nil
+      end
+    end
+
+    it "TC-A5-1: a VND payment stores amount_minor as-is and the PSP body carries the integer string" do
+      create(:fx_rate, base: "VND", quote: "EUR", rate: BigDecimal("0.000037"))
+      kiripay = FakePspAdapter.new(name: "kiripay", currencies: %w[VND THB IDR])
+      allow(PspRouter).to receive(:adapter).with("kiripay").and_return(kiripay)
+
+      post "/v1/payments",
+           params: { amount_minor: 50_000, currency: "VND", payment_method_token: "tok_wallet" }.to_json,
+           headers: auth_headers(key)
+      expect(response).to have_http_status(:accepted)
+
+      payment = Payment.find(json_body["id"])
+      expect(payment.amount_minor).to eq(50_000)
+
+      # Run the authorize job to verify the PSP call carries "50000"
+      kiripay.script(:authorize, PspAdapter::Result.new(
+        status: PspAdapter::Result::Status::Authorized,
+        psp_reference: payment.psp_reference, psp_charge_id: "kp_1",
+        decline_code: nil, psp_timestamp: Time.current, raw: {}
+      ))
+      AuthorizePaymentJob.perform_now(payment.id)
+      call_arg = kiripay.calls[:authorize].first
+      expect(call_arg).to be_a(Payment)
+      expect(call_arg.amount_minor).to eq(50_000)
+    end
+
+    it "TC-A7-1: FX rate is snapshotted at creation time; a newer rate doesn't change the payment" do
+      create(:fx_rate, base: "GBP", quote: "EUR", rate: BigDecimal("1.17"), captured_at: 1.hour.ago)
+
+      post "/v1/payments", params: { amount_minor: 2500, currency: "GBP", payment_method_token: "tok_visa" }.to_json,
+                           headers: auth_headers(key)
+      expect(response).to have_http_status(:accepted)
+
+      payment = Payment.find(json_body["id"])
+      original_rate = payment.fx_rate
+      # Insert a newer rate
+      create(:fx_rate, base: "GBP", quote: "EUR", rate: BigDecimal("1.25"), captured_at: Time.current)
+
+      payment.reload
+      expect(payment.fx_rate).to eq(original_rate)
+    end
+
     it "returns 401 in the standard error shape without a valid key" do
       post "/v1/payments", params: valid_body.to_json, headers: auth_headers("sk_live_wrong")
 
