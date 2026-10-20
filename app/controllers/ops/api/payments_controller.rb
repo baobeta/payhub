@@ -7,6 +7,8 @@ module Ops
     class PaymentsController < BaseController
       extend T::Sig
 
+      POLLABLE_STATES = T.let(%w[pending unknown requires_action].freeze, T::Array[String])
+
       requires_permission "ops.payments.read", only: %i[index show]
       requires_permission "ops.payments.poll", only: :poll
 
@@ -28,6 +30,13 @@ module Ops
       sig { void }
       def poll
         payment = Payment.find(params[:id])
+        # Only an open question can be asked. Polling a settled payment could
+        # read a 404 and re-send its authorize (DECISIONS #12).
+        unless POLLABLE_STATES.include?(payment.state)
+          raise ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "invalid_state",
+                             message: "Payment is #{payment.state}; only pending, unknown or requires_action payments can be polled")
+        end
+
         StuckPaymentSweeperJob.poll_now(payment)
         audit!("payment.polled", target: payment, merchant_id: payment.merchant_id)
         render json: OpsPaymentDetail.call(payment.reload)

@@ -30,12 +30,16 @@ module OpsQueue
     }
   end
 
-  # Failed payments with a success webhook kept as an error. They stay listed
-  # until a refund proposal settles them; there is no "resolved" flag yet.
+  # Failed payments with a success webhook kept as an error: the customer was
+  # charged after we failed the payment. Starts from those few events (partial
+  # index idx_inbound_events_late_success), never from every failed payment.
+  # They stay listed until someone refunds the customer at the PSP; PayHub has
+  # no in-product path for that yet (USE_CASES §9, M-4), nor a "resolved" flag.
   sig { returns(T::Array[Payment]) }
   def self.late_successes
-    flagged = InboundEvent.where("inbound_events.psp_name = payments.psp_name AND inbound_events.psp_reference = payments.psp_reference")
-                          .where("inbound_events.error LIKE ?", "#{ProcessInboundEventJob::LATE_SUCCESS}%")
-    Payment.where(state: "failed").where(flagged.arel.exists).order(:updated_at).limit(LIMIT).includes(:merchant).to_a
+    flagged = InboundEvent.where("error LIKE ?", "#{ProcessInboundEventJob::LATE_SUCCESS}%")
+                          .select(:psp_name, :psp_reference)
+    Payment.where(state: "failed").where("(payments.psp_name, payments.psp_reference) IN (#{flagged.to_sql})")
+           .order(:updated_at).limit(LIMIT).includes(:merchant).to_a
   end
 end

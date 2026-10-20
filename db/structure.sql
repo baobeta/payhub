@@ -882,6 +882,13 @@ CREATE UNIQUE INDEX idx_inbound_events_dedupe ON public.inbound_events USING btr
 
 
 --
+-- Name: idx_inbound_events_late_success; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_inbound_events_late_success ON public.inbound_events USING btree (psp_name, psp_reference) WHERE ((error)::text ~~ 'late_success_after_failure%'::text);
+
+
+--
 -- Name: idx_inbound_events_unprocessed; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1494,6 +1501,7 @@ ALTER TABLE ONLY public.api_keys
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261020100002'),
 ('20261020100001'),
 ('20261020000302'),
 ('20261020000301'),
