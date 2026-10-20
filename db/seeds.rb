@@ -43,7 +43,7 @@ else
 
     This key is shown ONCE. Only its SHA-256 digest is stored.
     Try:
-      curl -s -X POST localhost:3000/v1/payments \\
+      curl -s -X POST localhost:#{ENV.fetch("WEB_PORT", "3000")}/v1/payments \\
         -H "Authorization: Bearer #{raw_key}" \\
         -H "Idempotency-Key: $(uuidgen)" -H "Content-Type: application/json" \\
         -d '{"amount_minor":2500,"currency":"EUR","payment_method_token":"tok_visa"}'
@@ -57,5 +57,5 @@ demo = Merchant.find_by(name: "Demo Merchant", livemode: true)
 if demo && !demo.merchant_users.active.exists?(role: "owner") # authz-allow-role-check
   owner, token = MerchantUser.invite_first_owner!(merchant: demo, email: "owner@demo.payhub.local")
   InvitationMailer.invite(owner, token).deliver_now
-  puts "\nDashboard owner invitation (also in MailCatcher): http://localhost:3000/dashboard/invitations/#{token}"
+  puts "\nDashboard owner invitation (also in MailCatcher): http://localhost:#{ENV.fetch("WEB_PORT", "3000")}/dashboard/invitations/#{token}"
 end

@@ -22,7 +22,7 @@ namespace :merchants do
     merchant = Merchant.find(args.fetch(:merchant_id))
     user, token = MerchantUser.invite_first_owner!(merchant:, email: args.fetch(:email))
     InvitationMailer.invite(user, token).deliver_now
-    puts "Invitation for #{user.email}: http://localhost:3000/dashboard/invitations/#{token}"
+    puts "Invitation for #{user.email}: http://localhost:#{ENV.fetch("WEB_PORT", "3000")}/dashboard/invitations/#{token}"
   rescue ArgumentError => e
     abort e.message
   end

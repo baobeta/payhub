@@ -8,7 +8,7 @@ namespace :operators do
   task :invite, %i[email role] => :environment do |_t, args|
     operator, token = Operator.invite!(email: args.fetch(:email), role: args.fetch(:role), invited_by: nil)
     OperatorMailer.invite(operator, token).deliver_now
-    puts "Invitation for #{operator.email} (#{operator.role}): http://localhost:3000/ops/invitations/#{token}"
+    puts "Invitation for #{operator.email} (#{operator.role}): http://localhost:#{ENV.fetch("WEB_PORT", "3000")}/ops/invitations/#{token}"
   rescue ArgumentError => e
     abort e.message
   end
