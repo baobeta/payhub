@@ -1,0 +1,87 @@
+# OpenTelemetry Collector: everything the app emits lands in ClickHouse.
+#   traces  <- OTLP from web and worker (opentelemetry-ruby, already instrumented)
+#   logs    <- the JSON request/job lines in log/development.log (they carry
+#              trace_id/span_id, so Grafana links a log line to its trace)
+#   metrics <- Prometheus scrape of web:3000/metrics
+# Tables are created by the exporter (create_schema) in the `otel` database.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: payhub
+          scrape_interval: 15s
+          metrics_path: /metrics
+          static_configs:
+            - targets: ["web:3000"]
+
+  filelog:
+    include: [/var/log/payhub/development.log]
+    start_at: end
+    operators:
+      # development.log mixes our JSON lines with Rails' plain-text SQL and
+      # render lines; keep only the JSON ones. Job lines arrive behind
+      # ActiveJob's tags ("[ActiveJob] [Job] [id] {...}"), so strip those.
+      - type: filter
+        expr: 'not (body matches "^(\\[[^\\]]*\\] )*\\{")'
+      - type: regex_parser
+        regex: '^(?:\[[^\]]*\] )*(?P<json>\{.*\})\s*$'
+        parse_to: attributes
+      - type: json_parser
+        parse_from: attributes.json
+        parse_to: attributes
+      - type: remove
+        field: attributes.json
+        timestamp:
+          parse_from: attributes.time
+          layout_type: gotime
+          layout: "2006-01-02T15:04:05.000Z"
+      - type: trace_parser
+        trace_id:
+          parse_from: attributes.trace_id
+        span_id:
+          parse_from: attributes.span_id
+      - type: add
+        field: resource["service.name"]
+        value: payhub
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 400
+  batch:
+    timeout: 5s
+
+exporters:
+  clickhouse:
+    endpoint: tcp://clickhouse:9000?dial_timeout=10s
+    database: otel
+    username: otel
+    password: otel
+    create_schema: true
+    ttl: 72h
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]
+    logs:
+      receivers: [filelog, otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]
+    metrics:
+      receivers: [prometheus, otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]

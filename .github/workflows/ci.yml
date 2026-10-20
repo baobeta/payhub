@@ -122,7 +122,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Start the stack
-        run: docker compose up -d --build --wait
+        # Grafana is for people; CI needs the app, the collector it exports to,
+        # and mailcatcher (db:seed emails the demo owner's invitation).
+        run: docker compose up -d --build --wait web worker nordpay kiripay mailcatcher
 
       - name: Prepare database
         run: docker compose exec -T web bin/rails db:prepare

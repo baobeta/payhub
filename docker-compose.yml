@@ -51,11 +51,17 @@ services:
       VITE_RUBY_SKIP_PROXY: "false"
       SMTP_HOST: mailcatcher
       SMTP_PORT: "1025"
+      # Spans go to the collector (observability/otel-collector.yaml), which
+      # stores them in ClickHouse; view them in Grafana on :3300.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: payhub-web
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     volumes:
       - .:/rails
       - /rails/node_modules # keep the image's Linux node_modules, not the host's
@@ -80,6 +86,7 @@ services:
     environment:
       <<: *app_env
       CHAOS_API_URL: ${CHAOS_API_URL:-http://web:3000}
+      OTEL_SERVICE_NAME: payhub-worker
     depends_on:
       db:
         condition: service_healthy
@@ -130,5 +137,58 @@ services:
       timeout: 3s
       retries: 10
 
+  # ── Observability: traces, logs and metrics in ClickHouse, viewed in Grafana ──
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_DB: otel
+      CLICKHOUSE_USER: otel
+      CLICKHOUSE_PASSWORD: otel
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "8123:8123" # HTTP interface, for ad-hoc SQL: curl 'localhost:8123/?user=otel&password=otel' -d 'SELECT 1'
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+      - ./log:/var/log/payhub:ro # the JSON request/job lines, shipped as logs
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    environment:
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource 4.4.0
+      # Local only: no login, everyone is admin.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/payhub.json
+    ports:
+      - "${GRAFANA_PORT:-3300}:3000" # not 3000: that is the app's default port
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
 volumes:
   pgdata:
+  clickhouse-data:
+  grafana-data:
