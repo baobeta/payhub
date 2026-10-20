@@ -121,4 +121,18 @@ RSpec.describe KiripayAdapter do
     expect { adapter.authorize(payment) }.to raise_error(Faraday::SSLError)
     expect(PspCall.sole).to have_attributes(outcome: "unreachable", http_status: nil)
   end
+
+  describe "TC-B6-1: error mapping" do
+    it "TC-B6-1a: 5xx response → PspAdapter::Unavailable" do
+      stub_request(:post, "http://kiripay.test/charges").to_return(status: 503, body: "Service Unavailable")
+
+      expect { adapter.authorize(payment) }.to raise_error(PspAdapter::Unavailable, /kiripay 503/)
+    end
+
+    it "TC-B6-1b: read timeout → PspAdapter::TimedOut" do
+      stub_request(:post, "http://kiripay.test/charges").to_raise(Faraday::TimeoutError.new("read timed out"))
+
+      expect { adapter.authorize(payment) }.to raise_error(PspAdapter::TimedOut, /kiripay POST/)
+    end
+  end
 end

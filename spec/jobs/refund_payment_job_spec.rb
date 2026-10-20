@@ -19,6 +19,45 @@ RSpec.describe RefundPaymentJob do
     )
   end
 
+  describe "TC-F1-1: one full refund with default amount → refunded" do
+    it "TC-F1-1: a refund with no explicit amount on a €25 captured payment ends the payment refunded" do
+      # Default amount = full captured amount (€25.00 = 2500 minor)
+      refund = create(:refund, payment: payment, amount_minor: 2500)
+      adapter.script(:refund, outcome(:succeeded, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("succeeded")
+      expect(payment.reload.state).to eq("refunded")
+      expect(Ledger.refunded_minor(payment)).to eq(2500)
+    end
+  end
+
+  describe "TC-F10-1: refund outbound events carry refund id, amount_minor, and failure_code" do
+    it "TC-F10-1a: refund.succeeded event has refund.id and amount_minor" do
+      refund = create(:refund, payment: payment, amount_minor: 1000)
+      adapter.script(:refund, outcome(:succeeded, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      event = OutboundEvent.find_by!(payment: payment, event_type: "refund.succeeded")
+      expect(event.payload["refund"]["id"]).to eq(refund.id)
+      expect(event.payload["refund"]["amount_minor"]).to eq(1000)
+    end
+
+    it "TC-F10-1b: refund.failed event has refund.id, amount_minor, and failure_code" do
+      refund = create(:refund, payment: payment, amount_minor: 500)
+      adapter.script(:refund, outcome(:failed, refund.psp_reference, code: "insufficient_funds"))
+
+      described_class.perform_now(refund.id)
+
+      event = OutboundEvent.find_by!(payment: payment, event_type: "refund.failed")
+      expect(event.payload["refund"]["id"]).to eq(refund.id)
+      expect(event.payload["refund"]["amount_minor"]).to eq(500)
+      expect(event.payload["failure_code"]).to be_present
+    end
+  end
+
   it "books a succeeded partial refund and moves captured → part_refunded" do
     refund = create(:refund, payment: payment, amount_minor: 500)
     adapter.script(:refund, outcome(:succeeded, refund.psp_reference))

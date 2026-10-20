@@ -175,4 +175,28 @@ RSpec.describe AuthorizePaymentJob do
     expect { described_class.perform_now(payment.id) }.to have_enqueued_job(described_class).with(payment.id)
     expect(payment.reload.state).to eq("pending")
   end
+
+  describe "TC-C8-1: circuit open → job leaves payment pending, no PSP call" do
+    it "TC-C8-1: when the real PspCircuit is open the job retries without calling the PSP" do
+      # Open the real circuit by writing its sentinel key into the MemoryStore.
+      # PspCircuit::Open (a subclass of Unavailable) is raised before the adapter
+      # method body executes — so authorize is never called on the FakePspAdapter.
+      # The job's retry_on PspAdapter::Unavailable fires and re-enqueues.
+      store = PspCircuit.store
+      store.set("psp_circuit:nordpay:open_until", (Time.current + 30.seconds).to_f.to_s, ttl: 60)
+
+      # Wrap the FakePspAdapter so that authorize goes through the real circuit.
+      wrapped = adapter
+      allow(PspRouter).to receive(:adapter).with("nordpay").and_return(wrapped)
+      allow(wrapped).to receive(:authorize) do |pmt|
+        PspCircuit.call("nordpay") { raise "should not reach PSP" }
+      end
+
+      expect { described_class.perform_now(payment.id) }.to have_enqueued_job(described_class).with(payment.id)
+
+      expect(payment.reload.state).to eq("pending")
+    ensure
+      PspCircuit.store.del(%w[psp_circuit:nordpay:open_until psp_circuit:nordpay:probe])
+    end
+  end
 end

@@ -76,6 +76,19 @@ RSpec.describe ApiKey do
     end
   end
 
+  describe "TC-L1-1: CHECK constraint rejects a key whose prefix doesn't match its mode" do
+    it "TC-L1-1: raw insert of sk_test_ prefix with livemode true fires the CHECK constraint" do
+      expect do
+        ActiveRecord::Base.transaction(requires_new: true) do
+          ActiveRecord::Base.connection.execute(
+            "INSERT INTO api_keys (id, merchant_id, livemode, name, prefix, last4, digest, created_at, updated_at) " \
+            "VALUES (gen_random_uuid(), '#{merchant.id}', true, 'Bad Key', 'sk_test_', 'xxxx', 'fakedigest', NOW(), NOW())"
+          )
+        end
+      end.to raise_error(ActiveRecord::StatementInvalid, /chk_api_keys_mode_matches_prefix/)
+    end
+  end
+
   describe "#status" do
     it "is active, then expiring once rolled, then expired" do
       key, = described_class.issue!(merchant:, livemode: true, name: "Server")
