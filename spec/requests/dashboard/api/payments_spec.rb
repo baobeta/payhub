@@ -84,6 +84,21 @@ RSpec.describe "Dashboard payments", type: :request do
       expect(response).to have_http_status(:accepted)
       expect(payment.captures.count).to eq(1)
     end
+
+    it "takes `final` and closes the remainder with a zero amount, on the audit record (DECISIONS #20)" do
+      payment = create(:payment, merchant:, state: "authorized")
+      sign_in_as(support, stepped_up: true)
+      post "/dashboard/api/payments/#{payment.id}/capture", params: { amount_minor: 1000, final: false }.to_json, headers: ui_headers
+      expect(payment.captures.sole).to have_attributes(final: false)
+      payment.captures.sole.update!(state: "succeeded")
+      Ledger.record_capture!(payment, 1000)
+
+      post "/dashboard/api/payments/#{payment.id}/capture", params: { amount_minor: 0, final: true }.to_json, headers: ui_headers
+
+      expect(response).to have_http_status(:ok)
+      expect(json_body["can"]).to include("capture" => false, "capturable_minor" => 0)
+      expect(AuditEvent.where(action: "payment.captures_closed", target_id: payment.id)).to exist
+    end
   end
 
   describe "refund" do

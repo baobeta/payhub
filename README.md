@@ -247,8 +247,8 @@ All requests authenticate with `Authorization: Bearer <api key>`. Every `POST` r
 | `POST` | `/v1/payments` | Create a payment. Returns `202 pending`. Body: `amount_minor`, `currency`, `payment_method_token`, `capture`, `metadata` |
 | `GET` | `/v1/payments/:id` | State and full transition history |
 | `GET` | `/v1/payments` | List with cursor pagination. Filters: `state`, `currency`, `created_after`, `created_before` |
-| `POST` | `/v1/payments/:id/capture` | Capture, in full or in part. Returns `202` |
-| `POST` | `/v1/payments/:id/cancel` | Cancel an `authorized` payment. Synchronous |
+| `POST` | `/v1/payments/:id/capture` | Capture, in full or in part. Body: `amount_minor` (default: all still capturable), `final` (default `true`; `false` keeps the rest capturable, cards only). `amount_minor: 0, final: true` closes capturing and returns `200`. Otherwise `202`. Errors: `capture_closed`, `multicapture_unsupported`, `capture_limit_reached` (50 non-final), `capture_in_progress` ([#20](DECISIONS.md#20-a-capture-is-a-row-and-the-job-reads-the-psp-before-it-writes)) |
+| `POST` | `/v1/payments/:id/cancel` | Cancel an `authorized` payment. Synchronous. `400 cancel_unsupported` on a PSP that cannot void; `409 psp_rejected` when the PSP refuses |
 | `POST` | `/v1/payments/:id/refunds` | Refund, in part and repeatedly, up to the captured amount. Returns `202` |
 | `GET` | `/v1/balance` | Balance per currency, computed from the ledger |
 | `GET` | `/v1/events` | Outbound events and their delivery attempts, with a cursor |

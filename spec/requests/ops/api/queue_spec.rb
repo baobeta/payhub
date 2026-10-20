@@ -7,7 +7,7 @@ RSpec.describe "Ops queue", type: :request do
     sign_in_operator(create(:operator, role: "support"))
     get "/ops/api/queue"
     expect(response).to have_http_status(:ok)
-    expect(json_body.keys).to contain_exactly("unknown_payments", "dead_events", "reconciliation_breaks", "open_proposals")
+    expect(json_body.keys).to contain_exactly("unknown_payments", "late_successes", "dead_events", "reconciliation_breaks", "open_proposals")
   end
 
   it "refuses a merchant session" do

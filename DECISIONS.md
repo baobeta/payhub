@@ -108,7 +108,7 @@ Each entry: what we chose in plain words, what we chose exactly, what we rejecte
 
 **In plain words:** Each card company plugs in through an adapter, like a travel plug, that says what it can and can't do. Our rules never mention a company by name.
 
-**Decision:** Each PSP adapter exposes flags such as `supports_partial_refund?`. `RefundService` checks them before locking or writing.
+**Decision:** Each PSP adapter exposes flags such as `supports_partial_refund?`. `RefundService` checks them before locking or writing. The flags today: `supports_partial_refund?`, `separate_authorize_and_capture?`, `supports_multicapture?` (several partial captures, #20; Nordpay yes, Kiripay no) and `supports_void?` (release a hold; Nordpay yes, Kiripay no). A cancel on a PSP that can't void is refused up front with `400 cancel_unsupported`, and the dashboard never offers it; `ExpireAuthorizationsJob` skips such holds and logs `authorization.expiry_unsupported` (#14). When a PSP still refuses a synchronous call, its `Rejected` becomes `409 psp_rejected` (`retriable: false`), never a 500.
 
 **Rejected:** `if psp_name == 'kiripay'` branches in the service; or letting the adapter reject at call time.
 
@@ -184,9 +184,11 @@ Rescheduling before the call means neither a failed poll nor a crash mid-batch c
 
 Voiding the moment `unknown → authorized` lands would be wrong the other way: most late resolutions are minutes old and the merchant still wants the money; PayHub has no signal that an order was abandoned, so idle time is the honest proxy. Measuring from creation instead of activity would race a merchant who captures on day 6: their `202` would be followed by a void before the capture job ran, and the job would silently skip a canceled payment. Touching the row on capture closes that race without a new column.
 
-**Not handled:** the uncaptured remainder of a *partial* capture stays held at the PSP until the network releases it; PayHub moves to `captured` and has no state for "part-held". Recorded here rather than papered over.
+**Partly captured payments:** since several partial captures exist (#20), a payment can be `captured` or `part_refunded` with capturing still open. After the same 6 idle days the job **closes** capturing on it (`captures_closed_at`, event `payment.captures_closed` with `reason: "authorization_expired"`). It does not void: money was already taken, and a void would be refused or would release the captured part. A payment whose captured money was all refunded becomes `refunded` at that moment. A PSP that cannot void (`supports_void?` false, #9) is skipped and logged once per hold period as `authorization.expiry_unsupported`.
 
-**Trade-off:** A merchant that needs a longer hold (pre-orders, made-to-order goods) can't have one; they must capture within 6 days or ask the customer again. The leftover of a partial capture is not released (see above).
+**Not handled:** the uncaptured remainder is still not *released at the PSP*. Closing capturing is PayHub's own bookkeeping: no more captures, the merchant is told. The hold itself stays at the customer's bank until the network lets it lapse, and PayHub never claims otherwise. Recorded here rather than papered over.
+
+**Trade-off:** A merchant that needs a longer hold (pre-orders, made-to-order goods) can't have one; they must capture within 6 days or ask the customer again. The leftover of a partial capture is closed, not released (see above).
 
 ## 15. Every webhook verifier takes a list of secrets
 
@@ -275,6 +277,18 @@ It earned its place on its first runs. Twenty seeds found two defects every exis
 **Reason:** Booking was idempotent — the ledger books only the difference between the PSP's total and its own — and the job was specced as "perform twice, ledger unchanged". But the PSP's capture call is not idempotent: sent twice, it captures twice. A Sidekiq redelivery, or a retry after a capture whose response and follow-up read were both lost, sent the partial capture again; the PSP accepted it (still within the authorization) and the ledger, faithfully, booked it. Books and PSP agreed; the customer paid double. The deterministic simulation (#19) found it in 5 of 20 seeds; the old "perform twice" spec had scripted the PSP to return the same total twice, which a real PSP doesn't — it encoded the bug instead of catching it.
 
 Serializing captures per payment is what makes the read sufficient: with one capture in flight and a running total that only grows, "has it landed?" is `total ≥ base + amount`, with no ambiguity about whose capture moved the total. The 409 costs a merchant who fires two partial captures at once one retry; it is the same trade #6 makes for refunds. Refunds didn't have this bug because Nordpay's refund call *is* idempotent on our reference (#6) — which is the general rule: an operation is safe to retry only if the PSP deduplicates it or we can prove from a read that it hasn't happened.
+
+**Several partial captures.** A capture takes `final` (default `true`), following Stripe's `final_capture` ([Stripe: multicapture](https://docs.stripe.com/payments/multicapture)) and Checkout.com's `capture_type` (`Final` by default, `NonFinal` keeps the rest open: [Checkout.com: capture](https://www.checkout.com/docs/payments/manage-payments/capture-a-payment)). The rules:
+- A capture is allowed from `authorized`, `captured` or `part_refunded` while `payments.captures_closed_at` is nil and money remains. The first booking still moves the payment to `captured`, because money moved (#10).
+- A final capture that succeeds closes capturing. So does `amount_minor: 0, final: true`, with no PSP call and no Capture row (`200`); on a payment with nothing captured that is refused, because releasing the whole hold is what cancel is for. A closed payment answers `400 capture_closed`.
+- `final: false` needs the adapter's `supports_multicapture?` (#9); otherwise `400 multicapture_unsupported`. At most 50 non-final captures per payment (`422 capture_limit_reached`), as Stripe; a final one is still allowed after them.
+- Refunds may come between captures, up to captured − refunded − reserved, and don't change what is still capturable. A payment becomes `refunded` only when capturing is closed **and** refunded ≥ captured; closing a fully refunded `part_refunded` payment moves it to `refunded`.
+- Each capture gets its own event, `capture.succeeded` or `capture.failed` (the capture's id, amount, and `capturable_minor` after it), as Adyen sends a CAPTURE webhook per capture ([Adyen: capture](https://docs.adyen.com/online-payments/capture)). `payment.captured` stays one per payment. Closing with money left uncaptured sends `payment.captures_closed` with the reason and `released_minor`.
+- Webhooks book the PSP's own running total (`captured_minor`) when the event carries one. Nordpay reports a partial capture as a charge still `authorized` with `captured_minor > 0`; on a payment already past `authorized` that books progress and never moves state back. A PSP that reports no amount (Kiripay) only ever captures in full.
+- Existing captured, part-refunded and refunded payments were closed by the migration, so no old payment became capturable again.
+- `GET /v1/payments/:id` shows `amount_capturable_minor`; the dashboard's `can.capturable_minor` is the same figure from the ledger.
+
+The uncaptured remainder is not released at the PSP (#14). Adyen does the same: with several partial captures the rest is not auto-cancelled, it is cancelled by the merchant or expires.
 
 **Deploy note:** jobs already queued with the old `(payment_id, amount)` arguments are adopted as captures on first run. A legacy job *redelivered after it already booked* can't be told from a fresh one; drain the `payments` queue before deploying this change.
 

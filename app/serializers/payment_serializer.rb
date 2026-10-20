@@ -16,6 +16,9 @@ class PaymentSerializer
       "currency" => payment.currency,
       "display_amount" => payment.display_amount,
       "captured_minor" => payment.captured_minor,
+      # What a further capture may still take (DECISIONS #20). From the display
+      # cache, so a list of payments costs no ledger query per row.
+      "amount_capturable_minor" => payment.capturable_minor,
       "psp_name" => payment.psp_name,
       "psp_reference" => payment.psp_reference,
       "merchant_currency" => payment.merchant_currency,

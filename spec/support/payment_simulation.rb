@@ -16,7 +16,11 @@ class PaymentSimulation
 
   class Violation < StandardError; end
 
-  Outcome = Struct.new(:seed, :violation, :steps, keyword_init: true) do
+  # Every refusal a merchant capture may meet in a random run. Anything else
+  # is a bug the driver must not swallow (USE_CASES §1, bug 3).
+  EXPECTED_CAPTURE_REFUSALS = %w[capture_in_progress capture_closed invalid_state invalid_request validation_failed].freeze
+
+  Outcome = Struct.new(:seed, :violation, :steps, :captures, keyword_init: true) do
     def ok? = violation.nil?
     def report = "#{violation}\n  replay: SIM_SEED=#{seed}\n  last steps: #{steps.last(15).join(' ')}"
   end
@@ -34,6 +38,7 @@ class PaymentSimulation
     @now = Time.utc(2026, 9, 1, 12)
     @log = []
     @requested = Hash.new(0) # capture amounts merchants asked for, per payment
+    @captures = Hash.new(0)  # :accepted, :closed, and refusals by error code
   end
 
   def run(steps:)
@@ -47,9 +52,9 @@ class PaymentSimulation
     end
     settle!
     check_settled!
-    Outcome.new(seed: @seed, steps: @log)
+    Outcome.new(seed: @seed, steps: @log, captures: capture_stats)
   rescue Violation => e
-    Outcome.new(seed: @seed, violation: e.message, steps: @log)
+    Outcome.new(seed: @seed, violation: e.message, steps: @log, captures: capture_stats)
   end
 
   private
@@ -113,14 +118,32 @@ class PaymentSimulation
     nil # a duplicate: already stored
   end
 
+  # Half the captures are non-final, so a payment can be captured again
+  # (DECISIONS #20); a few close capturing with a zero-amount final one.
   def do_capture
-    payment = random_payment("authorized") or return
-    remaining = payment.amount_minor - Ledger.captured_minor(payment)
-    amount = @rng.rand < 0.5 ? nil : @rng.rand(1..[remaining, 1].max)
-    CapturePayment.call(payment, amount_minor: amount)
+    # Half the time, go back to a payment left open by a non-final capture.
+    open = payments.where(state: %w[captured part_refunded], captures_closed_at: nil).where("captured_minor < amount_minor")
+    payment = (pick(open) if @rng.rand < 0.5) || random_payment(*Payment::CAPTURABLE_STATES) or return
+    remaining = payment.capturable_minor(Ledger.captured_minor(payment))
+    final = @rng.rand < 0.5
+    amount = case @rng.rand
+    when 0...0.3 then nil
+    when 0.3...0.4 then (final ? 0 : 1)
+    else @rng.rand(1..[remaining, 1].max)
+    end
+    CapturePayment.call(payment, amount_minor: amount, final: final)
     @requested[payment.id] += amount || remaining # counted once the API accepted it
-  rescue ApiError
-    nil
+    @captures[amount&.zero? ? :closed : :accepted] += 1
+    @captures[:accepted_again] += 1 if !amount&.zero? && remaining < payment.amount_minor
+  rescue ApiError => e
+    violation!("capture refused with an unexpected code #{e.code}: #{e.message}") unless EXPECTED_CAPTURE_REFUSALS.include?(e.code)
+    @captures[e.code] += 1
+  end
+
+  # Captures that landed on a payment already partly captured: the second,
+  # third… capture the old driver could never get past the API.
+  def capture_stats
+    @captures.merge(later_succeeded: Capture.where(payment: payments, state: "succeeded").where("base_captured_minor > 0").count)
   end
 
   def do_refund
@@ -143,8 +166,10 @@ class PaymentSimulation
   # Always a fresh query: an association once iterated answers from its cache.
   def payments = Payment.where(merchant_id: @merchant.id)
 
-  def random_payment(*states)
-    candidates = payments.where(state: states).order(:id).to_a
+  def random_payment(*states) = pick(payments.where(state: states))
+
+  def pick(scope)
+    candidates = scope.order(:id).to_a
     candidates[@rng.rand(candidates.size)] unless candidates.empty?
   end
 

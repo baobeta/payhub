@@ -122,6 +122,81 @@ RSpec.describe CapturePaymentJob do
     expect(adapter.calls[:fetch]).to be_empty
   end
 
+  describe "several partial captures (DECISIONS #20)" do
+    def capture_request(amount, final: true)
+      payment.captures.create!(amount_minor: amount, base_captured_minor: Ledger.captured_minor(payment), final: final)
+    end
+
+    it "TC-E3-12: one capture.succeeded per capture, payment.captured once" do
+      first = capture_request(1000, final: false)
+      adapter.script(:fetch, charge(:authorized, captured_minor: 0))
+      adapter.script(:capture, charge(:authorized, captured_minor: 1000))
+      described_class.perform_now(first.id)
+      second = capture_request(1500)
+      adapter.script(:fetch, charge(:authorized, captured_minor: 1000))
+      adapter.script(:capture, charge(:captured, captured_minor: 2500))
+      described_class.perform_now(second.id)
+
+      events = OutboundEvent.where(payment: payment, event_type: "capture.succeeded").order(:created_at)
+      expect(events.map { |e| e.payload["capture"].slice("id", "amount_minor") })
+        .to eq([{ "id" => first.id, "amount_minor" => 1000 }, { "id" => second.id, "amount_minor" => 1500 }])
+      expect(events.map { |e| e.payload["capturable_minor"] }).to eq([1500, 0])
+      expect(OutboundEvent.where(payment: payment, event_type: "payment.captured").count).to eq(1)
+      expect(payment.reload.captures_closed_at).to be_present
+    end
+
+    it "TC-E3-13: a failed capture emits capture.failed and leaves capturing open" do
+      capture = capture_request(2500)
+      adapter.script(:fetch, charge(:authorized, captured_minor: 0))
+      adapter.script(:capture, PspAdapter::Rejected.new(422, "not capturable"))
+
+      described_class.perform_now(capture.id)
+
+      event = OutboundEvent.find_by!(payment: payment, event_type: "capture.failed")
+      expect(event.payload).to include("failure_code" => "psp_rejected_422", "capturable_minor" => 2500)
+      expect(event.payload["capture"]).to include("id" => capture.id, "state" => "failed")
+      expect(payment.reload.captures_closed_at).to be_nil
+      expect(CapturePayment.call(payment, amount_minor: 2500).captures.pending.count).to eq(1) # may retry
+    end
+
+    it "TC-E3-14: the read-before-send rule holds for a second capture whose response was lost" do
+      first = capture_request(1000, final: false)
+      adapter.script(:fetch, charge(:authorized, captured_minor: 0))
+      adapter.script(:capture, charge(:authorized, captured_minor: 1000))
+      described_class.perform_now(first.id)
+
+      second = capture_request(1500)
+      adapter.script(:fetch, charge(:authorized, captured_minor: 1000), PspAdapter::TimedOut)
+      adapter.script(:capture, PspAdapter::TimedOut)
+      expect { described_class.perform_now(second.id) }.to raise_error(PspAdapter::TimedOut)
+      adapter.script(:fetch, charge(:captured, captured_minor: 2500))
+      described_class.perform_now(second.id)
+
+      expect(adapter.calls[:capture].size).to eq(2) # one per capture, never a re-send
+      expect(Ledger.captured_minor(payment)).to eq(2500)
+      expect(second.reload.state).to eq("succeeded")
+    end
+
+    it "takes a capture from part_refunded, between refunds" do
+      first = capture_request(1000, final: false)
+      adapter.script(:fetch, charge(:authorized, captured_minor: 0))
+      adapter.script(:capture, charge(:authorized, captured_minor: 1000))
+      described_class.perform_now(first.id)
+      refund = create(:refund, payment: payment, amount_minor: 400)
+      Ledger.post_refund!(refund)
+      refund.update!(state: "succeeded")
+      payment.transition!(:part_refunded, sort_key: t_psp + 1.second, source: "worker")
+
+      second = capture_request(1500)
+      adapter.script(:fetch, charge(:authorized, captured_minor: 1000))
+      adapter.script(:capture, charge(:captured, captured_minor: 2500))
+      described_class.perform_now(second.id)
+
+      expect(second.reload.state).to eq("succeeded")
+      expect(payment.reload).to have_attributes(state: "part_refunded", captured_minor: 2500)
+    end
+  end
+
   it "adopts a job enqueued before captures were rows (payment_id, amount)" do
     adapter.script(:fetch, charge(:authorized, captured_minor: 0))
     adapter.script(:capture, charge(:captured, captured_minor: 2500))

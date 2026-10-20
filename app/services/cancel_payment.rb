@@ -16,6 +16,13 @@ class CancelPayment
     payment.with_lock { assert_authorized!(payment) }
 
     adapter = PspRouter.adapter(payment.psp_name)
+    # A PSP that cannot void says so up front (DECISIONS #9), rather than
+    # failing on the wire after the merchant was promised a cancel.
+    unless adapter.supports_void?
+      raise ApiError.invalid_request("#{payment.psp_name} cannot release an authorization; refund after capture instead",
+                                     code: "cancel_unsupported", param: "id")
+    end
+
     result = begin
       adapter.cancel(payment)
     rescue PspAdapter::TimedOut
@@ -48,7 +55,14 @@ class CancelPayment
   def self.assert_authorized!(payment)
     return if payment.state == "authorized"
 
-    raise ApiError.invalid_request("Payment is #{payment.state}; only authorized payments can be canceled",
+    # Part of the hold was captured: a void would release money already
+    # taken. Ending capturing is a zero-amount final capture (DECISIONS #20).
+    hint = if payment.capturable_minor.positive?
+      "; use a zero-amount final capture to close the remainder"
+    else
+      ""
+    end
+    raise ApiError.invalid_request("Payment is #{payment.state}; only authorized payments can be canceled#{hint}",
                                    code: "invalid_state", param: "id")
   end
 end

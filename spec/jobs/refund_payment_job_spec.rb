@@ -57,6 +57,58 @@ RSpec.describe RefundPaymentJob do
     expect(Ledger.balances(payment.merchant)).to eq("EUR" => 2500)
   end
 
+  describe "a refund the PSP rejects (bug 2)" do
+    it "TC-BUG2-1: fails the refund, voids its reservation and tells the merchant" do
+      refund = create(:refund, payment: payment, amount_minor: 1000)
+      adapter.script(:refund, PspAdapter::Rejected.new(422, "nordpay 422: refund exceeds captured"))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("failed") # the code travels on the refund.failed event
+      expect(Ledger.reserved_minor(payment)).to eq(0)
+      expect(Ledger.balances(payment.merchant)).to eq("EUR" => 2500)
+      event = OutboundEvent.find_by!(payment: payment, event_type: "refund.failed")
+      expect(event.payload["failure_code"]).to eq("psp_rejected_422")
+      expect(payment.reload.state).to eq("captured")
+    end
+
+    it "TC-BUG2-2: a Kiripay refund whose charge cannot be found fails cleanly, and is not re-driven" do
+      refund = create(:refund, payment: payment, amount_minor: 2500)
+      adapter.script(:refund, PspAdapter::Rejected.new(404, "kiripay charge not found"))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("failed")
+      expect(OutboundEvent.find_by!(event_type: "refund.failed").payload["failure_code"]).to eq("psp_rejected_404")
+      expect(Ledger.reserved_minor(payment)).to eq(0)
+      expect(Refund.where(state: "pending")).to be_empty # nothing left for the sweeper
+      described_class.perform_now(refund.id) # a stray re-run: no scripted answer, so a PSP call would raise
+      expect(adapter.calls[:refund].size).to eq(1)
+    end
+  end
+
+  describe "refunds between partial captures (DECISIONS #20)" do
+    it "TC-E3-9: refunding everything captured while capturing is open is not terminal, until capturing closes" do
+      open = create(:payment, merchant: payment.merchant) # €25 authorized, €10 captured non-final
+      open.transition!(:authorized, sort_key: open.created_at + 1.second, source: "worker")
+      Ledger.record_capture!(open, 1000)
+      open.update_column(:captured_minor, 1000)
+      open.transition!(:captured, sort_key: open.created_at + 2.seconds, source: "worker")
+      refund = create(:refund, payment: open, amount_minor: 1000)
+      adapter.script(:refund, outcome(:succeeded, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      expect(open.reload.state).to eq("part_refunded")
+      expect(open.capturable_minor(Ledger.captured_minor(open))).to eq(1500)
+
+      CapturePayment.call(open, amount_minor: 0, final: true)
+
+      expect(open.reload.state).to eq("refunded")
+      expect(open.captures_closed_at).to be_present
+    end
+  end
+
   describe "two-phase settlement (DECISIONS #16)" do
     it "holds the amount as reserved until the PSP answers, then posts it" do
       refund = create(:refund, payment: payment, amount_minor: 500)

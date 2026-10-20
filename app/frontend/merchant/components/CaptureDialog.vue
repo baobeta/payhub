@@ -12,6 +12,9 @@ const emit = defineEmits<{ "update:open": [boolean]; done: [] }>();
 
 const { key, renew } = useIdempotencyKey();
 const amount = ref("");
+// Final by default, as the API: a final capture closes capturing, and the
+// uncaptured rest of the hold lapses at the card network (DECISIONS #20).
+const final = ref(true);
 const error = ref<string | null>(null);
 const submitting = ref(false);
 
@@ -21,6 +24,7 @@ watch(
     if (!open) return;
     renew();
     amount.value = minorToInput(props.capturableMinor, props.currency);
+    final.value = true;
     error.value = null;
   },
   { immediate: true },
@@ -33,7 +37,7 @@ async function submit() {
   submitting.value = true;
   error.value = null;
   try {
-    await api.post(`/payments/${props.paymentId}/capture`, { amount_minor: amountMinor.value }, { idempotencyKey: key.value });
+    await api.post(`/payments/${props.paymentId}/capture`, { amount_minor: amountMinor.value, final: final.value }, { idempotencyKey: key.value });
     emit("done");
     emit("update:open", false);
   } catch (e) {
@@ -48,7 +52,7 @@ async function submit() {
   <BaseModal
     :open="open"
     title="Capture payment"
-    description="Partial capture is allowed; the rest of the authorization is released later."
+    description="Partial capture is allowed. After the final capture nothing more can be captured, and the rest of the hold lapses at the customer's bank; PayHub does not release it early."
     @update:open="emit('update:open', $event)"
   >
     <form
@@ -66,6 +70,13 @@ async function submit() {
       <p class="text-sm text-slate-600">
         Up to {{ formatMoney(capturableMinor, currency) }} can be captured.
       </p>
+      <label class="flex items-center gap-2 text-sm text-slate-700">
+        <input
+          v-model="final"
+          type="checkbox"
+        >
+        This is the final capture
+      </label>
       <ErrorBanner :message="error" />
       <button
         type="submit"

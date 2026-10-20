@@ -40,6 +40,12 @@ class NordpayAdapter < PspAdapter
   sig { override.returns(T::Boolean) }
   def separate_authorize_and_capture? = true
 
+  sig { override.returns(T::Boolean) }
+  def supports_multicapture? = true
+
+  sig { override.returns(T::Boolean) }
+  def supports_void? = true
+
   sig { override.returns(T::Array[String]) }
   def currencies = %w[EUR GBP USD]
 
@@ -144,7 +150,8 @@ class NordpayAdapter < PspAdapter
     WebhookEvent.new(
       external_id: payload.fetch("id"), event_type: payload.fetch("type"),
       psp_reference: data["reference"], psp_charge_id: data["id"], status: status, decline_code: data["code"],
-      psp_timestamp: Time.iso8601(payload.fetch("created_at")), payload: payload
+      psp_timestamp: Time.iso8601(payload.fetch("created_at")), payload: payload,
+      captured_minor: data["captured_minor"]&.then { |v| Integer(v) }
     )
   rescue KeyError, ArgumentError => e
     raise MalformedWebhook, e.message

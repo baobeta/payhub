@@ -95,6 +95,49 @@ function relative(iso: string): string {
         </table>
       </section>
 
+      <section
+        v-if="data.late_successes?.length"
+        aria-labelledby="late"
+      >
+        <h2
+          id="late"
+          class="mb-2 text-lg font-semibold"
+        >
+          Paid after we failed them
+          <span class="text-sm font-normal text-slate-500">({{ data.late_successes.length }})</span>
+        </h2>
+        <p class="mb-2 text-sm text-slate-600">
+          The PSP reports a success on a payment PayHub already failed. Refund the customer.
+        </p>
+        <table class="w-full rounded bg-white text-sm shadow-sm">
+          <tbody>
+            <tr
+              v-for="p in data.late_successes"
+              :key="p.id"
+              class="border-t border-slate-100"
+            >
+              <td class="p-2">
+                {{ p.merchant }}
+              </td>
+              <td class="p-2">
+                <RouterLink
+                  :to="`/payments/${p.id}`"
+                  class="underline"
+                >
+                  {{ formatMoney(p.amount_minor, p.currency) }}
+                </RouterLink>
+              </td>
+              <td class="p-2">
+                {{ relative(p.failed_at) }}
+              </td>
+              <td class="p-2 font-mono text-xs">
+                {{ p.psp_reference }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
       <section aria-labelledby="dead">
         <h2
           id="dead"

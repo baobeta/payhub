@@ -106,4 +106,19 @@ RSpec.describe Payment do
       expect(create(:payment, :vnd).display_amount).to eq("500000")
     end
   end
+
+  describe "multicapture migration (DECISIONS #20)" do
+    it "TC-E3-18: closes capturing on every payment that was captured before the deploy" do
+      require Rails.root.join("db/migrate/20261020100001_add_multicapture_to_payments_and_captures")
+      captured = create(:payment, state: "captured")
+      part_refunded = create(:payment, state: "part_refunded")
+      refunded = create(:payment, state: "refunded")
+      authorized = create(:payment, state: "authorized")
+
+      AddMulticaptureToPaymentsAndCaptures.backfill!
+
+      expect([captured, part_refunded, refunded].map { |p| p.reload.captures_closed_at }).to all(be_present)
+      expect(authorized.reload.captures_closed_at).to be_nil
+    end
+  end
 end

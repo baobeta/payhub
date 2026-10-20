@@ -46,8 +46,20 @@ export type QueueEvent = {
   dead_since: string;
 };
 
+// The PSP took the money after PayHub failed the payment; a human refunds it.
+export type LateSuccess = {
+  id: string;
+  merchant: string;
+  psp_name: string;
+  psp_reference: string;
+  amount_minor: number;
+  currency: string;
+  failed_at: string;
+};
+
 export type Queue = {
   unknown_payments: QueuePayment[];
+  late_successes: LateSuccess[];
   dead_events: QueueEvent[];
   reconciliation_breaks: number;
   open_proposals: number;

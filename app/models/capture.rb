@@ -13,6 +13,8 @@ class Capture < ApplicationRecord
   validates :base_captured_minor, numericality: { only_integer: true, greater_than_or_equal_to: 0 }
 
   scope :pending, -> { where(state: "pending") }
+  # Non-final captures that count toward the per-payment limit.
+  scope :non_final, -> { where(final: false).where.not(state: "failed") }
 
   # The PSP's running total once this capture has landed.
   sig { returns(Integer) }

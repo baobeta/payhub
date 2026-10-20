@@ -13,7 +13,6 @@ class RefundPaymentJob < ApplicationJob
   queue_as :payments
 
   retry_on PspAdapter::Unavailable, wait: :polynomially_longer, attempts: 5
-  discard_on PspAdapter::Rejected
 
   sig { params(refund_id: String).void }
   def perform(refund_id)
@@ -30,6 +29,13 @@ class RefundPaymentJob < ApplicationJob
       # by OUR reference. NotFound here means it never landed; the sweeper
       # (Phase 6) re-drives pending refunds, so we just leave it pending.
       adapter.fetch_refund(refund.psp_reference)
+    rescue PspAdapter::Rejected => e
+      # A definitive refusal (4xx; a Kiripay charge that cannot be found).
+      # Retrying cannot help, and discarding would leave the refund pending
+      # with its money reserved forever: fail it, and void the reservation.
+      PspAdapter::RefundResult.new(status: PspAdapter::RefundResult::Status::Failed, psp_reference: refund.psp_reference,
+                                   psp_refund_id: nil, failure_code: "psp_rejected_#{e.http_status}",
+                                   psp_timestamp: Time.current)
     end
 
     apply(refund, payment, result)
@@ -51,7 +57,12 @@ class RefundPaymentJob < ApplicationJob
         Refund.transaction do
           Ledger.post_refund!(refund)
           refund.update!(state: "succeeded")
-          to = Ledger.refunded_minor(payment) >= Ledger.captured_minor(payment) ? :refunded : :part_refunded
+          captured = Ledger.captured_minor(payment)
+          # Terminal only once nothing more can be captured either: while
+          # capturing is open, refunding all of it so far is still part_refunded
+          # (DECISIONS #20; Payment#close_captures! finishes the job).
+          closed = payment.capturable_minor(captured).zero?
+          to = closed && Ledger.refunded_minor(payment) >= captured ? :refunded : :part_refunded
           # captured → part_refunded → refunded, or captured → refunded. Both drawn.
           payment.transition!(to, sort_key: result.psp_timestamp, source: "worker", metadata: meta) if payment.state != to.to_s
           OutboundEvent.emit!(payment, "refund.succeeded", "refund" => RefundSerializer.call(refund))

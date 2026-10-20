@@ -6,7 +6,7 @@ RSpec.describe CancelPayment do
   let(:payment) { create(:payment, state: "authorized") }
 
   it "keeps the psp_calls row written during the call when the transition loses" do
-    adapter = instance_double(NordpayAdapter)
+    adapter = instance_double(NordpayAdapter, supports_void?: true)
     allow(PspRouter).to receive(:adapter).with(payment.psp_name).and_return(adapter)
     allow(adapter).to receive(:cancel) do
       PspCallLog.record(psp: payment.psp_name, method: :post, path: "/charges/#{payment.psp_reference}/void",
@@ -27,6 +27,8 @@ RSpec.describe CancelPayment do
   it "lets exactly one of a cancel and a capture apply", :concurrency do
     payment = create(:payment, state: "authorized")
     adapter = Class.new do
+      def supports_void? = true
+
       def cancel(payment)
         sleep 0.02
         PspAdapter::Result.new(status: PspAdapter::Result::Status::Canceled, psp_reference: payment.psp_reference,

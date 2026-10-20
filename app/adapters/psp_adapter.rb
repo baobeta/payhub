@@ -128,6 +128,9 @@ class PspAdapter
     const :decline_code, T.nilable(String)
     const :psp_timestamp, T.any(Time, ActiveSupport::TimeWithZone) # ordering key
     const :payload, T::Hash[String, T.untyped]
+    # The PSP's running captured total, when its event reports one (Nordpay).
+    # nil for a PSP that only ever captures the full amount (Kiripay).
+    const :captured_minor, T.nilable(Integer), default: nil
   end
 
   class InvalidSignature < StandardError; end
@@ -169,6 +172,15 @@ class PspAdapter
 
   sig { abstract.returns(T::Boolean) }
   def separate_authorize_and_capture?; end
+
+  # Several partial captures against one authorization, each leaving the rest
+  # capturable until a final one (DECISIONS #20). Card PSPs only.
+  sig { abstract.returns(T::Boolean) }
+  def supports_multicapture?; end
+
+  # Whether an authorization hold can be released (voided) at the PSP.
+  sig { abstract.returns(T::Boolean) }
+  def supports_void?; end
 
   sig { abstract.returns(T::Array[String]) }
   def currencies; end
