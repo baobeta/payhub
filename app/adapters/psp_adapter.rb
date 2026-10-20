@@ -170,6 +170,12 @@ class PspAdapter
   sig { abstract.returns(T::Boolean) }
   def separate_authorize_and_capture?; end
 
+  # Does the PSP deduplicate a repeated authorize for the same psp_reference?
+  # When false, a second POST is a second charge, so once an authorize has
+  # been sent (first_sent_at) it is resolved by `fetch`, never re-sent (#12).
+  sig { abstract.returns(T::Boolean) }
+  def idempotent_authorize?; end
+
   sig { abstract.returns(T::Array[String]) }
   def currencies; end
 end

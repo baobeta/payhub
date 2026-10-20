@@ -40,6 +40,10 @@ class NordpayAdapter < PspAdapter
   sig { override.returns(T::Boolean) }
   def separate_authorize_and_capture? = true
 
+  # Honours X-Request-Id: a repeated authorize returns the first charge.
+  sig { override.returns(T::Boolean) }
+  def idempotent_authorize? = true
+
   sig { override.returns(T::Array[String]) }
   def currencies = %w[EUR GBP USD]
 

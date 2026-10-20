@@ -39,6 +39,7 @@ class SimPsp < PspAdapter
   def currencies = %w[EUR]
   def supports_partial_refund? = true
   def separate_authorize_and_capture? = true
+  def idempotent_authorize? = true # charges keyed by our reference, like Nordpay
   def settlement_report(_date) = nil
 
   def authorize(payment)

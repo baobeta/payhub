@@ -91,6 +91,7 @@ RSpec.describe NordpayAdapter do
     expect(adapter.currencies).to eq(%w[EUR GBP USD])
     expect(adapter.supports_partial_refund?).to be true
     expect(adapter.separate_authorize_and_capture?).to be true
+    expect(adapter.idempotent_authorize?).to be true
   end
 
   describe "#verify_webhook" do
