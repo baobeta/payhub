@@ -46,6 +46,10 @@ class KiripayAdapter < PspAdapter
   sig { override.returns(T::Boolean) }
   def supports_void? = false
 
+  # No idempotency header: a second POST /charges is a second charge (#12).
+  sig { override.returns(T::Boolean) }
+  def idempotent_authorize? = false
+
   sig { override.returns(T::Array[String]) }
   def currencies = %w[VND THB IDR]
 

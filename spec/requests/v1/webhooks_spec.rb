@@ -94,6 +94,22 @@ RSpec.describe "V1 inbound webhooks", type: :request do
     expect(InboundEvent.last.processed_at).to be_nil
   end
 
+  it "TC-B3-4: a Kiripay decline webhook moves requires_action to failed, with the decline code and payment.failed" do
+    t0 = payment.created_at + 1.second
+    deliver(kiripay_event("charge.created", "pending_redirect", at: t0))
+    perform_enqueued_jobs
+    expect(payment.reload.state).to eq("requires_action")
+
+    declined = kiripay_event("charge.declined", "declined", at: t0 + 30)
+    declined["data"]["code"] = "wallet_declined"
+    deliver(declined)
+    perform_enqueued_jobs
+
+    expect(payment.reload.state).to eq("failed")
+    expect(payment.transitions.find_by(most_recent: true).metadata).to include("decline_code" => "wallet_declined")
+    expect(OutboundEvent.where(payment: payment, event_type: "payment.failed").count).to eq(1)
+  end
+
   it "400s a malformed body and 404s an unknown PSP" do
     ts = Time.current.to_i
     sig = "t=#{ts},v1=#{OpenSSL::HMAC.hexdigest('SHA256', secret, "#{ts}.{}")}"

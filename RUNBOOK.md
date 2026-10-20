@@ -65,7 +65,7 @@ curl -s 'localhost:4002/charges?merchant_reference=<PSP_REFERENCE>' -H 'Authoriz
   bin/rails runner 'StuckPaymentSweeperJob.poll_now(Payment.find("<PAYMENT_ID>"))'
   ```
   Re-read the transitions (§1). It should now be resolved. If it is still stuck, go to §5.
-- **404 — the PSP has never seen it:** the request never landed. The sweeper will re-send **with the same `psp_reference`** on its next pass (this is the only re-send in the system, and only after a confirmed 404). Let it.
+- **404 — the PSP has never seen it:** the request never landed. For **Nordpay**, the sweeper will re-send **with the same `psp_reference`** on its next pass (this is the only re-send in the system, only after a confirmed 404, and only because Nordpay deduplicates by that reference). Let it. For **Kiripay**, nothing is ever re-sent once `first_sent_at` is set: the sweeper keeps looking for 30 minutes (replica lag can hide a real charge), then fails the payment as `psp_never_received` and logs `resolve_unknown.psp_never_received` (DECISIONS #12). Do not re-send it by hand either; the shop asks the customer to pay again.
 - **Kiripay returns two charges for one reference:** the earliest is the real one and the sweeper uses it. The later one is a duplicate Kiripay created for a retried request; the daily reconciliation flags it. Do not refund it from this runbook — hand it to the day team.
 
 ## 5. It is our bug

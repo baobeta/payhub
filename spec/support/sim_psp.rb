@@ -41,6 +41,7 @@ class SimPsp < PspAdapter
   def separate_authorize_and_capture? = true
   def supports_multicapture? = true
   def supports_void? = true
+  def idempotent_authorize? = true # charges keyed by our reference, like Nordpay
   def settlement_report(_date) = nil
 
   def authorize(payment)

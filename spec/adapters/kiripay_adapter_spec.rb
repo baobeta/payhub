@@ -65,6 +65,7 @@ RSpec.describe KiripayAdapter do
     it "declares capture-only, full-refund-only, SEA currencies" do
       expect(adapter.separate_authorize_and_capture?).to be false
       expect(adapter.supports_partial_refund?).to be false
+      expect(adapter.idempotent_authorize?).to be false
       expect(adapter.currencies).to eq(%w[VND THB IDR])
       expect { adapter.capture(payment, 1) }.to raise_error(PspAdapter::Rejected)
       expect { adapter.cancel(payment) }.to raise_error(PspAdapter::Rejected)

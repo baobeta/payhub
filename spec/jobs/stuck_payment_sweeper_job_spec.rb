@@ -41,6 +41,121 @@ RSpec.describe StuckPaymentSweeperJob do
     expect(payment.reload.state).to eq("authorized")
   end
 
+  context "with a PSP that does not deduplicate authorizes (Kiripay, DECISIONS #12)" do
+    let(:adapter) { FakePspAdapter.new(name: "kiripay", currencies: %w[VND], idempotent_authorize: false) }
+
+    def stuck_vnd(age:)
+      create(:payment, :vnd).tap { |p| p.update_column(:updated_at, age.ago) }
+    end
+
+    it "TC-B8-2: sends the first POST for a payment the worker never sent" do
+      payment = stuck_vnd(age: 5.minutes)
+      adapter.script(:fetch, result(payment, :not_found))
+      adapter.script(:authorize, result(payment, :requires_action))
+
+      described_class.perform_now
+
+      expect(adapter.calls[:authorize].map(&:psp_reference)).to eq([payment.psp_reference])
+      expect(payment.reload.state).to eq("requires_action")
+    end
+
+    it "never re-sends one that was sent: it waits, then fails it as never received" do
+      payment = stuck_vnd(age: 5.minutes)
+      travel_to(5.minutes.ago, with_usec: true) { payment.mark_sent! }
+      adapter.script(:fetch, result(payment, :not_found))
+
+      described_class.perform_now
+      expect(payment.reload.state).to eq("pending")
+
+      travel ResolveUnknownPayment::LOOKUP_GRACE do
+        adapter.script(:fetch, result(payment, :not_found, psp_timestamp: Time.current))
+        described_class.perform_now
+      end
+
+      expect(adapter.calls[:authorize]).to be_empty
+      expect(payment.reload.state).to eq("failed")
+      expect(payment.transitions.find_by(most_recent: true).metadata).to include("decline_code" => "psp_never_received")
+    end
+  end
+
+  describe "abandoned customer actions (requires_action)" do
+    let(:adapter) { FakePspAdapter.new(name: "kiripay", currencies: %w[VND], idempotent_authorize: false) }
+    let(:timeout) { described_class::REQUIRES_ACTION_TIMEOUT }
+
+    # A Kiripay payment that returned a redirect `age` ago; the customer has
+    # not come back.
+    def waiting_on_customer(age:)
+      create(:payment, :vnd).tap do |p|
+        p.mark_sent!(p.created_at)
+        p.transition!(:requires_action, sort_key: p.created_at + 0.001, source: "worker")
+        p.update_column(:updated_at, age.ago)
+      end
+    end
+
+    it "TC-B3-1: the PSP says captured — books the full amount and moves to captured, as the webhook would" do
+      payment = waiting_on_customer(age: timeout + 1.minute)
+      adapter.script(:fetch, result(payment, :captured))
+
+      described_class.perform_now
+
+      expect(payment.reload.state).to eq("captured")
+      expect(Ledger.captured_minor(payment)).to eq(payment.amount_minor)
+      expect(adapter.calls[:authorize]).to be_empty
+    end
+
+    it "TC-B3-1: the PSP says declined — failed" do
+      payment = waiting_on_customer(age: timeout + 1.minute)
+      adapter.script(:fetch, result(payment, :declined, decline_code: "wallet_declined"))
+
+      described_class.perform_now
+
+      expect(payment.reload.state).to eq("failed")
+      expect(payment.transitions.find_by(most_recent: true).metadata).to include("decline_code" => "wallet_declined")
+    end
+
+    it "TC-B3-1: the PSP still waits on the customer — failed as customer_action_expired, with payment.failed" do
+      payment = waiting_on_customer(age: timeout + 1.minute)
+      adapter.script(:fetch, result(payment, :requires_action))
+
+      described_class.perform_now
+
+      expect(payment.reload.state).to eq("failed")
+      expect(payment.transitions.find_by(most_recent: true).metadata)
+        .to include("decline_code" => "customer_action_expired")
+      expect(OutboundEvent.where(payment: payment, event_type: "payment.failed").count).to eq(1)
+      expect(adapter.calls[:authorize]).to be_empty
+    end
+
+    it "TC-B3-2: leaves a fresh requires_action payment alone — no PSP call, no state change" do
+      payment = waiting_on_customer(age: 2.minutes)
+
+      described_class.perform_now
+
+      expect(adapter.calls[:fetch]).to be_empty
+      expect(payment.reload.state).to eq("requires_action")
+    end
+
+    it "does not expire one an operator polls before the timeout" do
+      payment = waiting_on_customer(age: 2.minutes)
+      adapter.script(:fetch, result(payment, :requires_action))
+
+      described_class.poll_now(payment)
+
+      expect(payment.reload.state).to eq("requires_action")
+    end
+
+    it "pushes the next check out when the PSP cannot be reached, so the next sweep does not repeat it" do
+      payment = waiting_on_customer(age: timeout + 1.minute)
+      adapter.script(:fetch, PspAdapter::Unavailable)
+
+      described_class.perform_now
+      expect { described_class.perform_now }.not_to raise_error # not due again yet: no scripted answer consumed
+
+      expect(payment.reload.state).to eq("requires_action")
+      expect(payment.next_check_at).to be > Time.current
+    end
+  end
+
   it "leaves fresh payments alone and resolves only those past the threshold" do
     fresh = stuck("unknown", age: 30.seconds)
     old = stuck("unknown", age: 5.minutes)
@@ -143,6 +258,115 @@ RSpec.describe StuckPaymentSweeperJob do
       expect(delays.first).to be_between(48, 72)
       expect(delays[4]).to be_between(16 * 60 * 0.8, 16 * 60 * 1.2)
       expect(delays.last(6)).to all(be_between(30 * 60 * 0.8, 30 * 60 * 1.2))
+    end
+  end
+
+  # Runs each racer on its own thread and connection, released together.
+  # Returns whatever they raised.
+  def race(*racers)
+    barrier = Concurrent::CyclicBarrier.new(racers.size)
+    errors = Concurrent::Array.new
+    racers.map do |racer|
+      Thread.new do
+        ActiveRecord::Base.connection_pool.with_connection do
+          barrier.wait
+          racer.call
+        rescue StandardError => e
+          errors << e
+        end
+      end
+    end.each(&:join)
+    errors
+  end
+
+  # Real threads, real connections (see create_refund_spec). DECISIONS #7: no
+  # lock is held across the PSP call; transition! takes the row lock for the
+  # write, and the loser finds the payment already there, which is fine.
+  it "TC-C4-1: sweeper and webhook resolving the same payment at once: one authorized transition, one event, no error",
+     :concurrency do
+    5.times do
+      payment = stuck("unknown", age: 5.minutes)
+      ts = payment.created_at + 1.second # the PSP stamps its authorization once; poll and webhook both report it
+      adapter = FakePspAdapter.new
+      adapter.script(:fetch, PspAdapter::Result.new(status: PspAdapter::Result::Status::Authorized,
+                                                    psp_reference: payment.psp_reference, psp_charge_id: "ch_1",
+                                                    decline_code: nil, psp_timestamp: ts))
+      adapter.script(:parse_webhook, PspAdapter::WebhookEvent.new(
+        external_id: "evt_#{payment.id}", event_type: "charge.authorized", psp_reference: payment.psp_reference,
+        psp_charge_id: "ch_1", status: PspAdapter::Result::Status::Authorized, decline_code: nil, psp_timestamp: ts,
+        payload: {}
+      ))
+      allow(PspRouter).to receive(:adapter).and_return(adapter)
+      event = InboundEvent.create!(psp_name: "nordpay", external_id: "evt_#{payment.id}", event_type: "charge.authorized",
+                                   psp_reference: payment.psp_reference, payload: { "id" => "evt" },
+                                   signature_valid: true, received_at: Time.current)
+
+      errors = race(-> { described_class.poll_now(Payment.find(payment.id)) },
+                    -> { ProcessInboundEventJob.perform_now(event.id) })
+
+      expect(errors).to be_empty
+      expect(payment.reload.state).to eq("authorized")
+      expect(payment.transitions.where(to_state: "authorized").count).to eq(1)
+      expect(OutboundEvent.where(payment: payment, event_type: "payment.authorized").count).to eq(1)
+      expect(event.reload.processed_at).to be_present
+    end
+  end
+
+  describe "orphan webhooks (DECISIONS #13)" do
+    def orphan(received_at:, reference: "ph_#{SecureRandom.hex(6)}", payload: { "id" => "x" })
+      InboundEvent.create!(psp_name: "kiripay", external_id: "evt_#{SecureRandom.hex(6)}", event_type: "charge.captured",
+                           psp_reference: reference, payload: payload, signature_valid: true, received_at: received_at)
+    end
+
+    it "TC-D5-1: an orphan is applied once its payment exists" do
+      allow(PspRouter).to receive(:adapter).with("kiripay").and_return(KiripayAdapter.new)
+      at = 3.minutes.ago
+      payload = { "id" => "evt_early", "type" => "charge.captured", "created_at" => at.utc.iso8601(3),
+                  "data" => { "id" => "kp_1", "merchant_reference" => "ph_early", "status" => "captured",
+                              "amount" => "500000", "currency" => "VND", "created_at" => at.utc.iso8601(3) } }
+      event = orphan(received_at: at, reference: "ph_early", payload: payload)
+      ProcessInboundEventJob.perform_now(event.id) # arrives before the payment row: left unprocessed
+      expect(event.reload.processed_at).to be_nil
+
+      # The row our worker wrote (dated before the PSP's event), not yet due a poll of its own.
+      payment = travel_to(at - 1.second) { create(:payment, :vnd, psp_reference: "ph_early") }
+      payment.update_columns(next_check_at: 1.hour.from_now)
+      perform_enqueued_jobs(only: ProcessInboundEventJob) { described_class.perform_now }
+
+      expect(event.reload.processed_at).to be_present
+      expect(payment.reload.state).to eq("captured")
+      expect(Ledger.captured_minor(payment)).to eq(500_000)
+    end
+
+    it "TC-D5-2: old orphans do not block a new one" do
+      stub_const("#{described_class}::BATCH", 4)
+      Array.new(4 + 5) { |i| orphan(received_at: (20 - i).hours.ago) } # a backlog that fills the batch
+      fresh = orphan(received_at: 2.minutes.ago)
+
+      expect { described_class.perform_now }.to have_enqueued_job(ProcessInboundEventJob).with(fresh.id)
+    end
+
+    it "TC-D5-3: an orphan older than 24h is closed with an error and an ERROR log, and not re-driven again" do
+      old = orphan(received_at: 25.hours.ago)
+      allow(Rails.logger).to receive(:error).and_call_original
+      allow(Metrics).to receive(:increment).and_call_original
+
+      expect { described_class.perform_now }.not_to have_enqueued_job(ProcessInboundEventJob)
+
+      expect(old.reload).to have_attributes(processed_at: be_present, error: "orphan: no payment for reference")
+      expect(Rails.logger).to have_received(:error).with(a_string_including('"event":"webhook.orphan_abandoned"'))
+      expect(Metrics).to have_received(:increment).with(:orphan_webhooks_abandoned, psp: "kiripay")
+      expect { described_class.perform_now }.not_to have_enqueued_job(ProcessInboundEventJob)
+    end
+
+    it "does not close an old unprocessed event whose payment exists: that is a processing failure, not an orphan" do
+      payment = create(:payment, :vnd)
+      payment.update_columns(next_check_at: 1.hour.from_now)
+      event = orphan(received_at: 25.hours.ago, reference: payment.psp_reference)
+
+      described_class.perform_now
+
+      expect(event.reload.processed_at).to be_nil
     end
   end
 
