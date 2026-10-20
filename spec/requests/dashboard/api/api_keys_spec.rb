@@ -77,4 +77,51 @@ RSpec.describe "Dashboard API keys", type: :request do
     post "/dashboard/api/api_keys/#{other_key.id}/roll", params: { expires_in: "now" }.to_json, headers: ui_headers
     expect(response).to have_http_status(:not_found)
   end
+
+  describe "rolling only an active key (Bug 5)" do
+    def roll(key, expires_in: "24h")
+      post "/dashboard/api/api_keys/#{key.id}/roll", params: { expires_in: }.to_json, headers: ui_headers
+    end
+
+    def expect_refused(key)
+      before = key.reload.attributes.slice("expires_at", "revoked_at")
+      rolled = AuditEvent.where(action: "api_key.rolled", result: "success")
+      expect { yield }.not_to(change { [ApiKey.count, rolled.count] })
+      expect(response).to have_http_status(:conflict)
+      expect(json_body.dig("error", "code")).to eq("invalid_state")
+      expect(key.reload.attributes.slice("expires_at", "revoked_at")).to eq(before)
+    end
+
+    it "TC-L3-1: refuses to roll an expired key; the old key stays dead" do
+      key, raw = ApiKey.issue!(merchant:, livemode: true, name: "Server")
+      key.update!(expires_at: 1.hour.ago)
+      sign_in_as(developer, stepped_up: true)
+
+      expect_refused(key) { roll(key) }
+      get "/v1/balance", headers: auth_headers(raw)
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it "TC-L3-2: refuses to roll a revoked key" do
+      key, raw = ApiKey.issue!(merchant:, livemode: true, name: "Server")
+      key.revoke!
+      sign_in_as(developer, stepped_up: true)
+
+      expect_refused(key) { roll(key, expires_in: "7d") }
+      get "/v1/balance", headers: auth_headers(raw)
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it "TC-L3-3: refuses a second roll of a key already expiring from a roll; the replacement can be rolled" do
+      key, = ApiKey.issue!(merchant:, livemode: true, name: "Server")
+      sign_in_as(developer, stepped_up: true)
+      roll(key)
+      replacement = ApiKey.find(json_body["id"])
+
+      expect_refused(key) { roll(key) }
+
+      roll(replacement)
+      expect(response).to have_http_status(:created)
+    end
+  end
 end
