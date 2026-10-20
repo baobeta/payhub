@@ -100,6 +100,7 @@ RSpec.describe RefundPaymentJob do
     it "TC-BUG2-1: fails the refund, voids its reservation and tells the merchant" do
       refund = create(:refund, payment: payment, amount_minor: 1000)
       adapter.script(:refund, PspAdapter::Rejected.new(422, "nordpay 422: refund exceeds captured"))
+      adapter.script(:fetch_refund, outcome(:not_found, refund.psp_reference))
 
       described_class.perform_now(refund.id)
 
@@ -114,6 +115,7 @@ RSpec.describe RefundPaymentJob do
     it "TC-BUG2-2: a Kiripay refund whose charge cannot be found fails cleanly, and is not re-driven" do
       refund = create(:refund, payment: payment, amount_minor: 2500)
       adapter.script(:refund, PspAdapter::Rejected.new(404, "kiripay charge not found"))
+      adapter.script(:fetch_refund, outcome(:not_found, refund.psp_reference))
 
       described_class.perform_now(refund.id)
 
@@ -123,6 +125,35 @@ RSpec.describe RefundPaymentJob do
       expect(Refund.where(state: "pending")).to be_empty # nothing left for the sweeper
       described_class.perform_now(refund.id) # a stray re-run: no scripted answer, so a PSP call would raise
       expect(adapter.calls[:refund].size).to eq(1)
+    end
+
+    it "TC-BUG2-3: a refusal of a refund that already landed (Kiripay 409 already_refunded on a re-run) succeeds, never fails" do
+      # The first POST landed but its answer was lost (Unavailable → retry, or a
+      # sweeper re-drive). Kiripay has no idempotency key, so the re-run's POST
+      # is refused. Failing it would void the reservation: the customer has the
+      # money AND the merchant gets it back — paid twice.
+      refund = create(:refund, payment: payment, amount_minor: 2500)
+      adapter.script(:refund, PspAdapter::Rejected.new(409, "kiripay 409: charge already refunded"))
+      adapter.script(:fetch_refund, outcome(:succeeded, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("succeeded")
+      expect(Ledger.refunded_minor(payment)).to eq(2500)
+      expect(Ledger.reserved_minor(payment)).to eq(0)
+      expect(Ledger.balances(payment.merchant)).to eq("EUR" => 0)
+      expect(OutboundEvent.where(payment: payment, event_type: "refund.failed")).to be_empty
+    end
+
+    it "TC-BUG2-4: a 2xx the adapter could not read (Rejected 200) leaves the refund pending, reservation held" do
+      refund = create(:refund, payment: payment, amount_minor: 1000)
+      adapter.script(:refund, PspAdapter::Rejected.new(200, "nordpay refund status unreadable"))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("pending")
+      expect(Ledger.reserved_minor(payment)).to eq(1000)
+      expect(OutboundEvent.where(payment: payment, event_type: "refund.failed")).to be_empty
     end
   end
 

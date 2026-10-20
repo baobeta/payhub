@@ -105,6 +105,9 @@ class KiripayAdapter < PspAdapter
     payment = T.must(refund.payment)
     charge = fetch(payment.psp_reference)
     raise Rejected.new(404, "kiripay charge not found for #{payment.psp_reference}") if charge.not_found?
+    # Full refunds only, one per charge, and no idempotency key: a charge already
+    # refunded means an earlier POST of ours landed. Never send it again (#12).
+    return fetch_refund(refund.psp_reference) if charge.raw["status"] == "refunded"
 
     response = request(:post, "/charges/#{charge.psp_charge_id}/refunds", body: {})
     to_refund_result(T.cast(response.body, T::Hash[String, T.untyped]), refund.psp_reference)

@@ -30,18 +30,37 @@ class RefundPaymentJob < ApplicationJob
       # (Phase 6) re-drives pending refunds, so we just leave it pending.
       adapter.fetch_refund(refund.psp_reference)
     rescue PspAdapter::Rejected => e
-      # A definitive refusal (4xx; a Kiripay charge that cannot be found).
-      # Retrying cannot help, and discarding would leave the refund pending
-      # with its money reserved forever: fail it, and void the reservation.
-      PspAdapter::RefundResult.new(status: PspAdapter::RefundResult::Status::Failed, psp_reference: refund.psp_reference,
-                                   psp_refund_id: nil, failure_code: "psp_rejected_#{e.http_status}",
-                                   psp_timestamp: Time.current)
+      rejected(refund, adapter, e)
     end
 
-    apply(refund, payment, result)
+    apply(refund, payment, result) if result
   end
 
   private
+
+  # A refusal is final only once a read confirms the refund never landed. A
+  # re-run's POST is refused when an earlier POST already refunded (Kiripay has
+  # no idempotency key: 409 already_refunded); failing that would void the
+  # reservation while the customer holds the money — paid twice (DECISIONS #16).
+  # A 2xx we could not parse (Rejected 200) is not a refusal at all: the PSP
+  # took it. Leave it pending, reservation held, and shout.
+  sig do
+    params(refund: Refund, adapter: PspAdapter, error: PspAdapter::Rejected)
+      .returns(T.nilable(PspAdapter::RefundResult))
+  end
+  def rejected(refund, adapter, error)
+    unless error.http_status.between?(400, 499)
+      Rails.logger.error({ event: "refund.unreadable_response", refund_id: refund.id, detail: error.message }.to_json)
+      return nil
+    end
+
+    confirmed = adapter.fetch_refund(refund.psp_reference)
+    return confirmed if confirmed.status == PspAdapter::RefundResult::Status::Succeeded
+
+    PspAdapter::RefundResult.new(status: PspAdapter::RefundResult::Status::Failed, psp_reference: refund.psp_reference,
+                                 psp_refund_id: nil, failure_code: "psp_rejected_#{error.http_status}",
+                                 psp_timestamp: Time.current)
+  end
 
   sig { params(refund: Refund, payment: Payment, result: PspAdapter::RefundResult).void }
   def apply(refund, payment, result)
