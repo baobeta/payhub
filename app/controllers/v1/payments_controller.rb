@@ -86,7 +86,13 @@ module V1
         errors["currency"] << "is not supported (#{Currency::SUPPORTED.join(', ')})"
       end
 
-      errors["payment_method_token"] << "is required" if body["payment_method_token"].to_s.empty?
+      token = body["payment_method_token"].to_s
+      if token.empty?
+        errors["payment_method_token"] << "is required"
+      elsif PspCallRedactor.card_number?(token)
+        # PCI DSS 3.3/3.4: a raw PAN is never stored. The message never echoes it.
+        errors["payment_method_token"] << "looks like a card number; send a token"
+      end
 
       capture = body.fetch("capture", false)
       errors["capture"] << "must be true or false" unless [true, false].include?(capture)
