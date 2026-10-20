@@ -119,7 +119,7 @@ erDiagram
 **Example:** €25.00 from Anna to Demo Shop, sent to Nordpay with our reference `PH-7Q2K`, status *Approved*.
 **What it holds:** the amount and currency; which card company handles it (chosen by currency: EUR, GBP and USD go to Nordpay, VND, THB and IDR to Kiripay); **our reference number, saved before we call the card company**; the current status; a card *token* (never the card number itself); and the night watch's notes (when we first sent it, when to check it next, how many checks so far).
 **Rules that protect it:**
-- The status is always one of the stops in the [payment's journey](../README.md#a-payments-journey).
+- The status is always one of the stops in the [payment's journey](OVERVIEW.md#a-payments-journey).
 - The same card company can't produce two payments for the same reference.
 - The status here is a convenient copy. The real history is in the next table.
 
@@ -259,7 +259,7 @@ erDiagram
 ### Shop team members · `merchant_users`
 **What it is:** a person on a shop's team who uses the dashboard.
 **Example:** `support@demo.shop`, role *support*, authenticator set up, invited by the owner.
-**Roles:** owner, admin, developer, support, viewer (see the [role table](../README.md#run-it)).
+**Roles:** owner, admin, developer, support, viewer (see the [role table](../README.md#merchant-dashboard)).
 **Rules that protect it:**
 - Each email belongs to one person in one shop, and capital letters don't count as a difference.
 - Exactly **one active owner** per shop.

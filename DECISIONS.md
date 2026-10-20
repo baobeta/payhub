@@ -1,6 +1,6 @@
 # Decisions
 
-Each entry: what we chose in plain words, what we chose exactly, what we rejected and why, and the trade-off we accepted. For a non-technical overview of all of them, see [PayHub in plain words](README.md#payhub-in-plain-words). Ordered roughly by how much they shape the rest of the system.
+Each entry: what we chose in plain words, what we chose exactly, what we rejected and why, and the trade-off we accepted. For a non-technical overview of all of them, see [PayHub in plain words](docs/OVERVIEW.md). Ordered roughly by how much they shape the rest of the system.
 
 ## 1. `unknown` is a first-class payment state
 
