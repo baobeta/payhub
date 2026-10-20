@@ -49,6 +49,40 @@ RSpec.describe ExpireAuthorizationsJob do
     expect(payment.reload.state).to eq("authorized")
   end
 
+  it "TC-E3-16: closes the open remainder of a partly captured payment instead of voiding it" do
+    partly = authorized(idle_for: 7.days)
+    Ledger.record_capture!(partly, 1000)
+    partly.update_column(:captured_minor, 1000)
+    partly.transition!(:captured, sort_key: partly.created_at + 2.seconds, source: "worker")
+    partly.update_column(:updated_at, 7.days.ago)
+    nothing_captured = authorized(idle_for: 7.days)
+    adapter.script(:cancel, -> { canceled(nothing_captured) })
+
+    described_class.perform_now
+
+    expect(partly.reload).to have_attributes(state: "captured", captures_closed_at: be_present)
+    event = OutboundEvent.find_by!(payment: partly, event_type: "payment.captures_closed")
+    expect(event.payload).to include("reason" => "authorization_expired", "released_minor" => 1500)
+    expect(adapter.calls[:cancel]).to eq([nothing_captured]) # no void for the partly captured one
+    expect(nothing_captured.reload.state).to eq("canceled")
+  end
+
+  it "closes a fully refunded part_refunded payment into refunded when its remainder expires" do
+    payment = authorized(idle_for: 7.days)
+    Ledger.record_capture!(payment, 1000)
+    payment.update_column(:captured_minor, 1000)
+    payment.transition!(:captured, sort_key: payment.created_at + 2.seconds, source: "worker")
+    refund = create(:refund, payment: payment, amount_minor: 1000)
+    Ledger.post_refund!(refund)
+    refund.update!(state: "succeeded")
+    payment.transition!(:part_refunded, sort_key: payment.created_at + 3.seconds, source: "worker")
+    payment.update_column(:updated_at, 7.days.ago)
+
+    described_class.perform_now
+
+    expect(payment.reload.state).to eq("refunded")
+  end
+
   it "TC-G6-4: skips a PSP that cannot void, and says so once" do
     kiripay = FakePspAdapter.new(name: "kiripay", currencies: %w[VND], void: false)
     allow(PspRouter).to receive(:adapter).with("kiripay").and_return(kiripay)

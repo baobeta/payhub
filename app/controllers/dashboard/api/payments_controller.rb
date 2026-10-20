@@ -47,9 +47,15 @@ module Dashboard
       sig { void }
       def capture
         payment = current_merchant.payments.find(params[:id])
-        CapturePayment.call(payment, amount_minor: optional_amount)
-        audit!("payment.capture_requested", target: payment)
-        render json: detail(payment.reload), status: :accepted
+        amount, final = capture_params
+        CapturePayment.call(payment, amount_minor: amount, final: final)
+        if amount&.zero?
+          audit!("payment.captures_closed", target: payment)
+          render json: detail(payment.reload)
+        else
+          audit!("payment.capture_requested", target: payment, metadata: { "final" => final })
+          render json: detail(payment.reload), status: :accepted
+        end
       end
 
       sig { void }
@@ -77,13 +83,17 @@ module Dashboard
         )
       end
 
-      sig { returns(T.nilable(Integer)) }
-      def optional_amount
-        raw = params[:amount_minor]
-        return nil if raw.nil?
-        return raw if raw.is_a?(Integer) && raw.positive?
+      # Same contract as POST /v1/payments/:id/capture (DECISIONS #20).
+      sig { returns([T.nilable(Integer), T::Boolean]) }
+      def capture_params
+        errors = {}
+        amount = params[:amount_minor]
+        errors["amount_minor"] = ["must be a non-negative integer when present"] unless amount.nil? || (amount.is_a?(Integer) && !amount.negative?)
+        final = params.fetch(:final, true)
+        errors["final"] = ["must be true or false"] unless [true, false].include?(final)
+        raise ApiError.validation(errors) if errors.any?
 
-        raise ApiError.validation("amount_minor" => ["must be a positive integer when present"])
+        [amount, final]
       end
     end
   end

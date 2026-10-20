@@ -74,6 +74,174 @@ RSpec.describe "V1 capture / cancel / refunds / balance", type: :request do
     end
   end
 
+  describe "several partial captures (DECISIONS #20)" do
+    def capture!(payment, body)
+      post "/v1/payments/#{payment.id}/capture", params: body.to_json, headers: auth_headers(key)
+    end
+
+    # Runs the capture job the API enqueued against a PSP whose running total
+    # was `before` and becomes `before + amount`.
+    def land_capture(payment, before:)
+      capture = payment.captures.pending.sole
+      adapter.script(:fetch, charge(:authorized, payment, captured_minor: before))
+      adapter.script(:capture, charge(:authorized, payment, captured_minor: before + capture.amount_minor))
+      CapturePaymentJob.perform_now(capture.id)
+    end
+
+    def partly_captured(amount = 1000)
+      authorized_payment.tap do |p|
+        capture!(p, { amount_minor: amount, final: false })
+        land_capture(p, before: 0)
+      end
+    end
+
+    it "TC-E3-1: a non-final partial capture leaves the payment capturable" do
+      payment = partly_captured(1000)
+
+      expect(payment.reload).to have_attributes(state: "captured", captured_minor: 1000, captures_closed_at: nil)
+      expect(PaymentActions.call(payment, granted: ->(_) { true })).to include("capture" => true, "capturable_minor" => 1500)
+      get "/v1/payments/#{payment.id}", headers: auth_headers(key)
+      expect(json_body["amount_capturable_minor"]).to eq(1500)
+    end
+
+    it "TC-E3-2: a second capture after a non-final one is accepted and booked" do
+      payment = partly_captured(1000)
+
+      capture!(payment, { amount_minor: 1500 })
+      expect(response).to have_http_status(:accepted)
+      land_capture(payment, before: 1000)
+
+      expect(Ledger.captured_minor(payment)).to eq(2500)
+      expect(payment.captures.pluck(:state)).to eq(%w[succeeded succeeded])
+      expect(payment.reload).to have_attributes(state: "captured")
+      expect(payment.captures_closed_at).to be_present
+    end
+
+    it "TC-E3-3: a default (final) partial capture closes capturing" do
+      payment = authorized_payment
+      capture!(payment, { amount_minor: 1000 })
+      land_capture(payment, before: 0)
+
+      capture!(payment, { amount_minor: 500 })
+
+      expect(response).to have_http_status(:bad_request)
+      expect(json_body["error"]["code"]).to eq("capture_closed")
+      expect(Ledger.captured_minor(payment)).to eq(1000)
+    end
+
+    it "TC-E3-4: the sum of captures can never exceed the authorized amount" do
+      payment = partly_captured(1000)
+
+      capture!(payment, { amount_minor: 2000 })
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(json_body["error"]["details"]["amount_minor"].first).to include("between 1 and 1500")
+      expect(payment.captures.pending).to be_empty
+      expect(adapter.calls[:capture].size).to eq(1)
+    end
+
+    it "TC-E3-5: a zero-amount final capture closes the remainder without calling the PSP" do
+      payment = partly_captured(1000)
+
+      expect { capture!(payment, { amount_minor: 0, final: true }) }.not_to(change { payment.captures.count })
+
+      expect(response).to have_http_status(:ok)
+      expect(adapter.calls[:capture].size).to eq(1) # only the first capture
+      expect(payment.reload.captures_closed_at).to be_present
+      expect(json_body["amount_capturable_minor"]).to eq(0)
+      event = OutboundEvent.find_by(payment: payment, event_type: "payment.captures_closed")
+      expect(event.payload).to include("reason" => "merchant_request", "released_minor" => 1500)
+    end
+
+    it "TC-E3-6: a zero amount on a payment with nothing captured is refused" do
+      payment = authorized_payment
+
+      capture!(payment, { amount_minor: 0, final: true })
+
+      expect(response).to have_http_status(:bad_request)
+      expect(json_body["error"]["code"]).to eq("invalid_request")
+      expect(json_body["error"]["message"]).to include("use cancel")
+      expect(payment.reload.captures_closed_at).to be_nil
+    end
+
+    it "TC-E3-7: one capture in flight at a time still holds" do
+      payment = authorized_payment
+      capture!(payment, { amount_minor: 1000, final: false })
+
+      capture!(payment, { amount_minor: 500 })
+
+      expect(response).to have_http_status(:conflict)
+      expect(json_body["error"]).to include("code" => "capture_in_progress", "retriable" => true)
+    end
+
+    it "TC-E3-8: a refund between captures leaves the capturable amount alone" do
+      payment = partly_captured(1000)
+      post "/v1/payments/#{payment.id}/refunds", params: { amount_minor: 400 }.to_json, headers: auth_headers(key)
+      refund = payment.refunds.sole
+      adapter.script(:refund, PspAdapter::RefundResult.new(status: PspAdapter::RefundResult::Status::Succeeded,
+                                                           psp_reference: refund.psp_reference, psp_refund_id: "re_1",
+                                                           failure_code: nil, psp_timestamp: payment.created_at + 6.seconds))
+      RefundPaymentJob.perform_now(refund.id)
+      expect(payment.reload.state).to eq("part_refunded")
+      expect(PaymentActions.call(payment, granted: ->(_) { true })["capturable_minor"]).to eq(1500)
+
+      capture!(payment, { amount_minor: 1500 })
+      expect(response).to have_http_status(:accepted)
+      land_capture(payment, before: 1000)
+
+      expect(Ledger.captured_minor(payment)).to eq(2500)
+      expect(Ledger.refunded_minor(payment)).to eq(400)
+      expect(Ledger.balances(merchant)).to eq("EUR" => 2100)
+    end
+
+    it "TC-E3-10: a non-final capture is refused on a PSP without multicapture" do
+      kiripay = FakePspAdapter.new(name: "kiripay", currencies: %w[VND], multicapture: false)
+      allow(PspRouter).to receive(:adapter).with("kiripay").and_return(kiripay)
+      payment = create(:payment, :vnd, merchant: merchant).tap do |p|
+        p.transition!(:authorized, sort_key: p.created_at + 1.second, source: "worker")
+      end
+
+      capture!(payment, { final: false })
+
+      expect(response).to have_http_status(:bad_request)
+      expect(json_body["error"]["code"]).to eq("multicapture_unsupported")
+    end
+
+    it "TC-E3-11: at most 50 non-final captures, and a final one is still allowed after them" do
+      payment = create(:payment, merchant: merchant, amount_minor: 10_000).tap do |p|
+        p.transition!(:authorized, sort_key: p.created_at + 1.second, source: "worker")
+      end
+      50.times do |i|
+        payment.captures.create!(amount_minor: 10, base_captured_minor: i * 10, final: false, state: "succeeded")
+      end
+      Ledger.record_capture!(payment, 500)
+
+      capture!(payment, { amount_minor: 10, final: false })
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(json_body["error"]["code"]).to eq("capture_limit_reached")
+
+      capture!(payment, { amount_minor: 10 })
+      expect(response).to have_http_status(:accepted)
+    end
+
+    it "refuses a `final` that is not a boolean" do
+      capture!(authorized_payment, { amount_minor: 1000, final: "no" })
+
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(json_body["error"]["details"]).to have_key("final")
+    end
+
+    it "TC-E3-17: cancel after a partial capture is refused, with a hint" do
+      payment = partly_captured(1000)
+
+      post "/v1/payments/#{payment.id}/cancel", params: "{}", headers: auth_headers(key)
+
+      expect(response).to have_http_status(:bad_request)
+      expect(json_body["error"]["code"]).to eq("invalid_state")
+      expect(json_body["error"]["message"]).to include("zero-amount final capture")
+    end
+  end
+
   describe "POST /v1/payments/:id/cancel" do
     it "voids synchronously and returns the canceled payment with history" do
       payment = authorized_payment

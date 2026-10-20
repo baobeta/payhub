@@ -13,7 +13,7 @@ module PaymentActions
   def self.call(payment, granted:)
     authorized = payment.state == "authorized"
     captured = Ledger.captured_minor(payment)
-    capturable = authorized ? payment.amount_minor - captured : 0
+    capturable = payment.capturable_minor(captured) # open after a non-final capture too (DECISIONS #20)
     refundable = refundable_minor(payment, captured)
 
     {

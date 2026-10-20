@@ -55,7 +55,14 @@ class CancelPayment
   def self.assert_authorized!(payment)
     return if payment.state == "authorized"
 
-    raise ApiError.invalid_request("Payment is #{payment.state}; only authorized payments can be canceled",
+    # Part of the hold was captured: a void would release money already
+    # taken. Ending capturing is a zero-amount final capture (DECISIONS #20).
+    hint = if payment.capturable_minor.positive?
+      "; use a zero-amount final capture to close the remainder"
+    else
+      ""
+    end
+    raise ApiError.invalid_request("Payment is #{payment.state}; only authorized payments can be canceled#{hint}",
                                    code: "invalid_state", param: "id")
   end
 end

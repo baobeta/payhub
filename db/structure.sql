@@ -181,6 +181,7 @@ CREATE TABLE public.captures (
     failure_code character varying,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
+    final boolean DEFAULT true NOT NULL,
     CONSTRAINT chk_captures_amount_positive CHECK ((amount_minor > 0)),
     CONSTRAINT chk_captures_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying])::text[])))
 );
@@ -483,6 +484,7 @@ CREATE TABLE public.payments (
     next_check_at timestamp(6) without time zone,
     check_attempts integer DEFAULT 0 NOT NULL,
     first_sent_at timestamp(6) without time zone,
+    captures_closed_at timestamp(6) without time zone,
     CONSTRAINT chk_payments_amount_positive CHECK ((amount_minor > 0)),
     CONSTRAINT chk_payments_captured_non_negative CHECK ((captured_minor >= 0)),
     CONSTRAINT chk_payments_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'requires_action'::character varying, 'authorized'::character varying, 'unknown'::character varying, 'captured'::character varying, 'canceled'::character varying, 'failed'::character varying, 'part_refunded'::character varying, 'refunded'::character varying])::text[])))
@@ -1453,6 +1455,7 @@ ALTER TABLE ONLY public.api_keys
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261020100001'),
 ('20260929000001'),
 ('20260928000001'),
 ('20260927000001'),

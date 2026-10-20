@@ -11,6 +11,8 @@ class Payment < ApplicationRecord
   has_many :ledger_entries, dependent: :restrict_with_exception
 
   PSPS = %w[nordpay kiripay].freeze
+  # States a capture may be taken from while capturing is open (DECISIONS #20).
+  CAPTURABLE_STATES = %w[authorized captured part_refunded].freeze
 
   validates :amount_minor, numericality: { only_integer: true, greater_than: 0 }
   validates :currency, inclusion: { in: Currency::SUPPORTED }
@@ -123,6 +125,43 @@ class Payment < ApplicationRecord
 
   sig { returns(T::Boolean) }
   def terminal? = PaymentStateMachine.terminal?(state)
+
+  # What may still be captured (DECISIONS #20): nothing once capturing is
+  # closed or the state forbids it, otherwise authorized minus captured.
+  # `captured` defaults to the display cache, which is enough for a read;
+  # anything that moves money passes the ledger's figure.
+  sig { params(captured: Integer).returns(Integer) }
+  def capturable_minor(captured = captured_minor)
+    return 0 unless CAPTURABLE_STATES.include?(state) && captures_closed_at.nil?
+
+    [amount_minor - captured, 0].max
+  end
+
+  # Ends capturing for good: after a final capture, a zero-amount final
+  # capture, or authorization expiry. The uncaptured remainder is not released
+  # at the PSP; it lapses at the network (DECISIONS #14). When money was left
+  # uncaptured the merchant hears `payment.captures_closed`. A payment whose
+  # captured money is already fully refunded has nothing left in it, so it
+  # becomes `refunded` here rather than waiting for a refund that never comes.
+  sig { params(reason: String, source: String).void }
+  def close_captures!(reason:, source:)
+    with_lock do
+      next if captures_closed_at
+
+      captured = Ledger.captured_minor(self)
+      released = capturable_minor(captured)
+      update!(captures_closed_at: Time.current)
+      if released.positive?
+        OutboundEvent.emit!(self, "payment.captures_closed", "reason" => reason, "released_minor" => released)
+      end
+      next unless state == "part_refunded" && Ledger.refunded_minor(self) >= captured
+
+      # Our own decision, not a PSP report: dated now, but never before the
+      # newest PSP timestamp, or it would be recorded as stale.
+      transition!(:refunded, sort_key: [Time.current, transitions.maximum(:sort_key)].compact.max, source: source,
+                             metadata: { "reason" => reason })
+    end
+  end
 
   sig { returns(String) }
   def display_amount = Currency.to_display(amount_minor, currency)

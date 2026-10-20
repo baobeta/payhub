@@ -39,6 +39,7 @@ class SimPsp < PspAdapter
   def currencies = %w[EUR]
   def supports_partial_refund? = true
   def separate_authorize_and_capture? = true
+  def supports_multicapture? = true
   def supports_void? = true
   def settlement_report(_date) = nil
 

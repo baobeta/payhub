@@ -12,12 +12,13 @@ class FakePspAdapter < PspAdapter
   attr_reader :calls, :called_at
 
   def initialize(name: "nordpay", currencies: %w[EUR GBP USD], partial_refund: true, separate_auth: true,
-                 void: true)
+                 multicapture: true, void: true)
     super()
     @name = name
     @currencies = currencies
     @partial_refund = partial_refund
     @separate_auth = separate_auth
+    @multicapture = multicapture
     @void = void
     @scripts = Hash.new { |h, k| h[k] = [] }
     @calls = Hash.new { |h, k| h[k] = [] }
@@ -38,6 +39,7 @@ class FakePspAdapter < PspAdapter
   def currencies = @currencies
   def supports_partial_refund? = @partial_refund
   def separate_authorize_and_capture? = @separate_auth
+  def supports_multicapture? = @multicapture
   def supports_void? = @void
 
   def authorize(payment) = answer(:authorize, payment)

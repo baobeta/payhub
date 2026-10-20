@@ -57,7 +57,12 @@ class RefundPaymentJob < ApplicationJob
         Refund.transaction do
           Ledger.post_refund!(refund)
           refund.update!(state: "succeeded")
-          to = Ledger.refunded_minor(payment) >= Ledger.captured_minor(payment) ? :refunded : :part_refunded
+          captured = Ledger.captured_minor(payment)
+          # Terminal only once nothing more can be captured either: while
+          # capturing is open, refunding all of it so far is still part_refunded
+          # (DECISIONS #20; Payment#close_captures! finishes the job).
+          closed = payment.capturable_minor(captured).zero?
+          to = closed && Ledger.refunded_minor(payment) >= captured ? :refunded : :part_refunded
           # captured → part_refunded → refunded, or captured → refunded. Both drawn.
           payment.transition!(to, sort_key: result.psp_timestamp, source: "worker", metadata: meta) if payment.state != to.to_s
           OutboundEvent.emit!(payment, "refund.succeeded", "refund" => RefundSerializer.call(refund))

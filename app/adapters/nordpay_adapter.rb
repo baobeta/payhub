@@ -41,6 +41,9 @@ class NordpayAdapter < PspAdapter
   def separate_authorize_and_capture? = true
 
   sig { override.returns(T::Boolean) }
+  def supports_multicapture? = true
+
+  sig { override.returns(T::Boolean) }
   def supports_void? = true
 
   sig { override.returns(T::Array[String]) }

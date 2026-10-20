@@ -170,6 +170,11 @@ class PspAdapter
   sig { abstract.returns(T::Boolean) }
   def separate_authorize_and_capture?; end
 
+  # Several partial captures against one authorization, each leaving the rest
+  # capturable until a final one (DECISIONS #20). Card PSPs only.
+  sig { abstract.returns(T::Boolean) }
+  def supports_multicapture?; end
+
   # Whether an authorization hold can be released (voided) at the PSP.
   sig { abstract.returns(T::Boolean) }
   def supports_void?; end

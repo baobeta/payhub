@@ -87,6 +87,28 @@ RSpec.describe RefundPaymentJob do
     end
   end
 
+  describe "refunds between partial captures (DECISIONS #20)" do
+    it "TC-E3-9: refunding everything captured while capturing is open is not terminal, until capturing closes" do
+      open = create(:payment, merchant: payment.merchant) # €25 authorized, €10 captured non-final
+      open.transition!(:authorized, sort_key: open.created_at + 1.second, source: "worker")
+      Ledger.record_capture!(open, 1000)
+      open.update_column(:captured_minor, 1000)
+      open.transition!(:captured, sort_key: open.created_at + 2.seconds, source: "worker")
+      refund = create(:refund, payment: open, amount_minor: 1000)
+      adapter.script(:refund, outcome(:succeeded, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      expect(open.reload.state).to eq("part_refunded")
+      expect(open.capturable_minor(Ledger.captured_minor(open))).to eq(1500)
+
+      CapturePayment.call(open, amount_minor: 0, final: true)
+
+      expect(open.reload.state).to eq("refunded")
+      expect(open.captures_closed_at).to be_present
+    end
+  end
+
   describe "two-phase settlement (DECISIONS #16)" do
     it "holds the amount as reserved until the PSP answers, then posts it" do
       refund = create(:refund, payment: payment, amount_minor: 500)
