@@ -262,6 +262,53 @@ RSpec.describe StuckPaymentSweeperJob do
     end
   end
 
+  # Real threads, real connections (see create_refund_spec). DECISIONS #7: no
+  # lock is held across the PSP call; transition! takes the row lock for the
+  # write, and the loser finds the payment already there, which is fine.
+  it "TC-C4-1: sweeper and webhook resolving the same payment at once: one authorized transition, one event, no error",
+     :concurrency do
+    5.times do
+      payment = stuck("unknown", age: 5.minutes)
+      ts = payment.created_at + 1.second # the PSP stamps its authorization once; poll and webhook both report it
+      adapter = FakePspAdapter.new
+      adapter.script(:fetch, PspAdapter::Result.new(status: PspAdapter::Result::Status::Authorized,
+                                                    psp_reference: payment.psp_reference, psp_charge_id: "ch_1",
+                                                    decline_code: nil, psp_timestamp: ts))
+      adapter.script(:parse_webhook, PspAdapter::WebhookEvent.new(
+        external_id: "evt_#{payment.id}", event_type: "charge.authorized", psp_reference: payment.psp_reference,
+        psp_charge_id: "ch_1", status: PspAdapter::Result::Status::Authorized, decline_code: nil, psp_timestamp: ts,
+        payload: {}
+      ))
+      allow(PspRouter).to receive(:adapter).and_return(adapter)
+      event = InboundEvent.create!(psp_name: "nordpay", external_id: "evt_#{payment.id}", event_type: "charge.authorized",
+                                   psp_reference: payment.psp_reference, payload: { "id" => "evt" },
+                                   signature_valid: true, received_at: Time.current)
+
+      barrier = Concurrent::CyclicBarrier.new(2)
+      errors = Concurrent::Array.new
+      racers = [
+        -> { described_class.poll_now(Payment.find(payment.id)) },
+        -> { ProcessInboundEventJob.perform_now(event.id) }
+      ].map do |racer|
+        Thread.new do
+          ActiveRecord::Base.connection_pool.with_connection do
+            barrier.wait
+            racer.call
+          rescue StandardError => e
+            errors << e
+          end
+        end
+      end
+      racers.each(&:join)
+
+      expect(errors).to be_empty
+      expect(payment.reload.state).to eq("authorized")
+      expect(payment.transitions.where(to_state: "authorized").count).to eq(1)
+      expect(OutboundEvent.where(payment: payment, event_type: "payment.authorized").count).to eq(1)
+      expect(event.reload.processed_at).to be_present
+    end
+  end
+
   describe "orphan webhooks (DECISIONS #13)" do
     def orphan(received_at:, reference: "ph_#{SecureRandom.hex(6)}", payload: { "id" => "x" })
       InboundEvent.create!(psp_name: "kiripay", external_id: "evt_#{SecureRandom.hex(6)}", event_type: "charge.captured",

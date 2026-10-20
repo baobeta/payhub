@@ -78,17 +78,17 @@ Each entry: what we chose in plain words, what we chose exactly, what we rejecte
 
 **Trade-off:** Refunds on the same payment serialize on a row lock, so a burst of refunds on one hot payment queues. That's acceptable because concurrent refunds on one payment are rare and money safety comes first.
 
-## 7. Sweeper uses optimistic locking (`lock_version`) for stuck-payment recovery
+## 7. The sweeper holds no lock across the PSP call; each write takes a short row lock
 
 **In plain words:** The night watch doesn't hold a payment hostage while it waits for a card company. If two helpers check the same payment, the second notices it's already done.
 
-**Decision:** The status-poller job loads stuck `pending`/`unknown` payments and applies the PSP's answer under `lock_version`; a `StaleObjectError` means another worker already resolved it.
+**Decision:** The sweeper polls stuck payments with no row lock held during the HTTP call. The lock is taken only for the write: `Payment#transition!` runs inside `with_lock` (`SELECT … FOR UPDATE`, which also reloads the row), checks the edge against the state it now sees, and writes. If another writer (a webhook, the job, a second sweeper) already moved the payment to the same state, the edge is illegal (`authorized → authorized`) and `ApplyPspResult` treats "already in that state" as done, logging `psp_result.already_in_state`. Any *other* illegal edge is a real bug and propagates. The short claim of a batch (`FOR UPDATE SKIP LOCKED`, #13) is also released before any HTTP call.
 
-**Rejected:** `FOR UPDATE` on every polled row.
+**Rejected:** `FOR UPDATE` held across the poll. Also optimistic locking with `lock_version` retries, which this entry used to describe: `payments` still has a `lock_version` column, but because every write path reloads the row under the lock first, a `StaleObjectError` cannot arise there, and the sweeper's rescue for it was dead code and has been removed.
 
-**Reason:** The sweeper's critical section wraps an HTTP call to the PSP that can take up to 30 seconds. Holding `FOR UPDATE` across that call pins a database connection and blocks every other writer on that payment — including the inbound webhook handler — for the whole duration. Optimistic locking holds nothing: two sweepers may both poll, but only the first write lands, and the loser's `StaleObjectError` just means "already resolved, reload and move on." That is safe here because a status poll is a read with no side effects; losing the race costs one wasted HTTP call. It was not safe for refunds (#6) because there the critical section contains a money write, and a retry loop around money movement is exactly the kind of thing that double-charges.
+**Reason:** The sweeper's poll is an HTTP call to the PSP that can take up to 30 seconds. Holding `FOR UPDATE` across that call pins a database connection and blocks every other writer on that payment — including the inbound webhook handler — for the whole duration. Locking only the write holds the row for milliseconds. Two writers can both poll, but the row lock serialises their writes, and the loser finds the payment already where the PSP says it is. That is safe because a status poll is a read with no side effects; losing the race costs one wasted HTTP call. A real-thread spec (TC-C4-1) races the sweeper against a webhook on the same payment and checks for one `authorized` transition, one `payment.authorized` event and no error. Refunds (#6) are different: there the critical section contains a money write, so the lock is held across the decision.
 
-**Trade-off:** Two sweepers can occasionally poll the same payment, and the loser's HTTP call is wasted. That's cheap compared with pinning a connection and blocking webhooks for up to 30 seconds.
+**Trade-off:** Two writers can occasionally poll the same payment, and the loser's HTTP call is wasted. That's cheap compared with pinning a connection and blocking webhooks for up to 30 seconds.
 
 ## 8. `POST /v1/payments` returns 202 and does PSP work in Sidekiq
 
