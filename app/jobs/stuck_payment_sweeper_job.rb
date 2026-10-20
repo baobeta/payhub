@@ -127,11 +127,12 @@ class StuckPaymentSweeperJob < ApplicationJob
   sig { params(payment: Payment).void }
   def resolve(payment)
     adapter = PspRouter.adapter(payment.psp_name)
-    result = if payment.state == "requires_action"
-               abandoned_verdict(payment, adapter)
-             else
-               ResolveUnknownPayment.call(payment, adapter)
-             end
+    result =
+      if payment.state == "requires_action"
+        abandoned_verdict(payment, adapter)
+      else
+        ResolveUnknownPayment.call(payment, adapter)
+      end
     return unless result
 
     ApplyPspResult.call(payment, result, source: "sweeper")

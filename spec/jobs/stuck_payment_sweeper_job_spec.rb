@@ -80,6 +80,7 @@ RSpec.describe StuckPaymentSweeperJob do
 
   describe "abandoned customer actions (requires_action)" do
     let(:adapter) { FakePspAdapter.new(name: "kiripay", currencies: %w[VND], idempotent_authorize: false) }
+    let(:timeout) { described_class::REQUIRES_ACTION_TIMEOUT }
 
     # A Kiripay payment that returned a redirect `age` ago; the customer has
     # not come back.
@@ -90,8 +91,6 @@ RSpec.describe StuckPaymentSweeperJob do
         p.update_column(:updated_at, age.ago)
       end
     end
-
-    let(:timeout) { described_class::REQUIRES_ACTION_TIMEOUT }
 
     it "TC-B3-1: the PSP says captured — books the full amount and moves to captured, as the webhook would" do
       payment = waiting_on_customer(age: timeout + 1.minute)
@@ -262,6 +261,24 @@ RSpec.describe StuckPaymentSweeperJob do
     end
   end
 
+  # Runs each racer on its own thread and connection, released together.
+  # Returns whatever they raised.
+  def race(*racers)
+    barrier = Concurrent::CyclicBarrier.new(racers.size)
+    errors = Concurrent::Array.new
+    racers.map do |racer|
+      Thread.new do
+        ActiveRecord::Base.connection_pool.with_connection do
+          barrier.wait
+          racer.call
+        rescue StandardError => e
+          errors << e
+        end
+      end
+    end.each(&:join)
+    errors
+  end
+
   # Real threads, real connections (see create_refund_spec). DECISIONS #7: no
   # lock is held across the PSP call; transition! takes the row lock for the
   # write, and the loser finds the payment already there, which is fine.
@@ -284,22 +301,8 @@ RSpec.describe StuckPaymentSweeperJob do
                                    psp_reference: payment.psp_reference, payload: { "id" => "evt" },
                                    signature_valid: true, received_at: Time.current)
 
-      barrier = Concurrent::CyclicBarrier.new(2)
-      errors = Concurrent::Array.new
-      racers = [
-        -> { described_class.poll_now(Payment.find(payment.id)) },
-        -> { ProcessInboundEventJob.perform_now(event.id) }
-      ].map do |racer|
-        Thread.new do
-          ActiveRecord::Base.connection_pool.with_connection do
-            barrier.wait
-            racer.call
-          rescue StandardError => e
-            errors << e
-          end
-        end
-      end
-      racers.each(&:join)
+      errors = race(-> { described_class.poll_now(Payment.find(payment.id)) },
+                    -> { ProcessInboundEventJob.perform_now(event.id) })
 
       expect(errors).to be_empty
       expect(payment.reload.state).to eq("authorized")
