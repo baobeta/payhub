@@ -33,13 +33,21 @@ plugin :tmp_restart
 # In other environments, only set the PID file if requested.
 pidfile ENV["PIDFILE"] if ENV["PIDFILE"]
 
-# Workers: Puma reads WEB_CONCURRENCY itself (unset or 0: single mode; N:
-# cluster mode, N processes; "auto": one per CPU) and preloads the app when
-# N > 1, so neither is set here. A value that is not a number fails the boot.
+# Workers: Puma reads WEB_CONCURRENCY itself (unset or 0: single mode; 1 or
+# more: cluster mode with that many worker processes; "auto": one per CPU) and
+# preloads the app from 2 workers, so neither is set here. A value that is not
+# a number fails the boot.
 # No fork hooks: Rails reconnects Active Record after the fork, Redis clients
 # reconnect on their own, and the metrics file store opens one file per PID
 # (RUNBOOK "Metrics across processes").
-# Database connections: each Puma process uses up to RAILS_MAX_THREADS, each
-# Sidekiq process up to its concurrency (config/sidekiq.yml), so size Postgres
-# or PgBouncer for web containers x WEB_CONCURRENCY x RAILS_MAX_THREADS +
-# worker containers x Sidekiq concurrency (README "Configuration").
+# Database connections: each Puma worker uses up to its thread count (above,
+# default 3), each Sidekiq process up to its concurrency (config/sidekiq.yml,
+# 5). The pool (database.yml) also reads RAILS_MAX_THREADS but defaults to 5,
+# so the worker, which leaves it unset, gets a pool that covers its
+# concurrency. Size Postgres or PgBouncer for web containers x WEB_CONCURRENCY
+# x threads + worker containers x Sidekiq concurrency (README "Configuration").
+
+# On SIGTERM (docker stop) Puma drains first, then by default re-raises the
+# signal so the process dies of it. As PID 1 in a container the kernel ignores
+# that, and Ruby exits 1, which looks like a crash. Exit 0 after the drain.
+raise_exception_on_sigterm false
