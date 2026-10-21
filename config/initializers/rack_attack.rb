@@ -30,22 +30,31 @@ class Rack::Attack
   SIGN_IN_PATH = %r{\A/(dashboard|ops)/api/(session(/otp|/recovery|/step_up)?|otp/confirm)\z}
   OWNER_ENV = "payhub.rate_limit.key_owner"
 
+  # TC-L6-5: the shape of a key ApiKey.issue! mints (sk_live_/sk_test_ + 48
+  # hex), with room for older keys. Anything else cannot resolve to a merchant,
+  # so it costs no database or cache lookup and falls to the per-IP throttle.
+  KEY_SHAPE = /\Ask_(live|test)_[A-Za-z0-9]{16,96}\z/
+
   def self.key_digest(req)
     auth = req.get_header("HTTP_AUTHORIZATION").to_s
     return nil unless auth.start_with?("Bearer ")
 
-    Merchant.digest(auth.delete_prefix("Bearer ").strip)
+    raw = auth.delete_prefix("Bearer ").strip
+    Merchant.digest(raw) if raw.match?(KEY_SHAPE)
   end
 
   def self.v1_api?(req) = req.path.start_with?("/v1/") && !req.path.start_with?("/v1/webhooks/")
 
   # [merchant_id, livemode] of the bearer key, or nil. Memoised on the request
   # because three throttles ask; cached across requests so the hot path skips the DB.
+  # A miss is not cached (skip_nil): random well-formed keys must not fill the
+  # cache, and a key issued a moment ago must not read as unknown for a minute.
   def self.key_owner(req)
     return req.env[OWNER_ENV] if req.env.key?(OWNER_ENV)
 
     digest = key_digest(req)
-    req.env[OWNER_ENV] = digest && Rails.cache.fetch("#{KEY_CACHE_PREFIX}#{digest}", expires_in: KEY_CACHE_TTL) do
+    req.env[OWNER_ENV] = digest && Rails.cache.fetch("#{KEY_CACHE_PREFIX}#{digest}", expires_in: KEY_CACHE_TTL,
+                                                                                     skip_nil: true) do
       ApiKey.active.where(digest:).pick(:merchant_id, :livemode)
     end
   end

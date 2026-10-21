@@ -99,6 +99,40 @@ RSpec.describe "Rate limiting (Rack::Attack)", type: :request do
     end
   end
 
+  # TC-L6-5: the throttle's key lookup must not become the cheap way to load
+  # the database or the cache.
+  describe "the bearer key lookup in the throttle" do
+    def throttle_request(bearer)
+      env = Rack::MockRequest.env_for("/v1/balance", "HTTP_AUTHORIZATION" => "Bearer #{bearer}")
+      Rack::Attack::Request.new(env)
+    end
+
+    ["garbage", "sk_live_short", "sk_live_#{'a' * 500}", "pk_live_#{SecureRandom.hex(24)}", "sk_live_#{'é' * 48}"].each do |bearer|
+      it "TC-L6-5 a string that cannot be a PayHub key (#{bearer[0, 12]}...) is not looked up or cached" do
+        allow(ApiKey).to receive(:active).and_call_original
+
+        expect(Rack::Attack.key_owner(throttle_request(bearer))).to be_nil
+        expect(ApiKey).not_to have_received(:active)
+        expect(Rails.cache.exist?("#{Rack::Attack::KEY_CACHE_PREFIX}#{Merchant.digest(bearer)}")).to be(false)
+      end
+    end
+
+    it "TC-L6-5 a well-formed but unknown key is looked up and the miss is not cached" do
+      unknown = "sk_live_#{SecureRandom.hex(24)}"
+
+      expect(Rack::Attack.key_owner(throttle_request(unknown))).to be_nil
+      expect(Rails.cache.exist?("#{Rack::Attack::KEY_CACHE_PREFIX}#{Merchant.digest(unknown)}")).to be(false)
+    end
+
+    it "TC-L6-5 garbage bearer tokens still hit the unauthenticated per-IP throttle" do
+      30.times { get "/v1/balance", headers: auth_headers("garbage-#{SecureRandom.hex(4)}") }
+      expect(response).to have_http_status(:unauthorized)
+
+      get "/v1/balance", headers: auth_headers("garbage")
+      expect(response).to have_http_status(:too_many_requests)
+    end
+  end
+
   describe "dashboard and ops sessions (L6)" do
     it "TC-L6-4: a signed-in dashboard session above the limit gets 429; another merchant's session is unaffected" do
       stub_const("Rack::Attack::SESSION_LIMIT_PER_MINUTE", 3)
