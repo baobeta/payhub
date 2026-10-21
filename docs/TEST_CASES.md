@@ -9,7 +9,7 @@
 >
 > IDs map to USE_CASES.md: `TC-B7-1` tests use case B7. `TC-BUG3-…` tests bug #3 in USE_CASES §1.
 >
-> **Status (2026-10-20):** every case below has a passing spec. That is 108 TC ids: the 98 listed here, 9 added by the code review, and TC-A4-2 (§4). The full suite is 885 examples, 0 failures, 0 pending. Find a case with `grep -rn "TC-E3-2" spec`.
+> **Status (2026-10-20):** every case below has a passing spec. That is 108 TC ids: the 98 listed here, 9 added by the code review, and TC-A4-2 (§4). The full suite is 885 examples, 0 failures, 0 pending. Second pass (§5–§6, 2026-10-21): 1073 examples, 0 failures; line coverage 97.68%, branch 85.59%. Find a case with `grep -rn "TC-E3-2" spec`.
 
 ---
 
@@ -860,3 +860,26 @@ Research sources are cited per item. Each one says what PayHub does and why. Out
 - A PSP call made inside an open business transaction increments `psp_call_in_transaction`, because it breaks DECISIONS #13.
 
 - **TC-K1-3:** A recorded PSP call inside a transaction that then rolls back loses the row, but its `psp_call` log line was written, redacted, with no PAN or secrets.
+
+**Status (2026-10-21):** every TC in §5 has a passing spec, and so does each test-only gap below.
+
+---
+
+## 6. Test-only gaps closed in the second pass
+
+Each spec asserts behaviour that already worked. The one exception is TC-M16-1, which found a missing CSP directive; it is now fixed.
+
+| TC | Situation | Expected | Spec |
+| --- | --- | --- | --- |
+| TC-M4-1 | A recovery code is used to sign in, then used again | First use 200, second use 401 `invalid_code` (dashboard and ops) | `spec/requests/{dashboard,ops}/api/sessions_spec.rb` |
+| TC-M15-1 | An email or label starting with `=`, `+`, `-` or `@` lands in a CSV export | Prefixed with `'` in the security-history and access-review CSVs (OWASP CSV injection) | `security_history_spec.rb`, `ops/api/operators_spec.rb` |
+| TC-M16-1 | Any UI shell is loaded | CSP is `script-src 'self'`, `base-uri 'self'`, `form-action 'self'`, **`object-src 'none'`** (added) | `spec/requests/web/csp_spec.rb` |
+| TC-N4-1 | A ledger correction is proposed through the API | Balanced: 201, and after approval it is applied as one balanced transfer. Unbalanced: 422 | `spec/requests/ops/api/proposals_spec.rb` |
+| TC-N6-1 | The proposer withdraws, then proposes again | 200 `withdrawn`, audited; the new proposal is 201; a withdrawn one can't be approved (409) | same |
+| TC-L5-1 | Live and test keys or sessions read balances | Each sees only its own twin's ledger | `v1/test_mode_spec.rb`, `dashboard/api/balances_spec.rb` |
+| TC-K1-2 | A call-log row younger than 12 months is deleted | Refused by the trigger; a 13-month-old row can be deleted | `spec/models/psp_call_spec.rb` |
+| TC-O3-1…14 | The chaos run checks its results against the PSP's records | Orphans, captured or refunded drift, a refund the PSP never confirmed, a reservation left behind, settlement problems and unbalanced transfers are each detected; a clean run passes | `spec/lib/chaos_run_spec.rb` |
+| TC-I5-2 | 25 fixed seeds: several payments in EUR and VND with a faulty PSP | Per merchant and currency: every transfer nets to zero, captured ≤ authorized, refunded + reserved ≤ captured, balance holds; no duplicate charges | `spec/properties/ledger_invariants_spec.rb` |
+| TC-C9-1 | The simulation plays a Kiripay-like PSP that does not dedupe charges, seeds 1–10 | At most one PSP charge per payment reference, after every step (DECISIONS #12) | `spec/simulation/payment_simulation_spec.rb` |
+| TC-J5-2 | A large unsettled backlog | At most 20 lines per PSP per run, plus one `settlement.unsettled_summary` with the full count | `spec/jobs/settlement_reconciliation_job_spec.rb` |
+| TC-COV-… | Remaining branches in the Nordpay adapter, ApplyPspResult, BookCapture and OperatorMailer | Every reachable line and branch is asserted | the matching specs |
