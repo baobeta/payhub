@@ -32,3 +32,14 @@ plugin :tmp_restart
 # Specify the PID file. Defaults to tmp/pids/server.pid in development.
 # In other environments, only set the PID file if requested.
 pidfile ENV["PIDFILE"] if ENV["PIDFILE"]
+
+# Workers: Puma reads WEB_CONCURRENCY itself (unset or 0: single mode; N:
+# cluster mode, N processes; "auto": one per CPU) and preloads the app when
+# N > 1, so neither is set here. A value that is not a number fails the boot.
+# No fork hooks: Rails reconnects Active Record after the fork, Redis clients
+# reconnect on their own, and the metrics file store opens one file per PID
+# (RUNBOOK "Metrics across processes").
+# Database connections: each Puma process uses up to RAILS_MAX_THREADS, each
+# Sidekiq process up to its concurrency (config/sidekiq.yml), so size Postgres
+# or PgBouncer for web containers x WEB_CONCURRENCY x RAILS_MAX_THREADS +
+# worker containers x Sidekiq concurrency (README "Configuration").

@@ -127,9 +127,11 @@ jobs:
             echo "RAILS_FORCE_SSL=false"
           } > "$RUNNER_TEMP/app.env"
 
+      # Two Puma workers, as production runs: every later check (/metrics
+      # included) is answered by whichever worker gets the request.
       - name: Web boots (migrating a fresh database) and answers /healthz
         run: |
-          docker run -d --name web --network host --env-file "$RUNNER_TEMP/app.env" -e RUN_MIGRATIONS=true payhub:ci
+          docker run -d --name web --network host --env-file "$RUNNER_TEMP/app.env" -e RUN_MIGRATIONS=true -e WEB_CONCURRENCY=2 payhub:ci
           for _ in $(seq 60); do
             curl -sf localhost:3000/healthz && exit 0
             sleep 1
@@ -137,6 +139,13 @@ jobs:
           echo "web did not answer /healthz in 60s"
           docker logs web
           exit 1
+
+      - name: WEB_CONCURRENCY runs Puma in cluster mode
+        run: |
+          docker logs web > "$RUNNER_TEMP/web.log" 2>&1
+          grep -E "Puma starting|Workers:|Preloading" "$RUNNER_TEMP/web.log" || true
+          grep -q "Puma starting in cluster mode" "$RUNNER_TEMP/web.log"
+          grep -q "Workers: 2" "$RUNNER_TEMP/web.log"
 
       - name: /metrics wants the token
         run: |
