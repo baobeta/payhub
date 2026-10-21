@@ -228,7 +228,7 @@ Then run each of these in its own terminal:
 | `APP_HOST` | Host used for links in emails. Boot fails without it. |
 | `AR_ENCRYPTION_*` (three keys) | Active Record encryption for TOTP secrets. Generate with `bin/rails db:encryption:init`. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional. Enables trace export outside Docker Compose. |
-| `DEMO_ENABLED` | Optional. The public demo (`/demo`, no login) is off in production and answers `404`. Set `true` only on a demo-only host. Other environments default to on; `false` turns it off. |
+| `DEMO_ENABLED` | Optional. The public demo (`/demo`, no login) is off in production and answers `404`. Set `true` only on a demo-only host. Other environments default to on; `false` turns it off. Only the exact value `true` enables it. |
 
 **Common issues:**
 

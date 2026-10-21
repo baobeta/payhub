@@ -18,6 +18,10 @@ require "action_view/railtie"
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
+# Plain Ruby, needed while this file runs, so it is required here rather than
+# autoloaded (and ignored by Zeitwerk below).
+require_relative "../lib/payhub_config"
+
 module Payhub
   class Application < Rails::Application
     # Initialize configuration defaults for originally generated Rails version.
@@ -26,7 +30,7 @@ module Payhub
     # Please, add to the `ignore` list any other `lib` subdirectories that do
     # not contain `.rb` files, or that should not be reloaded or eager loaded.
     # Common ones are `templates`, `generators`, or `middleware`, for example.
-    config.autoload_lib(ignore: %w[assets tasks])
+    config.autoload_lib(ignore: %w[assets tasks payhub_config.rb])
 
     # Configuration for the application, engines, and railties goes here.
     #
@@ -61,10 +65,7 @@ module Payhub
     config.active_job.queue_adapter = :sidekiq
 
     # The public demo needs no login, so production keeps it off unless
-    # DEMO_ENABLED=true. Same rule as PayhubConfig.demo_enabled_default, which
-    # the autoloader cannot provide this early in boot.
-    config.x.demo_enabled = ENV["DEMO_ENABLED"].then do |flag|
-      flag.nil? ? !Rails.env.production? : flag == "true"
-    end
+    # DEMO_ENABLED=true.
+    config.x.demo_enabled = PayhubConfig.demo_enabled_default(Rails.env.to_s, ENV["DEMO_ENABLED"])
   end
 end
