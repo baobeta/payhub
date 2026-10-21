@@ -11,9 +11,18 @@ module MetricsAuth
   def self.authorized?(authorization, token: ENV["METRICS_TOKEN"])
     return !Rails.env.production? if token.blank?
 
-    header = authorization.to_s
-    return false unless header.start_with?("Bearer ")
+    scheme, credentials = authorization.to_s.split(" ", 2)
+    return false unless scheme&.casecmp?("Bearer") && credentials
 
-    ActiveSupport::SecurityUtils.secure_compare(header.delete_prefix("Bearer "), token)
+    ActiveSupport::SecurityUtils.secure_compare(credentials.strip, token.strip)
+  end
+
+  # Called at boot (config/initializers/metrics_token.rb). A missing token is
+  # not worth refusing to boot over, but every scrape will be refused.
+  sig { params(token: T.nilable(String)).void }
+  def self.warn_if_unset_in_production(token: ENV["METRICS_TOKEN"])
+    return unless Rails.env.production? && token.blank?
+
+    Rails.logger.warn("METRICS_TOKEN is not set: /metrics will refuse every scrape with 401")
   end
 end

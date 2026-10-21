@@ -27,6 +27,9 @@ class MetricsController < ApplicationController
 
   sig { void }
   def require_scrape_token
-    head :unauthorized unless MetricsAuth.authorized?(request.authorization)
+    return if MetricsAuth.authorized?(request.authorization)
+
+    response.headers["WWW-Authenticate"] = 'Bearer realm="metrics"'
+    head :unauthorized
   end
 end

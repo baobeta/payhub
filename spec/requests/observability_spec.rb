@@ -35,10 +35,13 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
       stub_const("ENV", token ? ENV.to_h.merge("METRICS_TOKEN" => token) : ENV.to_h.except("METRICS_TOKEN"))
     end
 
-    it "PR-3: with METRICS_TOKEN set, a scrape without the token is 401" do
+    it "PR-3: with METRICS_TOKEN set, a scrape without the token is 401 and touches no data" do
       with_metrics_token("s3cret")
+      allow(Payment).to receive(:where).and_call_original
       get "/metrics"
       expect(response).to have_http_status(:unauthorized)
+      expect(Payment).not_to have_received(:where)
+      expect(response.headers["WWW-Authenticate"]).to eq('Bearer realm="metrics"')
     end
 
     it "PR-3: with METRICS_TOKEN set, a scrape with the wrong token is 401" do
