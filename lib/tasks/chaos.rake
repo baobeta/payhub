@@ -12,6 +12,8 @@
 namespace :chaos do
   desc "Run a chaos scenario against the Nordpay simulator and verify no double charge / over-refund"
   task :run, [:payments] => :environment do |_t, args|
+    abort "chaos:run drives the simulators; refusing in production" if Rails.env.production?
+
     result = ChaosRun.new(payments: (args[:payments] || 40).to_i).call
     exit(1) unless result[:passed]
   end

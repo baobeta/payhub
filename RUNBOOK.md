@@ -49,6 +49,8 @@ If the PSP is down: **there is nothing to do to the payment.** It is in a safe s
 
 If the PSP is *up* and we still time out, check `NORDPAY_URL` / `KIRIPAY_URL` in the worker's environment, then go to §5.
 
+A deploy that fails to boot with `PspEnv::Missing` is missing a `NORDPAY_*` / `KIRIPAY_*` variable, or has one still set to the simulator's test value. The error names the variable. Set it to the real value and redeploy.
+
 ## 4. The PSP knows the answer and we don't
 
 Ask the PSP directly, by **our** reference (never create anything):
