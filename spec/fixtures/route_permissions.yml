@@ -10,6 +10,9 @@
 #     approvers and ops both need to view proposals, but the permission name
 #     does not describe the resource)
 
+dashboard/api/active_sessions#destroy: public
+dashboard/api/active_sessions#index: public
+dashboard/api/active_sessions#revoke_others: public
 dashboard/api/api_keys#create: api_keys.manage
 dashboard/api/api_keys#index: api_keys.read
 dashboard/api/api_keys#revoke: api_keys.manage
@@ -60,6 +63,9 @@ demo/api/payments#create: public
 demo/api/payments#show: public
 demo/api/resets#create: public
 demo/shell#show: public
+ops/api/active_sessions#destroy: public
+ops/api/active_sessions#index: public
+ops/api/active_sessions#revoke_others: public
 ops/api/audit_events#index: ops.audit.read
 ops/api/circuits#index: ops.circuits.read
 ops/api/events#redeliver: ops.events.redeliver

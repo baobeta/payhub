@@ -54,6 +54,22 @@ module TwoFactorSessionActions
   def current_session; end
 end
 
+module SessionListActions
+  sig { returns(ActiveSupport::Duration) }
+  def idle_timeout; end
+
+  sig do
+    params(action: String, target: T.untyped, result: String, metadata: T::Hash[String, T.untyped]).returns(AuditEvent)
+  end
+  def audit!(action, target: nil, result: "success", metadata: {}); end
+
+  sig { returns(T.any(MerchantUser, Operator)) }
+  def current_user; end
+
+  sig { returns(Session) }
+  def current_session; end
+end
+
 # Columns and has_many associations shared by MerchantUser and Operator.
 module TwoFactorPrincipal
   sig { returns(T.nilable(ActiveSupport::TimeWithZone)) }

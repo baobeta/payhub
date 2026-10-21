@@ -16,6 +16,13 @@ class SecurityMailer < ApplicationMailer
     mail(to: principal.email, subject: "New sign-in to PayHub")
   end
 
+  # M7: "sign out all other sessions" ended `count` sessions.
+  sig { params(principal: T.any(MerchantUser, Operator), count: Integer).void }
+  def sessions_revoked(principal, count:)
+    @count = count
+    mail(to: principal.email, subject: "Your other PayHub sessions were signed out")
+  end
+
   sig { params(user: MerchantUser, from: String, to: String).void }
   def ownership_transferred(user, from:, to:)
     @from = from

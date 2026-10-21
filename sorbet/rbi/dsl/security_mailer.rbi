@@ -18,5 +18,13 @@ class SecurityMailer
 
     sig { params(user: ::MerchantUser, from: ::String, to: ::String).returns(::ActionMailer::MessageDelivery) }
     def ownership_transferred(user, from:, to:); end
+
+    sig do
+      params(
+        principal: T.any(::MerchantUser, ::Operator),
+        count: ::Integer
+      ).returns(::ActionMailer::MessageDelivery)
+    end
+    def sessions_revoked(principal, count:); end
   end
 end

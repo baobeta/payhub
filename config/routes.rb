@@ -27,6 +27,9 @@ Rails.application.routes.draw do
   namespace :dashboard do
     namespace :api, defaults: { format: :json } do
       get "me", to: "me#show"
+      resources :sessions, only: %i[index destroy], controller: "active_sessions" do
+        post :revoke_others, on: :collection
+      end
       resource :session, only: %i[create destroy] do
         post :otp
         post :recovery
@@ -102,6 +105,9 @@ Rails.application.routes.draw do
       resources :operators, only: %i[index create update destroy]
       get "access_review", to: "operators#access_review"
       resources :audit_events, only: :index
+      resources :sessions, only: %i[index destroy], controller: "active_sessions" do
+        post :revoke_others, on: :collection
+      end
       resource :session, only: %i[create destroy] do
         post :otp
         post :recovery
