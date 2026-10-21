@@ -2,7 +2,9 @@
 # (traces, logs and metrics all land in ClickHouse); what differs:
 #   logs    <- container stdout (production logs to STDOUT), read from Docker's
 #              json-file log driver on the host, unwrapped by the `container`
-#              operator. Only our request/job JSON lines are kept.
+#              operator. Every PayHub JSON line is kept (request and job lines
+#              carry "kind", all others "event"); other containers' lines and
+#              plain-text lines are dropped.
 #   metrics <- Prometheus scrape of WEB_METRICS_TARGET and WORKER_METRICS_TARGET
 #              as payhub-web / payhub-worker (the same job names as development,
 #              so ClickHouse ServiceName is the same everywhere), with
@@ -73,14 +75,22 @@ receivers:
         parse_to: attributes
       - type: remove
         field: attributes.json
-        timestamp:
-          parse_from: attributes.time
-          layout_type: gotime
-          layout: "2006-01-02T15:04:05.000Z"
       # Every container on the host is tailed; keep only PayHub's own lines.
+      # Request and job lines carry "kind"; every other structured line
+      # (psp_call, webhook.*, settlement.*, alert.*, …) carries "event", and
+      # some of those have a "kind" of their own, so test presence, not value.
       - type: filter
-        expr: 'attributes.kind not in ["request", "job"]'
+        expr: 'attributes.kind == nil and attributes.event == nil'
+      # The container operator leaves Docker's own time (nanoseconds) in
+      # attributes.time; request and job lines overwrite it with theirs
+      # (milliseconds), event lines have none and keep Docker's. The layout
+      # takes any number of fractional digits, so both parse.
+      - type: time_parser
+        parse_from: attributes.time
+        layout_type: gotime
+        layout: "2006-01-02T15:04:05.999999999Z07:00"
       - type: trace_parser
+        if: 'attributes.trace_id != nil'
         trace_id:
           parse_from: attributes.trace_id
         span_id:

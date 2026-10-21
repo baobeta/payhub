@@ -84,6 +84,19 @@ RSpec.describe "OpenTelemetry production collector config" do # rubocop:disable 
     expect(pairs(config).map(&:last).grep(String).join("\n")).not_to include("development.log")
   end
 
+  # Request and job lines carry "kind"; every other structured line (psp_call,
+  # webhook.*, settlement.*, …) carries "event", sometimes with its own "kind".
+  # Dropping any of them would keep it out of the 12-month archive.
+  it "keeps every PayHub JSON line: kind or event, whatever the value" do
+    operators = config.dig("receivers", "filelog", "operators")
+    payhub_filter = operators.select { |op| op["type"] == "filter" }.map { |op| op["expr"] }.grep(/attributes\./)
+    expect(payhub_filter).to eq(["attributes.kind == nil and attributes.event == nil"])
+    # Event lines have no "time" of their own, so attributes.time is Docker's,
+    # in nanoseconds: the layout must take any number of fractional digits.
+    expect(operators.select { |op| op["type"] == "time_parser" })
+      .to contain_exactly(include("parse_from" => "attributes.time", "layout" => "2006-01-02T15:04:05.999999999Z07:00"))
+  end
+
   it "keeps 90 days in ClickHouse and archives logs to S3" do
     expect(config.dig("exporters", "clickhouse", "ttl")).to eq("2160h")
     expect(config.dig("exporters", "awss3", "s3uploader", "s3_prefix")).to eq("payhub/logs")
