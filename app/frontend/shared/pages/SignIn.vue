@@ -30,7 +30,9 @@ async function submitPassword() {
   busy.value = true;
   error.value = null;
   try {
-    await props.client.post("/session", { email: email.value, password: password.value });
+    const res = await props.client.post<{ otp_required?: boolean; next?: string }>("/session", { email: email.value, password: password.value });
+    // An admin reset this person's authenticator: enrol a new one first.
+    if (res?.next === "enrol_otp") return void router.push("/enrol");
     step.value = "code";
   } catch (e) {
     error.value = explain(e);

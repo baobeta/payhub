@@ -55,7 +55,7 @@ function finish() {
           role="alert"
           class="mt-3"
         >
-          Your setup session expired. Open your invitation link again.
+          Your setup session expired. Open your invitation link again, or sign in again if your authenticator was reset.
         </p>
         <template v-else-if="setup.data.value">
           <p class="mt-1 text-sm text-slate-600">

@@ -21,14 +21,19 @@ const inviteEmail = ref("");
 const inviteRole = ref("viewer");
 const removing = ref<Member | null>(null);
 const transferTo = ref<Member | null>(null);
+const resetting = ref<Member | null>(null);
+const message = ref<string | null>(null);
 
-async function act(fn: () => Promise<unknown>) {
+async function act(fn: () => Promise<unknown>, done: string | null = null) {
   error.value = null;
+  message.value = null;
   try {
     await fn();
+    message.value = done;
     inviteOpen.value = false;
     removing.value = null;
     transferTo.value = null;
+    resetting.value = null;
   } catch (e) {
     error.value = e instanceof ApiFailure ? e.message : "Something went wrong. Try again.";
   } finally {
@@ -56,6 +61,12 @@ const editable = (m: Member) => allowed("team.manage") && m.status === "active" 
       </button>
     </div>
     <ErrorBanner :message="error" />
+    <p
+      v-if="message"
+      class="text-sm text-emerald-700"
+    >
+      {{ message }}
+    </p>
     <table class="w-full rounded bg-white text-sm shadow-sm">
       <thead class="text-left text-slate-500">
         <tr>
@@ -106,6 +117,24 @@ const editable = (m: Member) => allowed("team.manage") && m.status === "active" 
               @click="transferTo = m"
             >
               Make owner
+            </button>
+            <button
+              v-if="allowed('team.manage') && m.status === 'invited'"
+              type="button"
+              class="mr-2 underline"
+              data-testid="resend"
+              @click="act(() => client.post(`/invitations/${m.id}/resend`), `Invitation sent again to ${m.email}. The old link no longer works.`)"
+            >
+              Resend
+            </button>
+            <button
+              v-if="editable(m)"
+              type="button"
+              class="mr-2 underline"
+              data-testid="reset-otp"
+              @click="resetting = m"
+            >
+              Reset authenticator
             </button>
             <button
               v-if="editable(m) || (allowed('team.manage') && m.status === 'invited')"
@@ -164,6 +193,14 @@ const editable = (m: Member) => allowed("team.manage") && m.status === "active" 
       :type-to-confirm="removing?.email"
       @update:open="(o: boolean) => { if (!o) removing = null }"
       @confirm="act(() => client.delete(`/members/${removing!.id}`))"
+    />
+    <ConfirmDialog
+      :open="!!resetting"
+      title="Reset their authenticator?"
+      :description="`${resetting?.email} is signed out everywhere and their recovery codes stop working. They set up a new authenticator the next time they sign in.`"
+      confirm-label="Reset authenticator"
+      @update:open="(o: boolean) => { if (!o) resetting = null }"
+      @confirm="act(() => client.post(`/members/${resetting!.id}/reset_otp`), `${resetting!.email} sets up a new authenticator at their next sign-in.`)"
     />
     <ConfirmDialog
       :open="!!transferTo"
