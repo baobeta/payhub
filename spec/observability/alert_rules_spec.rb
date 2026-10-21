@@ -32,7 +32,7 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
       "payhub-slo-api-p95" => ["ticket", "FROM otel.otel_traces", "gt", 300, "10m", 600],
       "payhub-slo-outcome" => ["page", "MetricName = 'payhub_unknown_state_payments'", "gt", 0, "0s", 3600],
       "payhub-scrape-down" => ["page", "MetricName = 'up'", "lt", 1, "5m", 60],
-      "payhub-logs-silent" => ["page", "FROM otel.otel_logs", "lt", 1, "0s", 900],
+      "payhub-logs-silent" => ["page", "FROM otel.otel_logs", "lt", 1, "1m", 900],
       "payhub-archive-upload-failed" => ["page", "MetricName = 'otelcol_exporter_send_failed_log_records'",
                                          "gt", 0, "1m", 3600]
     }
@@ -110,6 +110,17 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
                                   "WHERE MetricName = 'up'",
                                   "ON c.ServiceName = u.ServiceName AND c.instance = u.instance"), uid
       expect(sql(uid).scan("ResourceAttributes['service.instance.id'] AS instance").size).to eq(2), uid
+    end
+  end
+
+  # The `up` subquery is the counter subquery's twin: a different service or
+  # lookback there and the gate judges first samples against the wrong `up`.
+  it "reads up for the same services and lookback as each counter" do
+    counter_uids.each do |uid|
+      services = sql(uid).scan(/ServiceName (?:= '[^']+'|IN \('[^)]*\))/)
+      lookbacks = sql(uid).scan(/now\(\) - INTERVAL \d+ (?:MINUTE|HOUR) - INTERVAL 1 DAY/)
+      expect([services.size, services.uniq.size]).to eq([2, 1]), uid
+      expect([lookbacks.size, lookbacks.uniq.size]).to eq([2, 1]), uid
     end
   end
 

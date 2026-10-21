@@ -2,7 +2,7 @@
 
 You were paged: **`alert.stuck_payment`** — a payment has been in `pending` or `unknown` for more than 15 minutes. This page is written for 3am. Follow it top to bottom; every step is safe to run.
 
-Paged by Grafana? The alert's `runbook_url` points at its row in [Alerts](#alerts-grafana), which says where to start.
+Paged by Grafana? The alert's `runbook_url` points at its row in [Alerts](#alerts-grafana), which says where to start. A `DatasourceError` alert carries the failing rule's `runbook_url` too, but the rule could not run: see [DatasourceError](#datasource-error) first.
 
 ## 0. The one rule
 

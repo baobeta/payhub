@@ -892,7 +892,7 @@ groups:
       - uid: payhub-logs-silent
         title: "No PayHub logs for 15 minutes"
         condition: C
-        for: 0s
+        for: 1m
         noDataState: Alerting
         execErrState: Error
         labels:
