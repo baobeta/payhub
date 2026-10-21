@@ -423,7 +423,14 @@ flowchart LR
     OC --> CH[("ClickHouse<br/>otel db · 72h TTL")] --> GF["Grafana · :3300<br/>PayHub tracing"]
 ```
 
-The collector scrapes web and worker as two jobs, `payhub-web` and `payhub-worker`, and sends `METRICS_TOKEN` as the bearer token on both. Compose passes the same `METRICS_TOKEN` to web, worker and collector; unset (the default), the header goes out empty and `/metrics` stays open. To try the production behaviour, put `METRICS_TOKEN=<token>` in `.env` and recreate them: `docker compose up -d --force-recreate otel-collector web worker`. In ClickHouse the job name is the `ServiceName` column (`ResourceAttributes['service.name']`), not a metric attribute: `SELECT ServiceName, MetricName, max(TimeUnix) FROM otel.otel_metrics_gauge WHERE MetricName LIKE 'payhub_%' GROUP BY 1, 2`. A failed scrape still writes `up = 0` for that `ServiceName`.
+The collector scrapes web and worker as two jobs, `payhub-web` and `payhub-worker`:
+
+- **Token.** It sends `METRICS_TOKEN` as the bearer token on both. Compose passes the same `METRICS_TOKEN` to web, worker and collector.
+- **Unset (the default).** The header goes out as `Authorization: Bearer` with nothing after it, and `/metrics` stays open outside production.
+- **Trying the production behaviour.** Put `METRICS_TOKEN=<token>` in `.env`, then `docker compose up -d --force-recreate otel-collector web worker`.
+- **Telling web from worker in ClickHouse.** The job name is the `ServiceName` column (`ResourceAttributes['service.name']`), not a metric attribute: `SELECT ServiceName, MetricName, max(TimeUnix) FROM otel.otel_metrics_gauge WHERE MetricName LIKE 'payhub_%' GROUP BY 1, 2`.
+- **Failed scrapes.** A failed scrape (a wrong token gives 401) still writes `up = 0` to `otel.otel_metrics_gauge` under that `ServiceName`.
+- **DB-backed gauges.** Only web refreshes `payhub_unknown_state_payments` and `payhub_outbound_events_*` on every scrape, so the dashboard reads them from `payhub-web` only.
 
 In Grafana (<http://localhost:3300>, no login locally), the *PayHub tracing* dashboard lets you filter by `payment_id`. Clicking a `trace_id` shows its waterfall with that trace's log lines underneath.
 

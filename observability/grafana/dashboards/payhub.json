@@ -481,7 +481,7 @@
           "editorType": "sql",
           "queryType": "timeseries",
           "format": 0,
-          "rawSql": "SELECT time, max(total) AS payments_created FROM (\n  SELECT $__timeInterval(TimeUnix) AS time, TimeUnix, sum(Value) AS total\n  FROM otel.otel_metrics_sum\n  WHERE MetricName = 'payhub_payments_created_total' AND $__timeFilter(TimeUnix)\n  GROUP BY time, TimeUnix\n) GROUP BY time ORDER BY time"
+          "rawSql": "SELECT time, sum(service_total) AS payments_created FROM (\n  SELECT time, ServiceName, max(total) AS service_total FROM (\n    SELECT $__timeInterval(TimeUnix) AS time, ServiceName, TimeUnix, sum(Value) AS total\n    FROM otel.otel_metrics_sum\n    WHERE MetricName = 'payhub_payments_created_total' AND $__timeFilter(TimeUnix)\n    GROUP BY time, ServiceName, TimeUnix\n  ) GROUP BY time, ServiceName\n) GROUP BY time ORDER BY time"
         }
       ]
     },
@@ -509,7 +509,7 @@
           "editorType": "sql",
           "queryType": "timeseries",
           "format": 0,
-          "rawSql": "SELECT $__timeInterval(TimeUnix) AS time, max(Value) AS outbound_events_pending FROM otel.otel_metrics_gauge WHERE MetricName = 'payhub_outbound_events_pending' AND $__timeFilter(TimeUnix) GROUP BY time ORDER BY time"
+          "rawSql": "SELECT $__timeInterval(TimeUnix) AS time, max(Value) AS outbound_events_pending FROM otel.otel_metrics_gauge WHERE MetricName = 'payhub_outbound_events_pending' AND ServiceName = 'payhub-web' AND $__timeFilter(TimeUnix) GROUP BY time ORDER BY time"
         },
         {
           "refId": "B",
@@ -520,7 +520,7 @@
           "editorType": "sql",
           "queryType": "timeseries",
           "format": 0,
-          "rawSql": "SELECT $__timeInterval(TimeUnix) AS time, max(Value) AS outbound_events_dead FROM otel.otel_metrics_gauge WHERE MetricName = 'payhub_outbound_events_dead' AND $__timeFilter(TimeUnix) GROUP BY time ORDER BY time"
+          "rawSql": "SELECT $__timeInterval(TimeUnix) AS time, max(Value) AS outbound_events_dead FROM otel.otel_metrics_gauge WHERE MetricName = 'payhub_outbound_events_dead' AND ServiceName = 'payhub-web' AND $__timeFilter(TimeUnix) GROUP BY time ORDER BY time"
         },
         {
           "refId": "C",
@@ -531,7 +531,7 @@
           "editorType": "sql",
           "queryType": "timeseries",
           "format": 0,
-          "rawSql": "SELECT $__timeInterval(TimeUnix) AS time, max(Value) AS unknown_state_payments FROM otel.otel_metrics_gauge WHERE MetricName = 'payhub_unknown_state_payments' AND $__timeFilter(TimeUnix) GROUP BY time ORDER BY time"
+          "rawSql": "SELECT $__timeInterval(TimeUnix) AS time, max(Value) AS unknown_state_payments FROM otel.otel_metrics_gauge WHERE MetricName = 'payhub_unknown_state_payments' AND ServiceName = 'payhub-web' AND $__timeFilter(TimeUnix) GROUP BY time ORDER BY time"
         }
       ]
     }
