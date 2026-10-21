@@ -44,9 +44,9 @@ module Dashboard
       sig { void }
       def reset_otp
         member = live_merchant.merchant_users.find(params[:id])
-        ChangeMemberRole.reset_otp(actor: current_user, member:)
+        _, token = ChangeMemberRole.reset_otp(actor: current_user, member:)
         audit!("team.otp_reset", target: member, metadata: { "email" => member.email })
-        SecurityMailer.otp_reset(member).deliver_later
+        SecurityMailer.otp_reset(member, token).deliver_later
         notify_owner("team.otp_reset", detail: member.email)
         render json: MemberSerializer.call(member)
       end

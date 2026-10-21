@@ -12,10 +12,11 @@ class SecurityMailer
         owner: ::MerchantUser,
         event: ::String,
         actor: ::String,
+        at: T.any(::ActiveSupport::TimeWithZone, ::Time),
         detail: T.nilable(::String)
       ).returns(::ActionMailer::MessageDelivery)
     end
-    def account_changed(owner, event:, actor:, detail: T.unsafe(nil)); end
+    def account_changed(owner, event:, actor:, at:, detail: T.unsafe(nil)); end
 
     sig do
       params(
@@ -34,8 +35,8 @@ class SecurityMailer
     end
     def new_sign_in(principal, ip:, user_agent:); end
 
-    sig { params(user: ::MerchantUser).returns(::ActionMailer::MessageDelivery) }
-    def otp_reset(user); end
+    sig { params(user: ::MerchantUser, token: ::String).returns(::ActionMailer::MessageDelivery) }
+    def otp_reset(user, token); end
 
     sig { params(user: ::MerchantUser, from: ::String, to: ::String).returns(::ActionMailer::MessageDelivery) }
     def ownership_transferred(user, from:, to:); end

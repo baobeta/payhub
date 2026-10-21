@@ -73,4 +73,12 @@ RSpec.describe PspCallRedactor do
     redacted = described_class.redact({ "redirect_url" => "https://psp.test/pay?token=abc123&lang=en" })
     expect(redacted).to eq({ "redirect_url" => "https://psp.test/pay?token=[REDACTED]&lang=en" })
   end
+
+  it "TC-K1-4 masks secret values in JSON- and query-like text but keeps the rest" do
+    text = 'unexpected token at {"client_secret":"abc123","amount":100} secret=s3 token: t0k ' \
+           "api_key='k3y' password: \"p w\" authorization=Bearer"
+    redacted = described_class.redact(text)
+    ["abc123", "s3", "t0k", "k3y", "p w", "Bearer"].each { |secret| expect(redacted).not_to include(secret) }
+    expect(redacted).to include('"client_secret":"[REDACTED]"', '"amount":100', "secret=[REDACTED]", "token: [REDACTED]")
+  end
 end

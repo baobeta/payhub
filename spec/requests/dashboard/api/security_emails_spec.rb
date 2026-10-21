@@ -106,13 +106,44 @@ RSpec.describe "Security emails", type: :request do
       expect(AuditEvent.last).to have_attributes(action: "team.otp_reset", target_id: developer.id)
     end
 
-    it "TC-M12-3 the next sign-in answers next: enrol_otp, and enrolling issues a session" do
+    # TC-M12-5 (Stripe: a reset sends the member an email link; DECISIONS #25).
+    # The emailed token AND the password are both needed to enrol again.
+    def reset_token_for(member)
+      ActionMailer::Base.deliveries.clear
+      perform_enqueued_jobs { reset(member) }
+      mail = ActionMailer::Base.deliveries.find { |m| m.to == [member.email] && m.subject.include?("authenticator") }
+      mail.body.to_s[%r{/dashboard/reset-authenticator\?token=([\w-]+)}, 1]
+    end
+
+    def sign_in_with(member, reset_token: nil)
+      post "/dashboard/api/session",
+           params: { email: member.email, password: "correct horse battery staple", reset_token: }.compact.to_json,
+           headers: ui_headers
+    end
+
+    def expect_invalid_credentials
+      expect(response).to have_http_status(:unauthorized)
+      expect(json_body.dig("error", "code")).to eq("invalid_credentials")
+      get "/dashboard/api/otp/setup"
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it "TC-M12-5 the password alone after a reset is refused like a wrong password" do
       sign_in_as(admin, stepped_up: true)
-      reset(developer)
+      reset_token_for(developer)
+      reset!
+
+      sign_in_with(developer)
+      expect_invalid_credentials
+    end
+
+    it "TC-M12-5 the emailed token and the password enrol a new authenticator, then a session and new codes" do
+      sign_in_as(admin, stepped_up: true)
+      token = reset_token_for(developer)
+      expect(token).to be_present
       reset! # a fresh browser (cookie jar) for the developer
 
-      post "/dashboard/api/session", params: { email: developer.email, password: "correct horse battery staple" }.to_json,
-                                     headers: ui_headers
+      sign_in_with(developer, reset_token: token)
       expect(json_body).to eq("next" => "enrol_otp")
       get "/dashboard/api/otp/setup"
       expect(response).to have_http_status(:ok)
@@ -120,6 +151,35 @@ RSpec.describe "Security emails", type: :request do
       expect(json_body["recovery_codes"].size).to eq(10)
       get "/dashboard/api/me"
       expect(json_body.dig("user", "id")).to eq(developer.id)
+    end
+
+    it "TC-M12-5 the token works once" do
+      sign_in_as(admin, stepped_up: true)
+      token = reset_token_for(developer)
+      reset!
+
+      sign_in_with(developer, reset_token: token)
+      expect(json_body).to eq("next" => "enrol_otp")
+      reset! # another browser replays the link
+      sign_in_with(developer, reset_token: token)
+      expect_invalid_credentials
+    end
+
+    it "TC-M12-5 a token older than 72 hours is refused, and the admin can reset again" do
+      sign_in_as(admin, stepped_up: true)
+      stale = reset_token_for(developer)
+
+      travel(73.hours) do
+        reset!
+        sign_in_with(developer, reset_token: stale)
+        expect_invalid_credentials
+
+        sign_in_as(admin, stepped_up: true)
+        fresh = reset_token_for(developer)
+        reset!
+        sign_in_with(developer, reset_token: fresh)
+        expect(json_body).to eq("next" => "enrol_otp")
+      end
     end
 
     it "TC-M12-3 the old authenticator no longer works after a reset" do

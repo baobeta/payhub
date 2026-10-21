@@ -137,6 +137,28 @@ RSpec.describe "Ops proposals", type: :request do
     expect(OperatorProposal.find(id).state).to eq("expired")
   end
 
+  # TC-N6-4: withdraw reads the row under DecideProposal's lock. Here an
+  # unlocked find returns a stale (pending) copy, as it would for a request
+  # that read before an approver or the expiry job committed.
+  %w[expired applied].each do |moved_to|
+    it "TC-N6-4 a proposal #{moved_to} after the controller loaded it is not overwritten to withdrawn" do
+      sign_in_operator(maker, stepped_up: true)
+      create_proposal(create(:payment, state: "unknown"))
+      id = json_body["id"]
+      stale = OperatorProposal.find(id)
+      decision = moved_to == "applied" ? { decided_at: Time.current, decided_by_id: create(:operator, role: "approver").id } : {}
+      OperatorProposal.where(id:).update_all(state: moved_to, **decision) # rubocop:disable Rails/SkipsModelValidations
+      allow(OperatorProposal).to receive(:find).and_call_original
+      allow(OperatorProposal).to receive(:find).with(id).and_return(stale)
+
+      post "/ops/api/proposals/#{id}/withdraw", headers: ui_headers
+
+      expect(response).to have_http_status(409)
+      expect(OperatorProposal.where(id:).pick(:state)).to eq(moved_to)
+      expect(AuditEvent.where(action: "proposal.withdrawn", target_id: id)).to be_empty
+    end
+  end
+
   it "applies an approved transition and audits who approved" do
     approver = create(:operator, role: "approver")
     sign_in_operator(maker, stepped_up: true)

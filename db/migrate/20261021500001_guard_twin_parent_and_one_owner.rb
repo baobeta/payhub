@@ -11,6 +11,7 @@ class GuardTwinParentAndOneOwner < ActiveRecord::Migration[8.1]
   # COMMIT: TransferOwnership demotes, then promotes, in one transaction, and
   # a brand-new merchant with no members yet passes.
   def up
+    preflight!
     execute <<~SQL
       CREATE FUNCTION merchants_twin_parent_is_live() RETURNS trigger
         LANGUAGE plpgsql AS $$
@@ -51,6 +52,37 @@ class GuardTwinParentAndOneOwner < ActiveRecord::Migration[8.1]
         DEFERRABLE INITIALLY DEFERRED
         FOR EACH ROW EXECUTE FUNCTION merchant_users_keep_one_owner();
     SQL
+  end
+
+  OWNERLESS_SQL = <<~SQL.squish
+    SELECT m.id FROM merchants m
+    WHERE m.livemode
+      AND EXISTS (SELECT 1 FROM merchant_users u WHERE u.merchant_id = m.id AND u.disabled_at IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM merchant_users u
+                      WHERE u.merchant_id = m.id AND u.disabled_at IS NULL AND u.role = 'owner')
+    ORDER BY m.id
+  SQL
+
+  BAD_TWIN_SQL = <<~SQL.squish
+    SELECT t.id FROM merchants t JOIN merchants p ON p.id = t.live_merchant_id
+    WHERE NOT p.livemode ORDER BY t.id
+  SQL
+
+  # TC-M10-3: existing rows the triggers would refuse. The owner trigger only
+  # checks rows that change, so bad data would otherwise slip in now and fail
+  # some unrelated write later. Stop the deploy here instead, with the ids
+  # (RUNBOOK "Deploy stopped: merchant without an owner").
+  def preflight!
+    problems = []
+    ownerless = select_values(OWNERLESS_SQL)
+    if ownerless.any?
+      problems << "live merchants with active members but no active owner (promote one, see RUNBOOK): #{ownerless.join(', ')}"
+    end
+    bad_twins = select_values(BAD_TWIN_SQL)
+    problems << "test twins whose parent is not live (re-point live_merchant_id): #{bad_twins.join(', ')}" if bad_twins.any?
+    return if problems.empty?
+
+    raise "GuardTwinParentAndOneOwner cannot install its triggers. Fix these first:\n- #{problems.join("\n- ")}"
   end
 
   def down

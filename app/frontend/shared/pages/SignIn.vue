@@ -6,7 +6,9 @@ import { ApiFailure, type ApiClient } from "../http";
 import ErrorBanner from "../components/ErrorBanner.vue";
 
 // Shared by the merchant and operator consoles. Each passes its own client.
-const props = defineProps<{ client: ApiClient }>();
+// resetToken comes from the link an authenticator reset emails (DECISIONS
+// #25): the server enrols a new authenticator only with it and the password.
+const props = defineProps<{ client: ApiClient; resetToken?: string }>();
 
 const route = useRoute();
 const router = useRouter();
@@ -30,7 +32,9 @@ async function submitPassword() {
   busy.value = true;
   error.value = null;
   try {
-    const res = await props.client.post<{ otp_required?: boolean; next?: string }>("/session", { email: email.value, password: password.value });
+    const body: Record<string, string> = { email: email.value, password: password.value };
+    if (props.resetToken) body.reset_token = props.resetToken;
+    const res = await props.client.post<{ otp_required?: boolean; next?: string }>("/session", body);
     // An admin reset this person's authenticator: enrol a new one first.
     if (res?.next === "enrol_otp") return void router.push("/enrol");
     step.value = "code";
@@ -65,8 +69,14 @@ async function submitCode() {
   <main class="flex min-h-screen items-center justify-center bg-slate-50 p-4">
     <div class="w-full max-w-sm rounded-lg bg-white p-6 shadow">
       <h1 class="text-xl font-semibold">
-        Sign in to PayHub
+        {{ resetToken ? "Set up a new authenticator" : "Sign in to PayHub" }}
       </h1>
+      <p
+        v-if="resetToken"
+        class="mt-2 text-sm text-slate-600"
+      >
+        Your authenticator was reset. Sign in with your password, then connect a new authenticator app. This link works once.
+      </p>
       <form
         v-if="step === 'password'"
         class="mt-4 space-y-3"

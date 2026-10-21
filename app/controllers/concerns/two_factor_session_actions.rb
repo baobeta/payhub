@@ -74,12 +74,20 @@ module TwoFactorSessionActions
   def pending_cookie = :"#{session_cookie_name}_2fa"
 
   # M12: an admin reset this person's authenticator (Stripe's 2FA recovery).
-  # The password proved who they are; still no session until they enrol a
-  # new authenticator, through the same enrol cookie and otp/setup + confirm
-  # steps as accepting an invitation (InvitationsController::ENROL_COOKIE is
-  # "<session cookie>_enrol" in both areas).
+  # The password alone is not enough (DECISIONS #25): the single-use token
+  # from the reset email must come with it, else the answer is the same 401 as
+  # a wrong password, so nothing reveals that the account was reset. Then
+  # still no session until they enrol a new authenticator, through the same
+  # enrol cookie and otp/setup + confirm steps as accepting an invitation
+  # (InvitationsController::ENROL_COOKIE is "<session cookie>_enrol" in both
+  # areas).
   sig { params(principal: T.any(MerchantUser, Operator)).void }
   def start_enrolment(principal)
+    unless principal.is_a?(MerchantUser) && principal.consume_otp_reset_token!(params[:reset_token].to_s)
+      audit_auth_failure(principal, factor: "reset_token", just_locked: nil)
+      raise ApiError.unauthenticated(code: "invalid_credentials", message: "Email or password is wrong")
+    end
+
     cookies.encrypted[:"#{session_cookie_name}_enrol"] = {
       value: { "id" => principal.id, "exp" => ENROL_TTL.from_now.to_i },
       httponly: true, same_site: :strict, secure: Rails.env.production?, path: session_cookie_path

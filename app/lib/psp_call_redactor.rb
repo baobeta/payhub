@@ -22,6 +22,13 @@ module PspCallRedactor
   # name=value pairs in a URL query string, e.g. a redirect URL carrying a token.
   QUERY_PARAM = /([?&])([^=&#\s]+)=([^&#\s]*)/
 
+  # key: value / key=value in free text, such as a JSON fragment quoted in an
+  # exception message (TC-K1-4): "client_secret":"abc", token: abc, api_key='x'.
+  # The value is a quoted string or a run up to the next delimiter.
+  # Possessive, and only from the start of a word, so a long run of letters
+  # stays linear (an error page can be 100 KB of them).
+  KEY_VALUE = /(?<![\w-])(?<prefix>(?<q>["']?)(?<name>[A-Za-z][\w-]*+)\k<q>\s*[:=]\s*)(?<value>"(?:[^"\\]|\\.)*+"|'[^']*+'|[^\s"'&,;}\]]++)/
+
   # 13-19 digits, optionally grouped by spaces or dashes: the shape of a PAN.
   CARD_LIKE = /(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)/
 
@@ -71,7 +78,15 @@ module PspCallRedactor
 
   sig { params(value: String).returns(String) }
   def self.redact_string(value)
-    masked = value.gsub(QUERY_PARAM) do |pair|
+    # KEY_VALUE first: its output (key=[REDACTED]) passes QUERY_PARAM unchanged.
+    masked = value.gsub(KEY_VALUE) do |pair|
+      m = T.must(Regexp.last_match)
+      next pair unless sensitive_key?(m[:name])
+
+      quote = %w[" '].include?(m[:value].to_s[0]) ? m[:value].to_s[0] : ""
+      "#{m[:prefix]}#{quote}#{MASK}#{quote}"
+    end
+    masked = masked.gsub(QUERY_PARAM) do |pair|
       sep, name = Regexp.last_match(1), Regexp.last_match(2)
       sensitive_key?(name) ? "#{sep}#{name}=#{MASK}" : pair
     end

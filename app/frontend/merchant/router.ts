@@ -14,6 +14,7 @@ export const router = createRouter({
   routes: [
     { path: "/sign-in", name: "sign-in", component: () => import("./pages/SignIn.vue"), meta: { public: true } },
     { path: "/invitations/:token", name: "invitation", component: () => import("./pages/AcceptInvitation.vue"), meta: { public: true } },
+    { path: "/reset-authenticator", name: "reset-authenticator", component: () => import("./pages/ResetAuthenticator.vue"), meta: { public: true } },
     { path: "/enrol", name: "enrol", component: () => import("./pages/EnrolOtp.vue"), meta: { public: true } },
     {
       path: "/",

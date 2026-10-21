@@ -34,4 +34,23 @@ RSpec.describe ExpireProposalsJob do
     expect { 2.times { described_class.perform_now } }.not_to change(AuditEvent, :count)
     expect(old.reload.state).to eq("withdrawn")
   end
+
+  it "TC-N6-5 keeps taking batches until no stale proposal is left" do
+    stub_const("#{described_class}::BATCH", 2)
+    stale = Array.new(5) { proposal_created(15.days) }
+
+    described_class.perform_now
+
+    expect(OperatorProposal.where(id: stale.map(&:id)).pluck(:state)).to all(eq("expired"))
+  end
+
+  it "TC-N6-5 stops after MAX_BATCHES so one run stays bounded" do
+    stub_const("#{described_class}::BATCH", 2)
+    stub_const("#{described_class}::MAX_BATCHES", 2)
+    stale = Array.new(5) { proposal_created(15.days) }
+
+    described_class.perform_now
+
+    expect(OperatorProposal.where(id: stale.map(&:id)).group(:state).count).to eq("expired" => 4, "pending" => 1)
+  end
 end

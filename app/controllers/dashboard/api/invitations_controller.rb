@@ -52,7 +52,9 @@ module Dashboard
 
           token = user.rotate_invitation!
           audit!("team.invitation_resent", target: user, metadata: { "email" => user.email })
-          InvitationMailer.invite(user, token).deliver_later
+          # TC-M11-6: only a committed token is worth emailing; a rollback
+          # would leave the link dead.
+          ActiveRecord.after_all_transactions_commit { InvitationMailer.invite(user, token).deliver_later }
         end
         render json: MemberSerializer.call(user)
       end

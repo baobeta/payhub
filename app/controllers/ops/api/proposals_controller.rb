@@ -44,15 +44,21 @@ module Ops
         render json: ProposalSerializer.call(proposal, viewer: current_user), status: :created
       end
 
+      # TC-N6-4: re-read under the row lock DecideProposal and
+      # ExpireProposalsJob take, so an approval or expiry that commits first
+      # makes this a 409 instead of being overwritten to withdrawn.
       sig { void }
       def withdraw
-        proposal = OperatorProposal.find(params[:id])
-        unless proposal.proposed_by_id == current_user.id && proposal.state == "pending"
-          raise ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "refused",
-                             message: "Only the proposer can withdraw a pending proposal")
-        end
+        proposal = OperatorProposal.transaction do
+          locked = OperatorProposal.lock.find(params[:id])
+          unless locked.proposed_by_id == current_user.id && locked.state == "pending"
+            raise ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "refused",
+                               message: "Only the proposer can withdraw a pending proposal")
+          end
 
-        proposal.update!(state: "withdrawn")
+          locked.update!(state: "withdrawn")
+          locked
+        end
         audit!("proposal.withdrawn", target: proposal, merchant_id: T.must(proposal.payment).merchant_id)
         render json: ProposalSerializer.call(proposal, viewer: current_user)
       end

@@ -197,10 +197,10 @@ const editable = (m: Member) => allowed("team.manage") && m.status === "active" 
     <ConfirmDialog
       :open="!!resetting"
       title="Reset their authenticator?"
-      :description="`${resetting?.email} is signed out everywhere and their recovery codes stop working. They set up a new authenticator the next time they sign in.`"
+      :description="`${resetting?.email} is signed out everywhere and their recovery codes stop working. We email them a link, valid for 72 hours, to set up a new authenticator.`"
       confirm-label="Reset authenticator"
       @update:open="(o: boolean) => { if (!o) resetting = null }"
-      @confirm="act(() => client.post(`/members/${resetting!.id}/reset_otp`), `${resetting!.email} sets up a new authenticator at their next sign-in.`)"
+      @confirm="act(() => client.post(`/members/${resetting!.id}/reset_otp`), `${resetting!.email} gets an email link to set up a new authenticator.`)"
     />
     <ConfirmDialog
       :open="!!transferTo"

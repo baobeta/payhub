@@ -387,6 +387,8 @@ CREATE TABLE public.merchant_users (
     disabled_at timestamp(6) without time zone,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
+    otp_reset_digest character varying,
+    otp_reset_expires_at timestamp(6) without time zone,
     CONSTRAINT chk_merchant_users_role CHECK (((role)::text = ANY ((ARRAY['owner'::character varying, 'admin'::character varying, 'developer'::character varying, 'support'::character varying, 'viewer'::character varying])::text[])))
 );
 
@@ -1152,6 +1154,13 @@ CREATE INDEX index_merchant_users_on_merchant_id ON public.merchant_users USING 
 
 
 --
+-- Name: index_merchant_users_on_otp_reset_digest; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX index_merchant_users_on_otp_reset_digest ON public.merchant_users USING btree (otp_reset_digest) WHERE (otp_reset_digest IS NOT NULL);
+
+
+--
 -- Name: index_merchants_on_api_key_digest; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1568,6 +1577,7 @@ ALTER TABLE ONLY public.api_keys
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261021600001'),
 ('20261021500002'),
 ('20261021500001'),
 ('20261021400001'),
