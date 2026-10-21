@@ -2,19 +2,29 @@
 # (traces, logs and metrics all land in ClickHouse); what differs:
 #   logs    <- container stdout (production logs to STDOUT), read from Docker's
 #              json-file log driver on the host, unwrapped by the `container`
-#              operator. Every PayHub JSON line is kept (request and job lines
-#              carry "kind", all others "event"); other containers' lines and
-#              plain-text lines are dropped.
+#              operator. Only lines from containers that log with
+#              `env: OTEL_SERVICE_NAME` (web and worker, see RUNBOOK.md) are
+#              kept, as that service; of those, every JSON line (requests, jobs,
+#              every "event" line) is kept and plain-text lines are dropped.
 #   metrics <- Prometheus scrape of WEB_METRICS_TARGET and WORKER_METRICS_TARGET
 #              as payhub-web / payhub-worker (the same job names as development,
 #              so ClickHouse ServiceName is the same everywhere), with
 #              METRICS_TOKEN as the bearer token. Unset, /metrics answers 401
 #              and `up` is 0.
-#   retention: 90 days queryable in ClickHouse (ttl 2160h) and every log line
+#   retention: 90 days queryable in ClickHouse (ttl 2160h, the same for logs,
+#              traces and metrics: one retention, on purpose) and every log line
 #              archived to S3 (bucket lifecycle >= 13 months, set on the bucket).
 #              PCI DSS 10.5.1: 12 months kept, the last 3 immediately available.
+#   restarts: read positions and the ClickHouse export queue live in
+#              file_storage, on a persistent volume, so a restart resumes where
+#              it stopped instead of skipping to the end of each file.
 # Every endpoint and secret comes from the environment; see RUNBOOK.md
 # "Logs and retention" for the required variables.
+
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol/storage
+    create_directory: true
 
 receivers:
   otlp:
@@ -43,18 +53,33 @@ receivers:
             - targets: ["${env:WORKER_METRICS_TARGET}"]
 
   filelog:
-    include: [/var/lib/docker/containers/*/*-json.log]
+    # *-json.log* also matches Docker's rotated files (<id>-json.log.1, …), so
+    # a tail written just before rotation is not lost; fingerprints stop a
+    # rotated file from being read twice. Docker must not compress them.
+    include: [/var/lib/docker/containers/*/*-json.log*]
     include_file_path: true
+    # Only on first start: afterwards the checkpoint in file_storage decides.
     start_at: end
+    storage: file_storage
     operators:
       # Docker's json-file driver wraps each stdout line as
-      # {"log":"...","stream":"stdout","time":"..."}; unwrap it to the line.
+      # {"log":"...","stream":"stdout","attrs":{...},"time":"..."}; unwrap it.
       # The path is not a Kubernetes one, so no metadata from it.
       - type: container
         format: docker
         add_metadata_from_filepath: false
+      # Every container on the host is tailed. web and worker log with
+      # `env: OTEL_SERVICE_NAME`, so Docker puts their service name in attrs;
+      # a line without it is some other container's and never reaches the archive.
+      - type: filter
+        expr: 'attributes.attrs?.OTEL_SERVICE_NAME == nil'
+      - type: move
+        from: attributes.attrs.OTEL_SERVICE_NAME
+        to: resource["service.name"]
+      - type: remove
+        field: attributes.attrs
       # The container ID is the directory name: keep it, so a line can be
-      # traced back to the web or worker container that wrote it.
+      # traced back to the container that wrote it.
       - type: regex_parser
         parse_from: attributes["log.file.path"]
         regex: '^/var/lib/docker/containers/(?P<container_id>[0-9a-f]+)/'
@@ -68,24 +93,32 @@ receivers:
       - type: filter
         expr: 'not (body matches "^([A-Z], \\[[^\\]]*\\] +[A-Z]+ -- [^:]*: )?(\\[[^\\]]*\\] )*\\{")'
       - type: regex_parser
-        regex: '^(?:[A-Z], \[[^\]]*\] +[A-Z]+ -- [^:]*: )?(?:\[[^\]]*\] )*(?P<json>\{.*\})\s*$'
+        regex: '^(?:(?P<level>[A-Z]), \[[^\]]*\] +[A-Z]+ -- [^:]*: )?(?:\[[^\]]*\] )*(?P<json>\{.*\})\s*$'
         parse_to: attributes
+      - type: severity_parser
+        if: 'attributes.level != nil'
+        parse_from: attributes.level
+        mapping:
+          debug: D
+          info: I
+          warn: W
+          error: E
+          fatal: F
+      - type: remove
+        if: 'attributes.level != nil'
+        field: attributes.level
       - type: json_parser
         parse_from: attributes.json
         parse_to: attributes
-      - type: remove
-        field: attributes.json
-      # Every container on the host is tailed; keep only PayHub's own lines.
-      # Request and job lines carry "kind"; every other structured line
-      # (psp_call, webhook.*, settlement.*, alert.*, …) carries "event", and
-      # some of those have a "kind" of their own, so test presence, not value.
-      - type: filter
-        expr: 'attributes.kind == nil and attributes.event == nil'
-      # The container operator leaves Docker's own time (nanoseconds) in
-      # attributes.time; request and job lines overwrite it with theirs
-      # (milliseconds), event lines have none and keep Docker's. The layout
-      # takes any number of fractional digits, so both parse.
+      # The body becomes the JSON line itself, without the prefix and tags.
+      - type: move
+        from: attributes.json
+        to: body
+      # Request and job lines ("kind") carry their own "time" (milliseconds),
+      # the moment the request or job finished. Event lines have no "time" and
+      # keep the timestamp the container operator took from Docker's envelope.
       - type: time_parser
+        if: 'attributes.kind != nil and attributes.time != nil'
         parse_from: attributes.time
         layout_type: gotime
         layout: "2006-01-02T15:04:05.999999999Z07:00"
@@ -95,11 +128,6 @@ receivers:
           parse_from: attributes.trace_id
         span_id:
           parse_from: attributes.span_id
-      # Docker's log file carries no container name, so service.name stays
-      # "payhub" as in development; container.id tells web from worker.
-      - type: add
-        field: resource["service.name"]
-        value: payhub
 
 processors:
   memory_limiter:
@@ -119,8 +147,16 @@ exporters:
     timeout: 10s
     retry_on_failure:
       enabled: true
+    # Queued on disk: a ClickHouse outage or a restart does not lose batches.
+    sending_queue:
+      enabled: true
+      storage: file_storage
 
   # Credentials come from the AWS default chain (instance role / env).
+  # 0.111.0's awss3 has no sending_queue, retry_on_failure or timeout
+  # (validate rejects them): a batch whose upload fails is dropped from the
+  # archive (it is still in ClickHouse for 90 days). RUNBOOK.md "Logs and
+  # retention" has the backfill.
   awss3:
     s3uploader:
       region: "${env:LOG_ARCHIVE_REGION}"
@@ -132,6 +168,7 @@ exporters:
     marshaler: otlp_json
 
 service:
+  extensions: [file_storage]
   pipelines:
     traces:
       receivers: [otlp]

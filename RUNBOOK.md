@@ -204,7 +204,43 @@ PCI DSS 10.5.1: keep audit logs 12 months, the last 3 immediately available.
 - **90 days queryable in Grafana.** The production collector writes logs, traces and metrics to ClickHouse with a 2160h TTL; older rows drop out.
 - **12 months archived in S3.** Every PayHub JSON log line (requests, jobs, and every `"event"` line: `psp_call`, `webhook.*`, `settlement.*`, `alert.*`, …) also goes to `s3://$LOG_ARCHIVE_BUCKET/payhub/logs/year=YYYY/month=MM/day=DD/hour=HH/` as OTLP JSON. The bucket, set up outside this repo, needs a lifecycle rule that expires objects after **13 months** (one month of slack over the requirement), and should block deletes before then (S3 Object Lock in compliance mode is optional, but it is what proves no one trimmed the archive).
 
-**Running the production collector.** `otelcol-contrib --config=/etc/otelcol/config.production.yaml`, with `observability/otel-collector.production.yaml` mounted there, plus the host's `/var/lib/docker/containers` mounted read-only (it reads each container's stdout from Docker's json-file log driver, so web and worker must use that driver). It keeps every PayHub JSON line, whichever container wrote it: request and job lines (they carry `"kind"`) and every structured `"event"` line. Plain-text lines (Rails' own, a few boot warnings) and other containers' output are dropped, so anything that must reach the archive has to be logged as JSON with an `event` key. Request and job lines keep their own `time`; event lines take the time Docker recorded. `container.id` on the log record says which container wrote it. The collector cannot refuse to start without a variable, so the deploy must set all of these:
+**Running the production collector.** `otelcol-contrib --config=/etc/otelcol/config.production.yaml`, with `observability/otel-collector.production.yaml` mounted there. It reads each container's stdout from Docker's json-file log files, keeps the lines of web and worker only, and of those every JSON line: request and job lines (`"kind"`) and every structured `"event"` line. Plain-text lines (Rails' own, a few boot warnings) are dropped, so anything that must reach the archive has to be logged as JSON. Request and job lines keep their own `time`; event lines take the time Docker recorded. In ClickHouse a line's `ServiceName` is `payhub-web` or `payhub-worker` (as for traces and metrics) and `ResourceAttributes['container.id']` says which container; the `Body` is the JSON line itself and the severity comes from the line's level letter.
+
+In the production compose file:
+
+```yaml
+x-app-logging: &app-logging            # web and worker
+  driver: json-file
+  options:
+    env: OTEL_SERVICE_NAME             # Docker writes it into every line: the collector keeps only these
+    max-size: 50m                      # rotate; the collector also reads the rotated <id>-json.log.N files
+    max-file: "5"                      # no `compress`: a gzipped rotated file cannot be read
+services:
+  web:    { logging: *app-logging, environment: { OTEL_SERVICE_NAME: payhub-web,    METRICS_TOKEN: "${METRICS_TOKEN:?set METRICS_TOKEN}" } }
+  worker: { logging: *app-logging, environment: { OTEL_SERVICE_NAME: payhub-worker, METRICS_TOKEN: "${METRICS_TOKEN:?set METRICS_TOKEN}" } }
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ["--config=/etc/otelcol/config.production.yaml"]
+    user: "0"                          # Docker's log files are root:root 0640 in 0710 directories
+    environment:
+      METRICS_TOKEN: "${METRICS_TOKEN:?set METRICS_TOKEN}"   # plus every variable in the table below
+    volumes:
+      - ./observability/otel-collector.production.yaml:/etc/otelcol/config.production.yaml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - otelcol-storage:/var/lib/otelcol/storage   # read positions + ClickHouse queue; must survive restarts
+volumes:
+  otelcol-storage:
+```
+
+- **Without `env: OTEL_SERVICE_NAME`** on a container, none of its lines reach ClickHouse or the archive. After any change to the logging options, check that `SELECT ServiceName, count() FROM otel.otel_logs WHERE Timestamp > now() - INTERVAL 10 MINUTE GROUP BY ServiceName` shows both services. Logging options apply only to containers created after the change.
+- **Permissions.** The image runs as uid 10001, which cannot read Docker's logs. Run it as `user: "0"` with the mount read-only (or give uid 10001 read access through a group and ACL). Otherwise filelog only logs permission errors and the archive stays empty, with nothing else failing.
+- **Restarts.** Read positions are checkpointed in `/var/lib/otelcol/storage`, so a restarted collector resumes where it stopped. Lines written while it was down are delivered when it starts again, as long as Docker has not rotated them away in the meantime (with the settings above, 250 MB per container). Without that volume, a restart starts at the end of every file and loses the gap. ClickHouse batches wait in the same volume while ClickHouse is down.
+- **S3 outage.** The 0.111.0 S3 exporter has no queue and no retry: a batch whose upload fails is dropped from the archive (the collector logs an `awss3` export error) but is still in ClickHouse for 90 days. Backfill it from ClickHouse before then, under its own prefix so it is not mistaken for the collector's output:
+  `INSERT INTO FUNCTION s3('https://<bucket>.s3.<region>.amazonaws.com/payhub/logs-backfill/<from>_<to>.jsonl.gz', 'JSONEachRow') SELECT Timestamp, ServiceName, SeverityText, Body, LogAttributes FROM otel.otel_logs WHERE Timestamp >= '<from>' AND Timestamp < '<to>'`
+- **Network.** The OTLP receivers (4317, 4318) accept anything sent to them, without authentication. Expose them only on the internal network that web and worker use, never on a public interface.
+- **Retention.** The TTL is set when the exporter creates the tables, the same 90 days for logs, traces and metrics. Changing `ttl` later does not alter existing tables; run e.g. `ALTER TABLE otel.otel_logs MODIFY TTL TimestampTime + toIntervalDay(<days>)` (and the same for `otel_traces` and `otel_metrics_*`, whose TTL columns differ: `SHOW CREATE TABLE` first).
+
+The collector cannot refuse to start without a variable, so the deploy must set all of these:
 
 | Variable | What |
 |---|---|
@@ -213,9 +249,9 @@ PCI DSS 10.5.1: keep audit logs 12 months, the last 3 immediately available.
 | `WEB_METRICS_TARGET`, `WORKER_METRICS_TARGET` | `host:port` of web's and the worker's `/metrics` (the worker serves on 9394) |
 | `METRICS_TOKEN` | The same value web and worker have. Unset or different, every scrape gets 401: `up` is 0 and the metrics panels go empty |
 
-In any production compose file, write `METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}` (for the collector, web and worker) so a missing token stops the deploy instead of the scrape.
+In any production compose file, write `METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}` (for the collector, web and worker, as above) so a missing token stops the deploy instead of the scrape.
 
-**Querying the archive** (an incident or an auditor asks about something older than 90 days). From ClickHouse, with the `s3()` table function (credentials as its extra arguments, or the server's own); narrow the path to the days you need:
+**Querying the archive** (an incident or an auditor asks about something older than 90 days). From ClickHouse, with the `s3()` table function (credentials as its extra arguments, or the server's own); narrow the path to the days you need. Objects are partitioned by the hour they were *uploaded*, not the hour of the line, so widen the range by an hour either side:
 
 ```sql
 SELECT fromUnixTimestamp64Nano(toInt64(JSONExtractString(rec, 'timeUnixNano'))) AS ts,
