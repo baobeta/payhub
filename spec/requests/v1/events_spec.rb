@@ -157,7 +157,7 @@ RSpec.describe "Outbound events: outbox, delivery, GET /v1/events, redeliver", t
   end
 
   describe "TC-H3-1: delivery timeout records an attempt row with duration_ms and sets next_attempt_at" do
-    it "records duration_ms and exponential back-off on a merchant timeout" do
+    it "records duration_ms and the scheduled back-off on a merchant timeout" do
       create(:payment, merchant: merchant)
       event = merchant.outbound_events.first
 
@@ -171,7 +171,7 @@ RSpec.describe "Outbound events: outbox, delivery, GET /v1/events, redeliver", t
       expect(attempt.duration_ms).to be >= 0
       expect(attempt.error).to match(/Timeout/i)
       expect(event.next_attempt_at).to be_within(5.seconds).of(
-        before_deliver + OutboundEvent::BACKOFF.call(1)
+        before_deliver + OutboundEvent::BACKOFF_SCHEDULE.first
       )
     end
   end

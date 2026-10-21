@@ -3,7 +3,7 @@
 
 # The outbox sweeper. Runs every minute: delivers every due OutboundEvent to
 # its merchant's webhook_url, records one OutboundDeliveryAttempt per try,
-# backs off exponentially, and dead-letters once the event's attempt_budget
+# backs off on OutboundEvent::BACKOFF_SCHEDULE, and dead-letters once the event's attempt_budget
 # (MAX_ATTEMPTS, renewed by each redelivery) is spent.
 #
 # Two sweepers may run at once (scaled Sidekiq). Each row is claimed with
@@ -72,7 +72,7 @@ class DeliverOutboundEventsJob < ApplicationJob
       "dead"
     else
       event.update!(attempts: attempt_number, last_error: error || "HTTP #{status}",
-                    next_attempt_at: Time.current + OutboundEvent::BACKOFF.call(attempt_number))
+                    next_attempt_at: Time.current + event.backoff_after(attempt_number))
       "retry"
     end
   end
