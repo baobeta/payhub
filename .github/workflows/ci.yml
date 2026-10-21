@@ -99,16 +99,20 @@ jobs:
 
       - name: rspec (shard ${{ matrix.shard }} of 3)
         run: |
-          files="$(bin/rspec-shard ${{ matrix.shard }} 3)"
-          echo "$files"
-          # shellcheck disable=SC2086 # one argument per file
-          bundle exec rspec $files
+          out="$(bin/rspec-shard ${{ matrix.shard }} 3)"
+          mapfile -t files <<< "$out"
+          [ -n "$out" ] && [ ${#files[@]} -gt 0 ] || { echo "empty shard"; exit 1; }
+          echo "::group::${#files[@]} spec files"
+          printf '%s\n' "${files[@]}"
+          echo "::endgroup::"
+          bundle exec rspec "${files[@]}"
 
   # The one required gate: green only when the static gates and every shard
-  # are. A skipped job would count as passing, hence always() and the check.
+  # are. A skipped job would count as passing, so it runs unless the workflow
+  # was cancelled and checks both results itself.
   check:
     needs: [static, rspec]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - name: Static gates and all rspec shards passed

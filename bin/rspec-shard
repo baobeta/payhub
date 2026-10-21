@@ -3,34 +3,38 @@
 
 # Splits the spec files into CI shards by their recorded run time.
 #   bin/rspec-shard 0 3                       the files of shard 0 of 3, one per line
-#   bin/rspec-shard --record tmp/rspec.json   rewrite spec/timings.json from a run of
+#   bin/rspec-shard --record tmp/rspec.json   update spec/timings.json with the files in
 #                                             bundle exec rspec -f json -o tmp/rspec.json
 #
 # Greedy: the slowest file goes to the shard with the least time so far, then the
 # next slowest, and so on. A file missing from spec/timings.json counts as the
 # median, so a new file lands on a light shard until the timings are recorded
-# again. Same files and timings, same split. It prints nothing unless the shards
-# together hold every spec file exactly once.
+# again. Same files and timings, same split. It fails, printing nothing, unless
+# the shards together hold every spec file exactly once and this one is not empty.
 require "json"
 
 root = File.expand_path("..", __dir__)
 timings_path = File.join(root, "spec/timings.json")
 
+usage = "usage: bin/rspec-shard SHARD TOTAL (0 <= SHARD < TOTAL) | bin/rspec-shard --record RSPEC_JSON"
+files = Dir.chdir(root) { Dir.glob("spec/**/*_spec.rb").sort }
+recorded = File.exist?(timings_path) ? JSON.parse(File.read(timings_path)).slice(*files) : {}
+
+# A partial run updates the files it ran and keeps the others' times.
 if ARGV[0] == "--record"
+  abort usage unless ARGV.size == 2
   times = Hash.new(0.0)
-  JSON.parse(File.read(ARGV.fetch(1))).fetch("examples").each do |example|
+  JSON.parse(File.read(ARGV[1])).fetch("examples").each do |example|
     times[example.fetch("file_path").delete_prefix("./")] += example.fetch("run_time")
   end
-  File.write(timings_path, "#{JSON.pretty_generate(times.sort.to_h { |file, time| [file, time.round(2)] })}\n")
+  merged = recorded.merge(times.transform_values { |time| time.round(2) }).slice(*files).sort.to_h
+  File.write(timings_path, "#{JSON.pretty_generate(merged)}\n")
   exit
 end
 
 shard = Integer(ARGV.fetch(0, ""), exception: false)
 total = Integer(ARGV.fetch(1, ""), exception: false)
-abort "usage: bin/rspec-shard SHARD TOTAL (0 <= SHARD < TOTAL)" unless shard && total && (0...total).cover?(shard)
-
-files = Dir.chdir(root) { Dir.glob("spec/**/*_spec.rb").sort }
-recorded = JSON.parse(File.read(timings_path)).slice(*files)
+abort usage unless ARGV.size == 2 && shard && total && (0...total).cover?(shard)
 known = recorded.values.sort
 median = known.empty? ? 1.0 : known[known.size / 2]
 
@@ -43,5 +47,8 @@ end
 
 all = shards.flat_map { |s| s[:files] }
 abort "bin/rspec-shard: the shards do not hold every spec file exactly once" unless all.sort == files
+
+# An empty list would make `bundle exec rspec` run the whole suite.
+abort "bin/rspec-shard: shard #{shard} of #{total} is empty" if shards[shard][:files].empty?
 
 puts shards[shard][:files].sort
