@@ -14,3 +14,7 @@ if (dir = ENV["PROMETHEUS_MULTIPROC_DIR"].presence)
   FileUtils.mkdir_p(dir)
   Prometheus::Client.config.data_store = Prometheus::Client::DataStores::DirectFileStore.new(dir:)
 end
+
+Rails.application.config.after_initialize do
+  Metrics.warn_if_per_process_in_production
+end

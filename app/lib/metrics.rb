@@ -63,6 +63,17 @@ module Metrics
       g.set(value, labels: labels)
     end
 
+    # Called at boot (config/initializers/prometheus.rb). With Puma workers
+    # and no file store, each scrape sees only the worker that answered it.
+    sig { params(web_concurrency: T.nilable(String), multiproc_dir: T.nilable(String)).void }
+    def warn_if_per_process_in_production(web_concurrency: ENV.fetch("WEB_CONCURRENCY", nil),
+                                          multiproc_dir: ENV.fetch("PROMETHEUS_MULTIPROC_DIR", nil))
+      return unless Rails.env.production? && Integer(web_concurrency || "0").positive? && multiproc_dir.blank?
+
+      Rails.logger.warn("PROMETHEUS_MULTIPROC_DIR is not set but WEB_CONCURRENCY is: metrics are per-process, " \
+                        "so each scrape sees only the Puma worker that answered it")
+    end
+
     sig { params(name: Symbol).returns(Prometheus::Client::Counter) }
     def counter(name)
       label_names = COUNTERS.fetch(name) { raise ArgumentError, "unknown metric #{name.inspect}" }

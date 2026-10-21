@@ -57,8 +57,9 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_SERVICE_NAME: payhub-web
       # Every process writes its metrics here and /metrics adds them up. One
-      # directory per service: web and worker share the bind mount, their PIDs
-      # overlap (each container counts from 1), and each is scraped on its own.
+      # directory per service: web and worker share the bind mount, and their
+      # PIDs overlap (each container counts from 1). Each will be scraped on
+      # its own once the worker serves /metrics (plan Tasks 5 and 6).
       PROMETHEUS_MULTIPROC_DIR: /rails/tmp/prometheus/web
     depends_on:
       db:

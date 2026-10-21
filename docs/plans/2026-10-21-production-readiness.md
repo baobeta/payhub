@@ -307,7 +307,7 @@ Today `prometheus-client` uses its default in-memory store. With Puma workers ea
 
 **Files:**
 - Create: `config/initializers/prometheus.rb`
-- Modify: `app/lib/metrics.rb`. Gauges need `store_settings: { aggregation: :max }`, because summing a "current value" across processes would be wrong.
+- Modify: `app/lib/metrics.rb`. Gauges need `store_settings: { aggregation: :most_recent }`. Summing a "current value" across processes would be wrong, and so would `:max`: `/metrics` sets the gauges from the database only in the Puma worker that answers, so a max would keep another worker's stale higher value until every worker had been scraped again. (Implemented with `:most_recent`; the snippets below show the original `:max` draft.)
 - Test: `spec/lib/metrics_spec.rb` (create)
 
 **Step 1: Failing test**
@@ -355,8 +355,10 @@ In `Metrics.gauge`, create the gauge with
 
 **Step 4:**
 - Run the spec and `spec/requests/observability_spec.rb`. Expected: PASS.
-- Add `PROMETHEUS_MULTIPROC_DIR: /rails/tmp/prometheus` to `&app_env` in `docker-compose.yml`.
-- Wipe the directory at boot: `rm -rf "$PROMETHEUS_MULTIPROC_DIR"` in `bin/docker-entrypoint` (Task 10 creates that file), and in the compose `web` command until then.
+- Set `PROMETHEUS_MULTIPROC_DIR` in `docker-compose.yml`, one directory per service: `/rails/tmp/prometheus/web` in `&app_env`, overridden to `/rails/tmp/prometheus/worker` for the worker. One shared directory would break: web and worker share the bind mount, their PIDs overlap (each container counts from 1, and files are named by PID), web's start-time wipe would delete the worker's files, and once Tasks 5 and 6 scrape both, worker values would be counted twice.
+- Wipe the directory at boot: `rm -rf "$PROMETHEUS_MULTIPROC_DIR"` in the compose `web` and `worker` commands, until `bin/docker-entrypoint` (Task 10) takes over.
+- The test suite always uses its own `tmp/prometheus-test-<pid>` (never the caller's directory), wiped before boot and at exit.
+- Production warns at boot when `WEB_CONCURRENCY` > 0 and `PROMETHEUS_MULTIPROC_DIR` is unset (`Metrics.warn_if_per_process_in_production`). The rules for production are in RUNBOOK, "Metrics across processes".
 
 **Step 5:** commit with the message `"Share Prometheus metrics across processes with the file store"`.
 
@@ -818,7 +820,7 @@ The current `Dockerfile` is a development image:
 
 **Files:**
 - Modify: `Dockerfile`. Turn it into a multi-stage build; the dev compose keeps working through a `dev` target.
-- Create: `bin/docker-entrypoint`. It wipes `$PROMETHEUS_MULTIPROC_DIR` and runs `db:prepare` only when `RUN_MIGRATIONS=true`.
+- Create: `bin/docker-entrypoint`. It wipes `$PROMETHEUS_MULTIPROC_DIR` and runs `db:prepare` only when `RUN_MIGRATIONS=true`. The wipe replaces the `rm -rf $$PROMETHEUS_MULTIPROC_DIR` in both compose commands (web and worker); remove it there.
 - Modify: `docker-compose.yml`. Set `build: { context: ., target: dev }` for web, vite and worker.
 - Modify: `.github/workflows/ci.yml`. Add an `image` job.
 
@@ -882,6 +884,8 @@ RUN bundle config unset without && bundle install && npm ci
 CMD ["bin/rails", "server", "-b", "0.0.0.0"]
 
 FROM base AS production
+# One metrics directory per container, on its own disk (no shared volume); the
+# dev compose keeps overriding it per service (/rails/tmp/prometheus/web, /worker).
 ENV RAILS_ENV=production RAILS_LOG_TO_STDOUT=1 PROMETHEUS_MULTIPROC_DIR=/rails/tmp/prometheus
 COPY --from=build /usr/local/bundle /usr/local/bundle
 COPY --from=build /rails /rails

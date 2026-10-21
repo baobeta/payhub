@@ -13,6 +13,8 @@ RSpec.describe Metrics do
   # 10). Runs against a private directory and registry so the values it leaves
   # behind never reach other examples.
   it "PR-4: a scrape sums counters and reports the latest gauge across processes" do
+    skip "needs fork" unless Process.respond_to?(:fork)
+
     original_store = Prometheus::Client.config.data_store
     Dir.mktmpdir("prometheus-fork") do |dir|
       Prometheus::Client.config.data_store = Prometheus::Client::DataStores::DirectFileStore.new(dir:)
@@ -25,14 +27,48 @@ RSpec.describe Metrics do
         described_class.gauge(:unknown_state_payments, 3)
         exit!(0)
       end
-      Process.wait(pid)
+      child_ok = Process.wait2(pid).last.success?
 
       text = Prometheus::Client::Formats::Text.marshal(Metrics::REGISTRY)
-      expect($CHILD_STATUS.success?).to be(true)
+      expect(child_ok).to be(true)
       expect(text).to include('payhub_webhook_duplicates_total{psp="nordpay"} 2.0')
       expect(text).to include("payhub_unknown_state_payments 3.0")
     end
   ensure
     Prometheus::Client.config.data_store = original_store
+  end
+
+  describe "PR-4: boot warning when Puma forks workers without the file store" do
+    before { allow(Rails.logger).to receive(:warn) }
+
+    def warn_with(concurrency:, dir:, production: true)
+      allow(Rails.env).to receive(:production?).and_return(production)
+      described_class.warn_if_per_process_in_production(web_concurrency: concurrency, multiproc_dir: dir)
+    end
+
+    it "PR-4: production with Puma workers and no directory logs one warning" do
+      warn_with(concurrency: "2", dir: nil)
+      expect(Rails.logger).to have_received(:warn).once.with(/PROMETHEUS_MULTIPROC_DIR.*per-process/)
+    end
+
+    it "PR-4: a blank directory counts as unset" do
+      warn_with(concurrency: "2", dir: " ")
+      expect(Rails.logger).to have_received(:warn).once
+    end
+
+    it "PR-4: a directory set logs nothing" do
+      warn_with(concurrency: "2", dir: "/rails/tmp/prometheus")
+      expect(Rails.logger).not_to have_received(:warn)
+    end
+
+    it "PR-4: a single process (no WEB_CONCURRENCY) logs nothing" do
+      warn_with(concurrency: nil, dir: nil)
+      expect(Rails.logger).not_to have_received(:warn)
+    end
+
+    it "PR-4: outside production nothing is logged" do
+      warn_with(concurrency: "2", dir: nil, production: false)
+      expect(Rails.logger).not_to have_received(:warn)
+    end
   end
 end

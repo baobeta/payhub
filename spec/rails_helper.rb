@@ -1,9 +1,13 @@
 require "spec_helper"
 ENV["RAILS_ENV"] ||= "test"
-# Metrics go to the file store, as in Docker Compose. Set before boot (the
-# initializer reads it) and wiped first so no earlier run's values remain.
-ENV["PROMETHEUS_MULTIPROC_DIR"] ||= File.expand_path("../tmp/prometheus-test", __dir__)
-FileUtils.rm_rf(ENV.fetch("PROMETHEUS_MULTIPROC_DIR"))
+# Metrics go to the file store, as in Docker Compose. The suite owns this path:
+# it always replaces the caller's value (inside the web container that is the
+# dev server's directory, which the wipe below would delete), one per run.
+# Set before boot (the initializer reads it), wiped before and after.
+prometheus_dir = File.expand_path("../tmp/prometheus-test-#{Process.pid}", __dir__)
+ENV["PROMETHEUS_MULTIPROC_DIR"] = prometheus_dir
+FileUtils.rm_rf(prometheus_dir)
+at_exit { FileUtils.rm_rf(prometheus_dir) }
 require_relative "../config/environment"
 abort("The Rails environment is running in production mode!") if Rails.env.production?
 require "rspec/rails"
