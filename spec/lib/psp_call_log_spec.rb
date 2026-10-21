@@ -86,6 +86,13 @@ RSpec.describe PspCallLog do
       %W[#{pan} tok_secret_1 cs_123 sk_nordpay_live].each { |secret| expect(lines.first).not_to include(secret) }
     end
 
+    it "TC-K1-4 masks a JSON secret quoted in the error text" do
+      record_card_call(error: 'Faraday::Error: unexpected token at {"client_secret":"abc123"}')
+
+      expect(JSON.parse(lines.sole)["error"]).to include('"client_secret":"[REDACTED]"')
+      expect(lines.sole).not_to include("abc123")
+    end
+
     it "counts a call made inside an open business transaction (DECISIONS #13: no PSP call under a lock)" do
       allow(Metrics).to receive(:increment).and_call_original
 

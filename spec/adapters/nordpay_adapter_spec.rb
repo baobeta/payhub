@@ -164,6 +164,22 @@ RSpec.describe NordpayAdapter do
     expect(PspCall.sole).to have_attributes(outcome: "unreachable", http_status: nil)
   end
 
+  it "TC-K1-4 logs only the class of a parse failure, never the body text it quotes" do
+    payment = create(:payment, psp_reference: Payment.generate_psp_reference)
+    lines = []
+    allow(Rails.logger).to receive(:info).and_wrap_original do |m, msg|
+      lines << msg.to_s if msg.to_s.include?('"psp_call"')
+      m.call(msg)
+    end
+    stub_request(:post, "http://nordpay.test/charges")
+      .to_return(status: 200, body: '{"client_secret":"abc123", broken', headers: { "Content-Type" => "application/json" })
+
+    expect { adapter.authorize(payment) }.to raise_error(Faraday::ParsingError)
+
+    expect(JSON.parse(lines.sole)["error"]).to eq("Faraday::ParsingError")
+    expect(lines.sole).not_to include("abc123")
+  end
+
   def json_reply(body, status: 200) = { status:, body: body.to_json, headers: { "Content-Type" => "application/json" } }
 
   describe "#capture" do

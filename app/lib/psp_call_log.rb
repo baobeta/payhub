@@ -15,6 +15,14 @@ module PspCallLog
   REFERENCE = /\bphr?_[a-f0-9]{24}\b/
   PSP_ID = /\bkp_[a-z0-9]+\b/ # KiriPay's own charge ids, which appear in its paths
 
+  # The error text for the log line and the row. A parse failure's message
+  # quotes the PSP's body, which can hold anything, so only its class is kept
+  # (TC-K1-4); every other message still goes through PspCallRedactor.
+  sig { params(error: Exception).returns(String) }
+  def self.describe_error(error)
+    error.is_a?(Faraday::ParsingError) ? error.class.name.to_s : "#{error.class}: #{error.message}"
+  end
+
   # params and headers are searched for our reference only and never stored
   # (headers can carry the PSP API key). NordPay sends the reference only in
   # X-Request-Id; KiriPay looks charges up by ?merchant_reference=.
