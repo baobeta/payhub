@@ -26,6 +26,7 @@ module Dashboard
                                            invited_by: current_user)
         InvitationMailer.invite(user, token).deliver_later
         audit!("team.invited", target: user, metadata: { "email" => user.email, "role" => role })
+        notify_owner("team.invited", detail: "#{user.email} as #{role}")
         render json: MemberSerializer.call(user), status: :created
       rescue ActiveRecord::RecordNotUnique
         raise ApiError.validation("email" => ["already belongs to a PayHub user"])

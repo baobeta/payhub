@@ -22,6 +22,7 @@ module Dashboard
 
         current_merchant.update!(webhook_url: url)
         audit!("webhook.endpoint_updated", metadata: { "url" => url })
+        notify_owner("webhook.endpoint_updated", detail: url)
         render json: endpoint_json
       end
 
@@ -35,6 +36,7 @@ module Dashboard
       def roll_secret
         fresh = current_merchant.rotate_webhook_secret!
         audit!("webhook.secret_rolled")
+        notify_owner("webhook.secret_rolled", detail: current_merchant.livemode ? "live mode" : "test mode")
         render json: endpoint_json.merge("secret" => fresh)
       end
 

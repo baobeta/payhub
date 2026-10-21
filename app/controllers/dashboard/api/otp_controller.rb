@@ -3,8 +3,10 @@
 
 module Dashboard
   module Api
-    # Enrolment right after accepting an invitation. The short-lived encrypted
-    # enrol cookie, set by InvitationsController#accept, is the credential.
+    # Enrolment right after accepting an invitation, or at the first sign-in
+    # after an admin reset the authenticator (M12). The short-lived encrypted
+    # enrol cookie, set by InvitationsController#accept or by the password
+    # step of SessionsController#create, is the credential.
     class OtpController < BaseController
       extend T::Sig
 
@@ -27,7 +29,9 @@ module Dashboard
           raise ApiError.unauthenticated(code: "invalid_code", message: "That code is not valid")
         end
 
-        user.update!(otp_enabled_at: Time.current, accepted_at: Time.current, invitation_digest: nil)
+        # Re-enrolling after an authenticator reset (M12) keeps the original
+        # acceptance time.
+        user.update!(otp_enabled_at: Time.current, accepted_at: user.accepted_at || Time.current, invitation_digest: nil)
         codes = RecoveryCode.regenerate!(user)
         session_row = Session.create!(principal: user, ip: request.remote_ip, user_agent: request.user_agent)
         cookies.delete(InvitationsController::ENROL_COOKIE, path: "/dashboard")

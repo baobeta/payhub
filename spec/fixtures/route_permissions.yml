@@ -32,6 +32,7 @@ dashboard/api/me#recovery_codes: public
 dashboard/api/me#show: public
 dashboard/api/members#destroy: team.manage
 dashboard/api/members#index: team.read
+dashboard/api/members#reset_otp: team.manage
 dashboard/api/members#update: team.manage
 dashboard/api/modes#update: public
 dashboard/api/otp#confirm: public

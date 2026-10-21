@@ -1,7 +1,26 @@
 # typed: true
 # frozen_string_literal: true
 
+# Security notices. The person hears about every change to how they sign in
+# (NIST 800-63B §4.1.2.1 / §4.2), and the owner hears about every change to
+# the account's keys, endpoint and team, with who made it (M12; Stripe).
 class SecurityMailer < ApplicationMailer
+  # The owner notice for each audited change: [subject, what the actor did].
+  ACCOUNT_CHANGES = T.let(
+    {
+      "api_key.created" => ["API key created", "created an API key"],
+      "api_key.rolled" => ["API key rolled", "rolled an API key"],
+      "api_key.revoked" => ["API key revoked", "revoked an API key"],
+      "team.invited" => ["Team member invited", "invited a team member"],
+      "team.removed" => ["Team member removed", "removed a team member"],
+      "team.role_changed" => ["Team member role changed", "changed a team member's role"],
+      "team.otp_reset" => ["Team member's authenticator reset", "reset a team member's authenticator"],
+      "webhook.endpoint_updated" => ["Webhook endpoint changed", "changed the webhook endpoint"],
+      "webhook.secret_rolled" => ["Webhook secret rolled", "rolled the webhook signing secret"]
+    }.freeze,
+    T::Hash[String, [String, String]]
+  )
+
   sig do
     params(
       principal: T.any(MerchantUser, Operator),
@@ -21,6 +40,41 @@ class SecurityMailer < ApplicationMailer
   def sessions_revoked(principal, count:)
     @count = count
     mail(to: principal.email, subject: "Your other PayHub sessions were signed out")
+  end
+
+  sig { params(principal: T.any(MerchantUser, Operator)).void }
+  def password_changed(principal)
+    mail(to: principal.email, subject: "Your PayHub password was changed")
+  end
+
+  sig { params(principal: T.any(MerchantUser, Operator)).void }
+  def recovery_codes_regenerated(principal)
+    mail(to: principal.email, subject: "New PayHub recovery codes were generated")
+  end
+
+  sig { params(principal: T.any(MerchantUser, Operator)).void }
+  def recovery_code_used(principal)
+    mail(to: principal.email, subject: "A PayHub recovery code was used")
+  end
+
+  sig { params(principal: T.any(MerchantUser, Operator), until_at: T.any(Time, ActiveSupport::TimeWithZone)).void }
+  def account_locked(principal, until_at:)
+    @until_at = until_at
+    mail(to: principal.email, subject: "Your PayHub account is locked")
+  end
+
+  sig { params(user: MerchantUser).void }
+  def otp_reset(user)
+    mail(to: user.email, subject: "Your PayHub authenticator was reset")
+  end
+
+  # To the owner. `actor` is an email: the record may be gone by delivery.
+  sig { params(owner: MerchantUser, event: String, actor: String, detail: T.nilable(String)).void }
+  def account_changed(owner, event:, actor:, detail: nil)
+    subject, @did = ACCOUNT_CHANGES.fetch(event)
+    @actor = actor
+    @detail = detail
+    mail(to: owner.email, subject: "PayHub: #{subject}")
   end
 
   sig { params(user: MerchantUser, from: String, to: String).void }

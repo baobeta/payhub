@@ -9,6 +9,24 @@ class SecurityMailer
   class << self
     sig do
       params(
+        owner: ::MerchantUser,
+        event: ::String,
+        actor: ::String,
+        detail: T.nilable(::String)
+      ).returns(::ActionMailer::MessageDelivery)
+    end
+    def account_changed(owner, event:, actor:, detail: T.unsafe(nil)); end
+
+    sig do
+      params(
+        principal: T.any(::MerchantUser, ::Operator),
+        until_at: T.any(::ActiveSupport::TimeWithZone, ::Time)
+      ).returns(::ActionMailer::MessageDelivery)
+    end
+    def account_locked(principal, until_at:); end
+
+    sig do
+      params(
         principal: T.any(::MerchantUser, ::Operator),
         ip: T.nilable(::String),
         user_agent: T.nilable(::String)
@@ -16,8 +34,20 @@ class SecurityMailer
     end
     def new_sign_in(principal, ip:, user_agent:); end
 
+    sig { params(user: ::MerchantUser).returns(::ActionMailer::MessageDelivery) }
+    def otp_reset(user); end
+
     sig { params(user: ::MerchantUser, from: ::String, to: ::String).returns(::ActionMailer::MessageDelivery) }
     def ownership_transferred(user, from:, to:); end
+
+    sig { params(principal: T.any(::MerchantUser, ::Operator)).returns(::ActionMailer::MessageDelivery) }
+    def password_changed(principal); end
+
+    sig { params(principal: T.any(::MerchantUser, ::Operator)).returns(::ActionMailer::MessageDelivery) }
+    def recovery_code_used(principal); end
+
+    sig { params(principal: T.any(::MerchantUser, ::Operator)).returns(::ActionMailer::MessageDelivery) }
+    def recovery_codes_regenerated(principal); end
 
     sig do
       params(

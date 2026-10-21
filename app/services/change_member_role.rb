@@ -31,4 +31,22 @@ module ChangeMemberRole
     end
     member
   end
+
+  # M12 (Stripe's admin 2FA reset): a fresh secret, no recovery codes, every
+  # session ended. Their next password sign-in enrols a new authenticator
+  # before it gets a session. The owner is never reset by someone else: a sole
+  # owner's lost authenticator is a support-assisted flow (out of scope).
+  sig { params(actor: MerchantUser, member: MerchantUser).returns(MerchantUser) }
+  def self.reset_otp(actor:, member:)
+    raise Refused, "You cannot reset your own authenticator" if member.id == actor.id
+    raise Refused, "The owner's authenticator cannot be reset by another member" if member.role == "owner" # authz-allow-role-check
+    raise Refused, "Only an active member who has signed in can be reset" unless member.active? && !member.pending_invitation?
+
+    MerchantUser.transaction do
+      member.update!(otp_secret: Otp.generate_secret, otp_enabled_at: nil, otp_last_used_step: nil)
+      RecoveryCode.where(principal: member).delete_all
+      member.revoke_sessions!
+    end
+    member
+  end
 end
