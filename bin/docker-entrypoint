@@ -1,4 +1,5 @@
 #!/bin/bash -e
+shopt -s extglob
 
 # Entrypoint for both image targets (Dockerfile): web, worker and vite.
 
@@ -9,9 +10,22 @@ fi
 
 # Metrics files from a previous start must go, or the restarted process keeps
 # their values (stale gauges, PID files reused). RUNBOOK "Metrics across processes".
+# Only a directory inside a tmp/ directory is wiped, so a typo such as "/" or
+# "/rails" refuses to start instead of deleting the app.
 if [ -n "${PROMETHEUS_MULTIPROC_DIR}" ]; then
-  mkdir -p "${PROMETHEUS_MULTIPROC_DIR}"
-  find "${PROMETHEUS_MULTIPROC_DIR}" -mindepth 1 -delete
+  metrics_dir="${PROMETHEUS_MULTIPROC_DIR%%+(/)}"
+  case "${metrics_dir}" in
+    */../* | */.. | ../* | ..) safe=no ;;
+    */tmp/?*) safe=yes ;;
+    *) safe=no ;;
+  esac
+  if [ "${safe}" != yes ]; then
+    echo "docker-entrypoint: refusing to wipe PROMETHEUS_MULTIPROC_DIR=${PROMETHEUS_MULTIPROC_DIR}:" \
+         "it must be a directory inside a tmp/ directory (e.g. /rails/tmp/prometheus)" >&2
+    exit 1
+  fi
+  mkdir -p "${metrics_dir}"
+  find "${metrics_dir}" -mindepth 1 -delete
 fi
 
 # Opt in, on one container per deploy (e.g. a release task), never on every
