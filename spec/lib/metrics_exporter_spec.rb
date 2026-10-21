@@ -70,10 +70,20 @@ RSpec.describe MetricsExporter do
     expect(Rails.logger).to have_received(:error).with(/Worker metrics disabled \(127\.0\.0\.1:abc\): ArgumentError/)
   end
 
-  it "PR-5: start! logs and returns nil for a host that does not resolve" do
+  it "PR-5: start! logs, closes any listeners and returns nil for a host that does not resolve" do
     allow(Rails.logger).to receive(:error)
+    server = nil
+    # No real DNS: a sandboxed resolver can be slow, or resolve anything.
+    allow(Puma::Server).to receive(:new).and_wrap_original do |original, *args, **kwargs|
+      server = original.call(*args, **kwargs)
+      allow(server).to receive(:add_tcp_listener).and_raise(SocketError, "getaddrinfo: nodename nor servname provided")
+      allow(server.binder).to receive(:close).and_call_original
+      server
+    end
 
     expect(described_class.start!(host: "no-such-host.invalid", port: "0")).to be_nil
-    expect(Rails.logger).to have_received(:error).with(/Worker metrics disabled \(no-such-host\.invalid:0\)/)
+    expect(Rails.logger).to have_received(:error)
+      .with(/Worker metrics disabled \(no-such-host\.invalid:0\): SocketError: getaddrinfo/)
+    expect(server.binder).to have_received(:close)
   end
 end

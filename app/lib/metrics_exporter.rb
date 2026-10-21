@@ -41,6 +41,7 @@ module MetricsExporter
   def self.start!(host: ENV.fetch("WORKER_METRICS_HOST", "0.0.0.0"),
                   port: ENV.fetch("WORKER_METRICS_PORT", "9394"),
                   token: ENV["METRICS_TOKEN"])
+    server = nil
     server = Puma::Server.new(rack_app(token:), nil,
                               min_threads: 0, max_threads: 2, force_shutdown_after: 5,
                               log_writer: Puma::LogWriter.null)
@@ -50,6 +51,13 @@ module MetricsExporter
     server
   rescue StandardError => e
     Rails.logger.error("Worker metrics disabled (#{host}:#{port}): #{e.class}: #{e.message}")
+    # A bind that fails part-way (one of a host's addresses taken, say) can
+    # leave the others open; close them so the port isn't held for nothing.
+    begin
+      server&.binder&.close
+    rescue StandardError
+      nil
+    end
     nil
   end
 end
