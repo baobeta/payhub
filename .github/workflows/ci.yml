@@ -153,6 +153,23 @@ jobs:
           test -n "$asset"
           curl -sf -o /dev/null "localhost:3000$asset"
 
+      # The default (RAILS_FORCE_SSL unset): /healthz still answers plain-HTTP
+      # probes, everything else redirects to HTTPS. A second web on port 3001.
+      - name: With force_ssl on, /healthz is not redirected
+        run: |
+          grep -v '^RAILS_FORCE_SSL=' "$RUNNER_TEMP/app.env" > "$RUNNER_TEMP/app-ssl.env"
+          docker run -d --name web-ssl --network host --env-file "$RUNNER_TEMP/app-ssl.env" -e PORT=3001 payhub:ci
+          for _ in $(seq 60); do
+            curl -sf localhost:3001/healthz >/dev/null && break
+            sleep 1
+          done
+          healthz="$(curl -s -o /dev/null -w '%{http_code}' localhost:3001/healthz)"
+          dashboard="$(curl -s -o /dev/null -w '%{http_code}' localhost:3001/dashboard)"
+          echo "healthz: $healthz, dashboard: $dashboard"
+          [ "$healthz" = 200 ] || docker logs web-ssl
+          docker rm -f web-ssl
+          test "$healthz" = 200 && test "$dashboard" = 301
+
       - name: Worker boots from the same image
         run: |
           docker run -d --name worker --network host --env-file "$RUNNER_TEMP/app.env" payhub:ci bundle exec sidekiq

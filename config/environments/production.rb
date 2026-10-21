@@ -41,8 +41,10 @@ Rails.application.configure do
   # running the image without TLS (CI's boot test); never set it behind a real host.
   config.force_ssl = ENV.fetch("RAILS_FORCE_SSL", "true") == "true"
 
-  # Skip http-to-https redirect for the default health check endpoint.
-  # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }
+  # Skip the http-to-https redirect for the health check: load balancers and
+  # orchestrators probe /healthz over plain HTTP. Everything else needs
+  # X-Forwarded-Proto: https from the load balancer, or it redirect-loops.
+  config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/healthz" } } }
 
   # Log to STDOUT by default
   config.logger = ActiveSupport::Logger.new(STDOUT)
