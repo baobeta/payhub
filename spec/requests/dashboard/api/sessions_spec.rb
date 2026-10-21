@@ -53,6 +53,19 @@ RSpec.describe "Dashboard sign-in", type: :request do
     expect(response).to have_http_status(:ok)
   end
 
+  it "TC-M4-1 refuses a recovery code used a second time" do
+    codes = RecoveryCode.regenerate!(user)
+    sign_in_password
+    post "/dashboard/api/session/recovery", params: { code: codes.first }.to_json, headers: ui_headers
+    expect(response).to have_http_status(:ok)
+    delete "/dashboard/api/session", headers: ui_headers
+
+    sign_in_password
+    post "/dashboard/api/session/recovery", params: { code: codes.first }.to_json, headers: ui_headers
+    expect(response).to have_http_status(:unauthorized)
+    expect(json_body.dig("error", "code")).to eq("invalid_code")
+  end
+
   it "steps up with a fresh code and records it" do
     session = sign_in_as(user)
     post "/dashboard/api/session/step_up", params: { code: }.to_json, headers: ui_headers

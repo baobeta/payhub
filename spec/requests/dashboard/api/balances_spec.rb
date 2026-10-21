@@ -37,4 +37,23 @@ RSpec.describe "Dashboard balance and settlements", type: :request do
     get "/dashboard/api/settlements"
     expect(response).to have_http_status(:forbidden)
   end
+
+  describe "TC-L5-1 the balance follows the session's mode" do
+    before do
+      Ledger.record_capture!(create(:payment, merchant:, state: "captured", amount_minor: 2500), 2500)
+      Ledger.record_capture!(create(:payment, merchant: merchant.test_twin!, state: "captured", amount_minor: 700), 700)
+    end
+
+    it "TC-L5-1 a live session sees only the live ledger" do
+      sign_in_as(viewer, livemode: true)
+      get "/dashboard/api/balance"
+      expect(json_body["data"]).to eq([{ "currency" => "EUR", "available_minor" => 2500, "reserved_minor" => 0 }])
+    end
+
+    it "TC-L5-1 a test session sees only the test twin's ledger" do
+      sign_in_as(viewer, livemode: false)
+      get "/dashboard/api/balance"
+      expect(json_body["data"]).to eq([{ "currency" => "EUR", "available_minor" => 700, "reserved_minor" => 0 }])
+    end
+  end
 end

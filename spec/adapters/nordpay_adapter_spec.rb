@@ -163,4 +163,140 @@ RSpec.describe NordpayAdapter do
     expect { adapter.authorize(payment) }.to raise_error(Faraday::SSLError)
     expect(PspCall.sole).to have_attributes(outcome: "unreachable", http_status: nil)
   end
+
+  def json_reply(body, status: 200) = { status:, body: body.to_json, headers: { "Content-Type" => "application/json" } }
+
+  describe "#capture" do
+    it "TC-COV-NP-1 posts the amount and maps the charge the PSP returns" do
+      stub = stub_request(:post, "http://nordpay.test/charges/ph_abc123/capture")
+             .with(body: { "amount_minor" => 1000 })
+             .to_return(json_reply(charge.merge("status" => "authorized", "captured_minor" => 1000)))
+
+      result = adapter.capture(payment, 1000)
+
+      expect(stub).to have_been_requested
+      expect(result.status).to eq(PspAdapter::Result::Status::Authorized)
+      expect(result.raw["captured_minor"]).to eq(1000)
+    end
+
+    it "TC-COV-NP-2 answers NotFound when the PSP has no such charge" do
+      stub_request(:post, "http://nordpay.test/charges/ph_abc123/capture").to_return(json_reply({}, status: 404))
+
+      expect(adapter.capture(payment, 1000)).to be_not_found
+    end
+  end
+
+  describe "#cancel" do
+    it "TC-COV-NP-3 voids the charge and maps canceled" do
+      stub_request(:post, "http://nordpay.test/charges/ph_abc123/void").to_return(json_reply(charge.merge("status" => "canceled")))
+
+      expect(adapter.cancel(payment).status).to eq(PspAdapter::Result::Status::Canceled)
+    end
+
+    it "TC-COV-NP-4 answers NotFound when the PSP has no such charge" do
+      stub_request(:post, "http://nordpay.test/charges/ph_abc123/void").to_return(json_reply({}, status: 404))
+
+      expect(adapter.cancel(payment)).to be_not_found
+    end
+  end
+
+  it "TC-COV-NP-5 refuses to guess at a charge status it does not know" do
+    stub_request(:get, "http://nordpay.test/charges/ph_abc123").to_return(json_reply(charge.merge("status" => "on_hold")))
+
+    expect { adapter.fetch("ph_abc123") }.to raise_error(PspAdapter::Rejected, /unknown charge status "on_hold"/)
+  end
+
+  describe "#refund" do
+    let(:refund) { create(:refund, payment:, amount_minor: 700) }
+    let(:refund_body) do
+      { "id" => "re_1", "reference" => refund.psp_reference, "status" => "succeeded", "amount_minor" => 700,
+        "created_at" => "2026-01-01T10:05:00.000Z" }
+    end
+
+    def stub_refund(reply)
+      stub_request(:post, "http://nordpay.test/charges/ph_abc123/refunds")
+        .with(headers: { "X-Request-Id" => refund.psp_reference }, body: { "amount_minor" => 700 })
+        .to_return(reply)
+    end
+
+    { "succeeded" => :Succeeded, "failed" => :Failed, "pending" => :Pending }.each do |wire, status|
+      it "TC-COV-NP-6 keys the refund by our reference and maps #{wire}" do
+        stub_refund(json_reply(refund_body.merge("status" => wire)))
+
+        result = adapter.refund(refund)
+
+        expect(result.status).to eq(PspAdapter::RefundResult::Status.const_get(status))
+        expect(result).to have_attributes(psp_reference: refund.psp_reference, psp_refund_id: "re_1")
+      end
+    end
+
+    it "TC-COV-NP-7 carries the PSP's failure code on a failed refund" do
+      stub_refund(json_reply(refund_body.merge("status" => "failed", "code" => "exceeds_captured")))
+
+      expect(adapter.refund(refund).failure_code).to eq("exceeds_captured")
+    end
+
+    it "TC-COV-NP-8 answers NotFound when the charge is unknown to the PSP" do
+      stub_refund(json_reply({}, status: 404))
+
+      expect(adapter.refund(refund).status).to eq(PspAdapter::RefundResult::Status::NotFound)
+    end
+
+    it "TC-COV-NP-9 refuses to guess at a refund status it does not know" do
+      stub_refund(json_reply(refund_body.merge("status" => "reversed")))
+
+      expect { adapter.refund(refund) }.to raise_error(PspAdapter::Rejected, /unknown refund status "reversed"/)
+    end
+  end
+
+  describe "#fetch_refund" do
+    it "TC-COV-NP-10 reads the refund by our reference" do
+      stub_request(:get, "http://nordpay.test/refunds/phr_1")
+        .to_return(json_reply({ "id" => "re_1", "reference" => "phr_1", "status" => "succeeded",
+                                "created_at" => "2026-01-01T10:05:00.000Z" }))
+
+      expect(adapter.fetch_refund("phr_1").status).to eq(PspAdapter::RefundResult::Status::Succeeded)
+    end
+
+    it "TC-COV-NP-11 answers NotFound for a refund the PSP never recorded" do
+      stub_request(:get, "http://nordpay.test/refunds/phr_1").to_return(json_reply({}, status: 404))
+
+      expect(adapter.fetch_refund("phr_1").status).to eq(PspAdapter::RefundResult::Status::NotFound)
+    end
+  end
+
+  describe "#parse_webhook" do
+    def event(data) = { "id" => "evt_1", "type" => "charge.updated", "created_at" => "2026-01-01T10:01:00.000Z", "data" => data }
+
+    { "canceled" => :Canceled, "declined" => :Declined, "authorized" => :Authorized }.each do |wire, status|
+      it "TC-COV-NP-12 maps a #{wire} charge" do
+        parsed = adapter.parse_webhook(event(charge.merge("status" => wire)))
+        expect(parsed.status).to eq(PspAdapter::Result::Status.const_get(status))
+      end
+    end
+
+    it "TC-COV-NP-13 leaves the status empty for one it does not know" do
+      expect(adapter.parse_webhook(event(charge.merge("status" => "on_hold"))).status).to be_nil
+    end
+
+    it "TC-COV-NP-14 reads captured_minor as an integer" do
+      expect(adapter.parse_webhook(event(charge.merge("captured_minor" => "1500"))).captured_minor).to eq(1500)
+    end
+
+    it "TC-COV-NP-15 calls an event without data malformed" do
+      expect { adapter.parse_webhook({ "id" => "evt_1" }) }.to raise_error(PspAdapter::MalformedWebhook)
+    end
+
+    it "TC-COV-NP-15 calls an event with an unreadable timestamp malformed" do
+      expect { adapter.parse_webhook(event(charge).merge("created_at" => "yesterday")) }
+        .to raise_error(PspAdapter::MalformedWebhook)
+    end
+
+    it "TC-COV-NP-16 calls a correctly signed body that is not JSON malformed" do
+      body = "not json"
+      headers = { "X-Nordpay-Signature" => OpenSSL::HMAC.hexdigest("SHA256", "np_whsec_test", body) }
+
+      expect { adapter.verify_webhook(body, headers) }.to raise_error(PspAdapter::MalformedWebhook)
+    end
+  end
 end
