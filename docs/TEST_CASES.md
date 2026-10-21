@@ -717,3 +717,146 @@ These were found by reviewing the merged fixes. Each one was written to fail fir
 - **TC-D5-3:** an old event whose payment *does* exist is left to Sidekiq's retries; it isn't closed.
 - **TC-B3-1:** a PSP that answers canceled or not-found after the timeout also fails the payment as `customer_action_expired`.
 - **TC-A4-1:** asserts the 422, no payment, and no stored key. That last part became true with TC-A4-2.
+
+---
+
+## 5. Remaining use cases, built to market practice (2026-10-21)
+
+Research sources are cited per item. Each one says what PayHub does and why. Out of scope, recorded on purpose:
+- one identity in several merchants at once (Stripe's model; needs a data-model change)
+- geo-IP location in the session list
+- hash-chained audit logs
+- a support-assisted reset for a sole owner's lost authenticator (a two-person ops flow, as at Stripe and GitHub)
+
+### M7. See and end your other sessions
+**Market:**
+- [ASVS 5.0 7.5.2](https://raw.githubusercontent.com/OWASP/ASVS/master/5.0/en/0x16-V7-Session-Management.md): view and end any or all sessions, after re-authentication.
+- [GitHub sessions](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/viewing-and-managing-your-sessions): per-session revoke.
+- [Stripe](https://support.stripe.com/questions/signout-stripe-sessions): "sign out all other sessions".
+
+**PayHub:** `GET /dashboard/api/sessions` lists this user's live sessions with:
+- browser and OS parsed from the user agent
+- IP
+- `created_at` and `last_active_at`
+- a `current` flag
+
+`DELETE /dashboard/api/sessions/:id` ends one session, and `POST /dashboard/api/sessions/revoke_others` ends all others. Both need step-up and both are audited; revoke-others also emails the user. The ops console gets the same endpoints.
+
+- **TC-M7-1:** Two sessions for one user. GET returns both, with only the requesting one `current: true`, and never another user's sessions.
+- **TC-M7-2:** DELETE the other session, with step-up. That session's next request gets 401. Audit `session.revoked`.
+- **TC-M7-3:** DELETE without step-up gets 401 `step_up_required`. Deleting another user's session gets 404.
+- **TC-M7-4:** `revoke_others` ends every session except the current one. Audit, plus a `SecurityMailer.sessions_revoked` email.
+- **TC-M7-5:** The same endpoints work for operators under `/ops/api/sessions`.
+
+### M11. Resend, revoke and re-invite team members
+**Market:**
+- [Stripe](https://docs.stripe.com/get-started/account/teams): invites expire after 10 days.
+- [Slack](https://slack.com/intl/en-gb/help/articles/360060363633-Manage-pending-workspace-invitations): resend reactivates an invite; a deleted invite can't be accepted.
+- [GitHub](https://docs.github.com/en/organizations/managing-membership-in-your-organization/inviting-users-to-join-your-organization): former members can be re-invited.
+
+**PayHub:**
+- Keep the 10-day expiry, matching Stripe.
+- `POST /dashboard/api/invitations/:member_id/resend` rotates the token: the old link dies and the expiry resets. It needs step-up, is audited, and is capped at 5 resends per invite per day.
+- Revoking a pending invite uses the existing member remove. The old link then shows not found.
+- A removed member's email can be invited again. Email uniqueness now applies to **active** members only. The new invite is a new row; the old row and its audit history stay.
+
+- **TC-M11-1:** Resend gives a new token. The old token returns 404, the new one works, `invitation_expires_at` is now + 10 days, and the mailer is called.
+- **TC-M11-2:** Resend on an accepted member gets 409 `invalid_state`. The 6th resend within 24h gets 429 `resend_limit`.
+- **TC-M11-3:** A revoked (removed) pending invite's link returns 404.
+- **TC-M11-4:** A member is removed, then the same email is invited again (any case) and gets 201 with a new row. The old disabled row is unchanged.
+- **TC-M11-5:** Inviting an email that belongs to an **active** user anywhere gets 422 `email already belongs to a PayHub user`.
+
+### M12. Security emails and resetting a member's authenticator
+**Market:**
+- [NIST 800-63B §4.1.2.1 / §4.2](https://pages.nist.gov/800-63-4/sp800-63b.html): notify on authenticator binding and on recovery.
+- [Stripe 2FA recovery](https://support.stripe.com/questions/what-do-i-do-if-i-ve-lost-access-to-my-two-step-verification-codes): an admin resets a member's 2FA.
+- [Stripe security](https://docs.stripe.com/security): new-device sign-in email.
+
+**PayHub:**
+- **Mandatory emails to the user:** password changed, recovery codes regenerated, a recovery code used, account locked, authenticator reset.
+- **Emails to the owner:** API key created, rolled or revoked; member added, removed or role changed; webhook endpoint or secret changed; a member's authenticator reset.
+- **Resetting a member's authenticator:** `POST /dashboard/api/members/:id/reset_otp`. It needs `team.manage` and step-up. An admin can't reset an owner, and nobody can reset themselves. A reset:
+  - clears the authenticator and recovery codes
+  - ends all of that user's sessions
+  - makes their next password sign-in answer `{next: "enrol_otp"}`, so they enrol a new authenticator before getting a session
+
+- **TC-M12-1:** Each user event sends exactly one email to the user: password changed, recovery codes regenerated, a recovery code used, account locked.
+- **TC-M12-2:** Each owner event emails the owner and names the actor: key created, rolled or revoked; member removed; role changed; webhook URL or secret changed.
+- **TC-M12-3:** An admin resets a developer's authenticator. The developer's sessions are revoked, and their recovery codes and `otp_enabled_at` are cleared. Their next sign-in gets `next: enrol_otp`, and enrolling issues a session. The user and the owner are emailed, plus an audit row.
+- **TC-M12-4:** An admin resetting the owner gets 403 or 409. Resetting yourself gets 409. Without step-up you get 401.
+
+### L4 / M10. A test twin and the one owner, held by the database
+**Market:**
+- [Stripe sandboxes](https://docs.stripe.com/sandboxes): isolated, and they don't nest.
+- [Stripe owner](https://support.stripe.com/questions/change-account-owner): exactly one owner, changed only by transfer.
+
+**PayHub:** a trigger refuses a twin whose parent isn't live. A deferred constraint trigger refuses any commit that leaves a live merchant with active members but no active owner. Ownership transfer runs in one transaction, so it still passes.
+
+- **TC-L4-2:** Inserting a merchant whose `live_merchant_id` points at a test twin is refused by the DB.
+- **TC-M10-2:** Disabling, or changing the role of, the only active owner with raw SQL fails at commit. `TransferOwnership` still succeeds.
+
+### C6 / N13. Payments stuck before an outcome reach ops
+**Market:**
+- [Adyen](https://docs.adyen.com/online-payments/build-your-integration/payment-result-codes) and [Primer](https://primer.io/docs/concepts/decline-codes/timeouts): never auto-fail on a timeout; poll, then hand to operations.
+
+**PayHub:** the ops queue adds `stuck_pending`, payments still `pending` after 15 minutes, oldest first. The existing sweeper alert stays.
+
+- **TC-C6-1:** A `pending` payment created 20 minutes ago is listed. One created 2 minutes ago is not.
+
+### N6. A submitted proposal can't be edited
+**Market:**
+- [Stripe Approvals](https://docs.stripe.com/account/approvals): requests are approved as captured, expire after 14 days, and can't be self-approved.
+
+**PayHub:**
+- The DB trigger also freezes `reason_code`, `reason_text` and `case_reference`.
+- Pending proposals expire after 14 days. A new `expired` state is set by a daily job, audited, and listed as expired.
+
+- **TC-N6-2:** A raw UPDATE of `reason_text` on a submitted proposal is refused by the DB.
+- **TC-N6-3:** A pending proposal created 15 days ago becomes `expired` after the job runs, and approving it then gets 409. One created 13 days ago is untouched.
+
+### L6. Rate limits per merchant, with separate live and test budgets
+**Market:**
+- [Stripe rate limits](https://docs.stripe.com/rate-limits): per account, with live and sandbox budgets of 100 and 25 per second, and a `Stripe-Rate-Limited-Reason` header.
+- [Checkout.com](https://www.checkout.com/docs/developer-resources/api/api-rate-limits): limits are account-wide, not per credential.
+
+**PayHub:**
+- The `/v1` budget is counted per merchant across all its keys: 300/min live and 75/min test, the same 4:1 ratio as Stripe.
+- A 429 carries `Retry-After` and `PayHub-Rate-Limited-Reason: global-rate`.
+- The dashboard and ops API are throttled per session at 300/min.
+
+- **TC-L6-1:** Two live keys of one merchant share one budget: request 301 from the second key gets 429.
+- **TC-L6-2:** The test key's budget is separate and lower, so request 76 gets 429 while live is unaffected.
+- **TC-L6-3:** The 429 has `Retry-After` and `PayHub-Rate-Limited-Reason: global-rate`.
+- **TC-L6-4:** A signed-in dashboard session above 300/min gets 429. Another merchant's session is unaffected.
+
+### H8. Shop letters: documented guarantees, and a sequence number
+**Market:**
+- [Stripe webhooks](https://docs.stripe.com/webhooks): at-least-once, no ordering guarantee, dedupe by event id, retries for about 3 days.
+- [Checkout.com](https://www.checkout.com/docs/developer-resources/webhooks): at-least-once.
+- [Adyen](https://docs.adyen.com/development-resources/webhooks/handle-webhook-events): a `sequenceNumber`; retries for up to 30 days.
+
+**PayHub:**
+- The README documents at-least-once delivery, no ordering, and dedupe on `id`.
+- The envelope gains `sequence`, a counter per payment that only goes up, so a merchant can drop older updates.
+- The retry schedule stretches to about 3 days: 1m, 5m, 30m, 2h, 8h, 24h, 36h.
+
+- **TC-H8-1:** Three events for one payment carry `sequence` 1, 2 and 3 in creation order. Events for another payment start at 1.
+- **TC-H8-2:** The backoff for attempts 1–7 is 1m, 5m, 30m, 2h, 8h, 24h, 36h. An event is dead after attempt 8, about 70.6h after the first attempt.
+
+### J5. A PSP with no settlement report is still checked
+**Market:**
+- [Stripe payout reconciliation](https://docs.stripe.com/payouts/reconciliation): with no report, reconcile from transaction history and flag aged items.
+
+**PayHub:** for PSPs with no report, the settlement job logs `settlement.no_report` and still runs the unsettled-receivable check, flagging captures older than 3 days.
+
+- **TC-J5-1:** For Kiripay, with no report, the job logs `settlement.no_report` and flags a Kiripay capture older than 3 days as `settlement.unsettled_capture`.
+
+### K1. Every PSP call leaves a record, even when the transaction rolls back
+**Market:**
+- [PCI DSS v4.0 10.2.1, 10.3, 10.7.2](https://learn.microsoft.com/en-us/entra/standards/pci-requirement-10): complete logs, protected, and an alert when logging fails.
+
+**PayHub:**
+- Every PSP call also writes one redacted, structured `psp_call` log line, which is shipped off the box and survives a rolled-back row.
+- A PSP call made inside an open business transaction increments `psp_call_in_transaction`, because it breaks DECISIONS #13.
+
+- **TC-K1-3:** A recorded PSP call inside a transaction that then rolls back loses the row, but its `psp_call` log line was written, redacted, with no PAN or secrets.
