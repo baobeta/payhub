@@ -121,8 +121,11 @@ DECLARE
   m record;
 BEGIN
   FOR m IN
-    SELECT roleid::regrole::text AS role, grantor::regrole::text AS grantor
-    FROM pg_auth_members WHERE member = 'payhub_app'::regrole
+    SELECT r.rolname AS role, g.rolname AS grantor
+    FROM pg_auth_members am
+    JOIN pg_roles r ON r.oid = am.roleid
+    JOIN pg_roles g ON g.oid = am.grantor
+    WHERE am.member = 'payhub_app'::regrole
   LOOP
     EXECUTE format('REVOKE %I FROM payhub_app GRANTED BY %I CASCADE', m.role, m.grantor);
   END LOOP;

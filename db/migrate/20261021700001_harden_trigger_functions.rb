@@ -27,7 +27,7 @@ class HardenTriggerFunctions < ActiveRecord::Migration[8.1]
   def up
     safety_assured do # ALTER FUNCTION and CREATE OR REPLACE FUNCTION take no table locks
       execute <<~SQL
-        CREATE OR REPLACE FUNCTION append_only_guard() RETURNS trigger
+        CREATE OR REPLACE FUNCTION public.append_only_guard() RETURNS trigger
           LANGUAGE plpgsql AS $$
         BEGIN
           IF TG_OP = 'DELETE' AND TG_NARGS > 0
@@ -38,7 +38,7 @@ class HardenTriggerFunctions < ActiveRecord::Migration[8.1]
         END
         $$;
 
-        CREATE OR REPLACE FUNCTION stamp_created_at() RETURNS trigger
+        CREATE OR REPLACE FUNCTION public.stamp_created_at() RETURNS trigger
           LANGUAGE plpgsql AS $$
         BEGIN
           NEW.created_at := now() AT TIME ZONE 'UTC';
@@ -54,7 +54,7 @@ class HardenTriggerFunctions < ActiveRecord::Migration[8.1]
     safety_assured do
       FUNCTIONS.each { |f| execute "ALTER FUNCTION public.#{f} RESET search_path" }
       execute <<~SQL
-        CREATE OR REPLACE FUNCTION append_only_guard() RETURNS trigger
+        CREATE OR REPLACE FUNCTION public.append_only_guard() RETURNS trigger
           LANGUAGE plpgsql AS $$
         BEGIN
           IF TG_OP = 'DELETE' AND TG_NARGS > 0
@@ -65,7 +65,7 @@ class HardenTriggerFunctions < ActiveRecord::Migration[8.1]
         END
         $$;
 
-        CREATE OR REPLACE FUNCTION stamp_created_at() RETURNS trigger
+        CREATE OR REPLACE FUNCTION public.stamp_created_at() RETURNS trigger
           LANGUAGE plpgsql AS $$
         BEGIN
           NEW.created_at := now();
