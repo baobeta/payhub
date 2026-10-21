@@ -4,6 +4,11 @@ RSpec.describe "Rate limiting (Rack::Attack)", type: :request do
   let!(:merchant_and_key) { create_merchant_with_key }
   let(:key) { merchant_and_key.last }
 
+  # Rack::Attack counts per clock-minute window (Time.now.to_i / 60), so a
+  # burst that straddled a minute boundary would reset its count and never see
+  # the 429. Frozen mid-minute, every example's burst lands in one window.
+  around { |ex| travel_to(Time.zone.parse("2026-01-01 10:00:20")) { ex.run } }
+
   before { Rack::Attack.cache.store.clear }
 
   it "returns 429 with Retry-After and the standard error shape once a merchant exceeds the limit" do
@@ -161,13 +166,11 @@ RSpec.describe "Rate limiting (Rack::Attack)", type: :request do
   end
 
   it "throttles sign-in attempts per IP across accounts" do
-    # Each attempt runs a real bcrypt comparison (~0.25s), so 21 of them could
-    # straddle a one-minute throttle window; frozen time keeps them in one.
-    freeze_time do
-      21.times do |i|
-        post "/dashboard/api/session", params: { email: "user#{i}@example.com", password: "x" * 12 }.to_json,
-                                       headers: { "Content-Type" => "application/json" }
-      end
+    # Each attempt runs a real bcrypt comparison (~0.25s), so 21 of them take
+    # several seconds; the file-level frozen clock keeps them in one window.
+    21.times do |i|
+      post "/dashboard/api/session", params: { email: "user#{i}@example.com", password: "x" * 12 }.to_json,
+                                     headers: { "Content-Type" => "application/json" }
     end
     expect(response).to have_http_status(:too_many_requests)
   end
