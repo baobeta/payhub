@@ -4,6 +4,18 @@ require "rails_helper"
 require "prometheus/client/formats/text"
 
 RSpec.describe Metrics do
+  # Runs the block in a forked child and returns whether it succeeded. The
+  # child always leaves through exit!, even when the block raises, so it never
+  # runs the at_exit hooks it inherited (RSpec's, SimpleCov's).
+  def in_child
+    Process.wait2(fork do
+      yield
+      exit!(0)
+    rescue Exception # rubocop:disable Lint/RescueException
+      exit!(1)
+    end).last.success?
+  end
+
   it "PR-4: the registry uses the file store when PROMETHEUS_MULTIPROC_DIR is set" do
     expect(Prometheus::Client.config.data_store).to be_a(Prometheus::Client::DataStores::DirectFileStore)
   end
@@ -22,12 +34,10 @@ RSpec.describe Metrics do
 
       described_class.increment(:webhook_duplicates, psp: "nordpay")
       described_class.gauge(:unknown_state_payments, 7)
-      pid = fork do
+      child_ok = in_child do
         described_class.increment(:webhook_duplicates, psp: "nordpay")
         described_class.gauge(:unknown_state_payments, 3)
-        exit!(0)
       end
-      child_ok = Process.wait2(pid).last.success?
 
       text = Prometheus::Client::Formats::Text.marshal(Metrics::REGISTRY)
       expect(child_ok).to be(true)
@@ -49,13 +59,6 @@ RSpec.describe Metrics do
       end
     ensure
       Prometheus::Client.config.data_store = original_store
-    end
-
-    def in_child(&)
-      Process.wait2(fork do
-        yield
-        exit!(0)
-      end).last.success?
     end
 
     def scrape = Prometheus::Client::Formats::Text.marshal(Metrics::REGISTRY)
