@@ -272,7 +272,7 @@ A `422` lists **every** failing field under `details`.
 | Same key, different body | `422 idempotency_error` |
 | Same key, first request still running | `409`, retriable |
 
-**Rate limit.** 300 requests per minute per API key. Over the limit, the API returns `429` with `Retry-After`.
+**Rate limits.** Counted per merchant across all of its API keys, with separate budgets: 300 requests per minute live, 75 test (Stripe's 4:1 live-to-sandbox ratio). Adding keys does not add throughput. A request whose key matches no active key is counted per IP at 30 per minute. The dashboard and ops APIs allow 300 requests per minute per signed-in session. Over a limit, the API returns `429` with `Retry-After` and `PayHub-Rate-Limited-Reason: global-rate`. Override with `RATE_LIMIT_PER_MINUTE` and `RATE_LIMIT_TEST_PER_MINUTE`.
 
 ## How it works
 
