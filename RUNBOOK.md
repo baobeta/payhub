@@ -156,6 +156,35 @@ Why each rule matters:
 - Files are named by PID, and container PIDs repeat (each container counts from 1). A new process that gets an old PID reopens that file and carries on from its counter totals; two containers sharing a directory would write to the same file.
 - Files of processes that have exited stay (their counts are still part of the totals) until the next wipe; that is expected, not a leak.
 
+## Database roles (planned work, before the first deploy with them)
+
+The append-only triggers (ledger, audit log, PSP call log, payment history) only hold if the role the app connects as cannot drop or disable them. `db/roles.sql` creates two roles:
+
+| Role | Used by | Can |
+| --- | --- | --- |
+| `payhub_app` | Web (Puma) and worker (Sidekiq): their `DATABASE_URL` | Read and write rows (`SELECT`, `INSERT`, `UPDATE`, `DELETE`; sequences). Owns nothing and is no superuser, so it cannot `ALTER`, `DISABLE` or `DROP` a trigger (`must be owner of table …`), skip them with `SET session_replication_role = replica` (`permission denied to set parameter`), `TRUNCATE`, create tables or grant anything. The triggers still refuse its `UPDATE` and `DELETE` on the append-only tables, apart from what each one lets through (the purge of audit and PSP-call rows older than 12 months; clearing `payment_transitions.most_recent`). |
+| `payhub_owner` | The migration step only: the one container with `RUN_MIGRATIONS=true`, or the `bin/rails db:prepare` release task | Owns every table, sequence and function in `public`; creates and alters them. |
+
+The entrypoint and Rails read only `DATABASE_URL`, so the release container gets the owner's URL and nothing else does. With the README's commands:
+
+```bash
+docker run --rm --env-file production.env -e DATABASE_URL="$OWNER_DATABASE_URL" payhub bin/rails db:prepare
+docker run --env-file production.env -p 3000:3000 payhub   # production.env: DATABASE_URL=postgres://payhub_app:…@…/payhub_production
+```
+
+Never put the owner URL in the web or worker environment. Development and the test suite keep using the Compose superuser (`payhub`); the suite's cleanup TRUNCATEs and switches to replica mode, which `payhub_app` is refused. `spec/db/roles_spec.rb` checks the roles themselves.
+
+**Once per database** (production, staging), as a superuser:
+
+1. `psql "$SUPERUSER_URL" -v ON_ERROR_STOP=1 -f db/roles.sql`, connected to that database. It creates both roles, makes `payhub_owner` the owner of every existing table, sequence and function in `public` (whoever ran the migrations until now, so this is the one-time ownership transfer), gives `payhub_owner` `CREATE` on the database and the schema, and grants `payhub_app` its rows. It is idempotent: running it again changes nothing.
+2. Set both passwords from the secrets manager, never in the repo: `\password payhub_app` and `\password payhub_owner` in psql (keeps them out of shell history), or `ALTER ROLE payhub_app PASSWORD '…'`.
+3. Point the release container at `payhub_owner` and web and worker at `payhub_app`, then deploy.
+4. Check from a web container: `bin/rails runner 'p ActiveRecord::Base.connection.select_value("SELECT current_user")'` prints `"payhub_app"`; `ALTER TABLE ledger_entries DISABLE TRIGGER trg_ledger_entries_immutable` as that user fails with `must be owner of table ledger_entries`.
+
+**When to rerun `db/roles.sql`.** Not after normal deploys: tables and sequences that `payhub_owner` creates are granted to `payhub_app` automatically (`ALTER DEFAULT PRIVILEGES FOR ROLE payhub_owner`). Rerun it when an object was created by any other role (a migration run with the old or superuser URL, a hand-made table): until then `payhub_app` gets `permission denied for table …` on it, and the owner cannot alter it. Rerun it, too, for each new database: grants are per database, the roles are not.
+
+On a managed service whose admin user is not a true superuser (RDS, Cloud SQL), the file is untested: handing objects to `payhub_owner` needs the admin to be a member first (`GRANT payhub_owner TO <admin>`), and changing role attributes may be refused.
+
 ## A merchant reports 429s (not a page — a support ticket)
 
 The `/v1` budget is per merchant, shared by all its keys: 300/min live, 75/min test (`config/initializers/rack_attack.rb`). Spreading traffic over more keys does not help them; batching or backing off on `Retry-After` does. `PayHub-Rate-Limited-Reason: global-rate` means the merchant's whole budget; `endpoint-rate` means the sign-in throttle (20/min per IP). Raising the budget for everyone is `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_TEST_PER_MINUTE` on web and a restart; there is no per-merchant override. A revoked key keeps counting against its merchant for up to a minute (the key lookup is cached), then falls to the 30/min per-IP budget. A bearer string that is not shaped like a PayHub key (`sk_live_`/`sk_test_` + 16-96 letters or digits) is never looked up, and a key that is not found is not cached; both count against the 30/min per-IP budget.
@@ -322,6 +351,7 @@ Grafana evaluates these every minute from ClickHouse (`observability/grafana/pro
 | What did the PSP tell us? | `inbound_events` (`signature_valid=false` rows were rejected, never processed) |
 | What did we tell the merchant? | `outbound_events` + `outbound_delivery_attempts`; `POST /v1/events/:id/redeliver` for dead ones. Retries back off 1m, 5m, 30m, 2h, 8h, 24h, 36h; dead after attempt 8 (~70.6h). A redelivery gets a fresh 8-attempt budget on the same schedule; attempt numbers continue from where they stopped |
 | Backlog right now | `/metrics`: `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead` |
+| Which database user? | Web and worker: `payhub_app` (rows only; cannot touch the triggers). The migration container only: `payhub_owner`, via its own `DATABASE_URL`. `permission denied for table …` after a deploy: something was created by another role; rerun `db/roles.sql` as a superuser. [Database roles](#database-roles-planned-work-before-the-first-deploy-with-them) |
 | Migrate on deploy | One container from the new image with `RUN_MIGRATIONS=true` (entrypoint runs `bin/rails db:prepare`); web (`CMD`, Puma) and worker (`bundle exec sidekiq`) without it. README "Production image" |
 | <a id="safe-migrations"></a>Safe migrations (strong_migrations blocked one) | The error names the operation and prints the safe version; use it. Indexes: `disable_ddl_transaction!` plus `algorithm: :concurrently` (a failed concurrent build leaves an INVALID index: drop it before rerunning). `safety_assured { … }` only with a comment in the migration saying why it is safe. `canceling statement due to lock timeout` on deploy: something held the table for over 10 s. A migration in a transaction (the default) rolled back whole; one with `disable_ddl_transaction!` kept the steps before it, so check which ran. Rerun it when traffic is lower. README "Local development" |
 | Puma workers and database connections | `WEB_CONCURRENCY` worker processes per web container (cluster mode from 1, the app preloaded from 2; use 0 or at least 2, Puma warns about a single worker; the boot log says `Puma starting in cluster mode` and `Workers: N`) × `RAILS_MAX_THREADS` threads (default 3; the DB pool defaults to 5, so set it explicitly on web, and on the worker keep it at least the Sidekiq concurrency). Connections at most: web containers × `WEB_CONCURRENCY` × threads + worker containers × Sidekiq concurrency (5) + headroom for one-off tasks (migrations, consoles); size Postgres or PgBouncer for it. README "Configuration" |
