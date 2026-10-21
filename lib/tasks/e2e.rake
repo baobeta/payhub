@@ -6,6 +6,8 @@ namespace :e2e do
     abort "e2e:seed runs only in RAILS_ENV=test" unless Rails.env.test?
 
     merchant, = Merchant.create_with_api_key!(name: "E2E Merchant", default_currency: "EUR")
+    # A team with members keeps one active owner (DECISIONS #22, TC-M10-2).
+    MerchantUser.invite_first_owner!(merchant:, email: "owner@e2e.test")
     MerchantUser.create!(merchant:, email: "support@e2e.test", role: "support", password: "e2e password 1234",
                          otp_secret: "JBSWY3DPEHPK3PXP", otp_enabled_at: Time.current, accepted_at: Time.current)
     payment = Payment.create!(merchant:, amount_minor: 2500, currency: "EUR", merchant_currency: "EUR", fx_rate: 1,

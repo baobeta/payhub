@@ -324,6 +324,8 @@ The uncaptured remainder is not released at the PSP (#14). Adyen does the same: 
 
 **Trade-off:** Each live merchant can have a second merchant row, and anything that wants live and test numbers together has to join the twin.
 
+**Held by the database (L4, M10):** twins don't nest, as [Stripe sandboxes](https://docs.stripe.com/sandboxes) don't: a trigger (`trg_merchants_twin_parent_is_live`) refuses a `live_merchant_id` that points at a non-live merchant. And a team has exactly [one owner](https://support.stripe.com/questions/change-account-owner): the partial unique index stops a second, and a `DEFERRABLE INITIALLY DEFERRED` constraint trigger (`trg_merchant_users_keep_one_owner`) refuses, at commit, a live merchant with active members and no active owner. Checking at commit lets `TransferOwnership` demote then promote in one transaction, and lets a brand-new merchant exist before its first owner is invited.
+
 ## 23. Operators change money only with two people
 
 **In plain words:** Like a bank vault with two keys held by two people: one staff member proposes a money change, and a different one approves it.

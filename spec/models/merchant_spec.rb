@@ -61,6 +61,23 @@ RSpec.describe Merchant do
       expect(merchant.test_twin!.webhook_url).to be_nil
     end
 
+    it "TC-L4-2: the database refuses a twin of a twin, bypassing Rails" do
+      twin = create(:merchant).test_twin!
+      sql = <<~SQL
+        INSERT INTO merchants (name, api_key_digest, webhook_secret, default_currency, livemode, live_merchant_id, created_at, updated_at)
+        VALUES ('Nested', 'nested-digest', 'secret', 'EUR', false, '#{twin.id}', now(), now())
+      SQL
+      expect { described_class.connection.execute(sql) }
+        .to raise_error(ActiveRecord::StatementInvalid, /live_merchant_id must point at a live merchant/)
+    end
+
+    it "TC-L4-2: the database refuses repointing a twin at another twin" do
+      twin = create(:merchant).test_twin!
+      other = create(:merchant).test_twin!
+      expect { described_class.where(id: other.id).update_all(live_merchant_id: twin.id) }
+        .to raise_error(ActiveRecord::StatementInvalid, /live_merchant_id must point at a live merchant/)
+    end
+
     it "returns the winner's twin after losing a creation race inside a transaction" do
       merchant = create(:merchant)
       winner = merchant.test_twin!
