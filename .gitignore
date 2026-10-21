@@ -66,3 +66,4 @@ node_modules
 docs/*.erd.html
 docs/*.erd.svg
 docs/*.model.json
+dbml-error.log
