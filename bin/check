@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
-# The full quality gate, in the order that fails fastest. CI runs exactly this.
-#   bin/check          run everything
-#   bin/check --fix    autocorrect lint first, then run everything
+# The full quality gate, in the order that fails fastest. CI runs these same
+# gates, with rspec split across parallel shards (bin/rspec-shard) instead.
+#   bin/check                run everything
+#   bin/check --fix          autocorrect lint first, then run everything
+#   bin/check --skip-rspec   everything but rspec (CI's static job)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [ "${1:-}" = "--fix" ]; then
+fix=no rspec=yes
+for arg in "$@"; do
+  case "$arg" in
+    --fix) fix=yes ;;
+    --skip-rspec) rspec=no ;;
+    *) echo "usage: bin/check [--fix] [--skip-rspec]"; exit 2 ;;
+  esac
+done
+
+if [ "$fix" = yes ]; then
   bundle exec rubocop -A
 fi
 
@@ -45,8 +56,10 @@ npm run --silent test
 step "frontend build"
 bin/vite build --clear --mode=test
 
-step "rspec (behaviour)"
-bundle exec rspec
+if [ "$rspec" = yes ]; then
+  step "rspec (behaviour)"
+  bundle exec rspec
+fi
 
 step "brakeman (security)"
 bundle exec brakeman --no-pager --quiet --no-summary

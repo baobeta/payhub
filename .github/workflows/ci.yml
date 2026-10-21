@@ -6,8 +6,46 @@ on:
     branches: [master]
 
 jobs:
-  check:
+  # bin/check without rspec: zeitwerk, generated files, authz grep, rubocop,
+  # sorbet, frontend typecheck/lint/test/build, brakeman. None of it needs the
+  # database, so it runs once here rather than once per shard.
+  static:
+    name: static gates
     runs-on: ubuntu-latest
+
+    env:
+      RAILS_ENV: test
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Quality gate (all but rspec)
+        run: bin/check --skip-rspec
+
+      - name: The rspec shards hold every spec file exactly once
+        run: diff <(for s in 0 1 2; do bin/rspec-shard "$s" 3; done | sort) <(find spec -name '*_spec.rb' | sort)
+
+  # RSpec in three parallel shards, split by bin/rspec-shard from the per-file
+  # times in spec/timings.json. Each shard has its own fresh database and
+  # writes its own coverage report (not merged).
+  rspec:
+    name: rspec (shard ${{ matrix.shard }} of 3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
 
     services:
       postgres:
@@ -42,11 +80,14 @@ jobs:
           ruby-version: .ruby-version
           bundler-cache: true
 
+      # The web shell specs render Vite tags; build once up front rather than
+      # inside whichever spec gets there first.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: bin/vite build --clear --mode=test
 
       - name: Postgres client matching the server
         run: |
@@ -56,9 +97,24 @@ jobs:
       - name: Prepare database
         run: bin/rails db:create db:schema:load
 
-      # Same gate as `bin/check` locally: zeitwerk, generated files, rubocop, sorbet, frontend, rspec, brakeman.
-      - name: Quality gate
-        run: bin/check
+      - name: rspec (shard ${{ matrix.shard }} of 3)
+        run: |
+          files="$(bin/rspec-shard ${{ matrix.shard }} 3)"
+          echo "$files"
+          # shellcheck disable=SC2086 # one argument per file
+          bundle exec rspec $files
+
+  # The one required gate: green only when the static gates and every shard
+  # are. A skipped job would count as passing, hence always() and the check.
+  check:
+    needs: [static, rspec]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Static gates and all rspec shards passed
+        run: |
+          echo "static: ${{ needs.static.result }}, rspec: ${{ needs.rspec.result }}"
+          test "${{ needs.static.result }}" = success && test "${{ needs.rspec.result }}" = success
 
   # The production image (Dockerfile, target production) builds, runs as
   # non-root and boots in production: web answers /healthz and guards /metrics,

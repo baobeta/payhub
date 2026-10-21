@@ -880,7 +880,7 @@ Each spec asserts behaviour that already worked. The one exception is TC-M16-1, 
 | TC-K1-2 | A call-log row younger than 12 months is deleted | Refused by the trigger; a 13-month-old row can be deleted | `spec/models/psp_call_spec.rb` |
 | TC-O3-1…14 | The chaos run checks its results against the PSP's records | Orphans, captured or refunded drift, a refund the PSP never confirmed, a reservation left behind, settlement problems and unbalanced transfers are each detected; a clean run passes | `spec/lib/chaos_run_spec.rb` |
 | TC-I5-2 | 25 fixed seeds: several payments in EUR and VND with a faulty PSP | Per merchant and currency: every transfer nets to zero, captured ≤ authorized, refunded + reserved ≤ captured, balance holds; no duplicate charges | `spec/properties/ledger_invariants_spec.rb` |
-| TC-C9-1 | The simulation plays a Kiripay-like PSP that does not dedupe charges, seeds 1–10 | At most one PSP charge per payment reference, after every step (DECISIONS #12) | `spec/simulation/payment_simulation_spec.rb` |
+| TC-C9-1 | The simulation plays a Kiripay-like PSP that does not dedupe charges, seeds 1–10 | At most one PSP charge per payment reference, after every step (DECISIONS #12) | `spec/simulation/payment_simulation_kiripay_spec.rb` |
 | TC-J5-2 | A large unsettled backlog | At most 20 lines per PSP per run, plus one `settlement.unsettled_summary` with the full count | `spec/jobs/settlement_reconciliation_job_spec.rb` |
 | TC-COV-… | Remaining branches in the Nordpay adapter, ApplyPspResult, BookCapture and OperatorMailer | Every reachable line and branch is asserted | the matching specs |
 
