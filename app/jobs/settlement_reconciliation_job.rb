@@ -26,6 +26,7 @@ class SettlementReconciliationJob < ApplicationJob
   queue_as :sweepers
 
   SETTLE_WITHIN = T.let(3.days, ActiveSupport::Duration)
+  DETAIL_LIMIT = 20 # unsettled captures logged one by one per PSP per run
 
   sig { params(date: T.nilable(String)).void }
   def perform(date = nil)
@@ -170,9 +171,16 @@ class SettlementReconciliationJob < ApplicationJob
                             .sum(Arel.sql("CASE ledger_entries.direction WHEN 'debit' THEN ledger_entries.amount_minor " \
                                           "ELSE -ledger_entries.amount_minor END"))
     unsettled = receivable.select { |_, outstanding| outstanding.to_i.positive? }
-    unsettled.each do |payment_id, outstanding|
+    # A PSP with no report (Kiripay) never clears its receivable, so this list
+    # only grows. Log the first few in detail and the size once, every run:
+    # counts and exceptions per run, not one line per item forever.
+    unsettled.first(DETAIL_LIMIT).each do |payment_id, outstanding|
       Rails.logger.warn({ event: "settlement.unsettled_capture", psp: psp_name, payment_id: payment_id,
                           outstanding_minor: outstanding.to_i }.to_json)
+    end
+    if unsettled.size > DETAIL_LIMIT
+      Rails.logger.warn({ event: "settlement.unsettled_summary", psp: psp_name, count: unsettled.size,
+                          detailed: DETAIL_LIMIT }.to_json)
     end
     unsettled.size
   end
