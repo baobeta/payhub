@@ -15,25 +15,26 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
   let(:contact) { YAML.safe_load_file(dir.join("contact-points.yaml")) }
   let(:runbook) { Rails.root.join("RUNBOOK.md").read }
 
-  # uid => [severity, the metric (or table) its query must read]
+  # uid => [severity, what its query must read, evaluator, threshold, for, window in seconds]
   let(:expected) do
     {
-      "payhub-late-success" => ["page", "MetricName = 'payhub_late_success_total'"],
-      "payhub-psp-never-received" => ["ticket", "MetricName = 'payhub_psp_never_received_total'"],
-      "payhub-audit-write-failed" => ["page", "MetricName = 'payhub_audit_write_failed_total'"],
-      "payhub-psp-call-in-tx" => ["ticket", "MetricName = 'payhub_psp_call_in_transaction_total'"],
-      "payhub-circuit-open" => ["page", "MetricName = 'payhub_psp_circuit_opened_total'"],
-      "payhub-recon-breaks" => ["ticket", "MetricName = 'payhub_settlement_discrepancies_total'"],
-      "payhub-ledger-imbalance" => ["page", "MetricName = 'payhub_ledger_imbalance_detected_total'"],
-      "payhub-stuck-alerts" => ["page", "MetricName = 'payhub_stuck_payment_alerts_total'"],
-      "payhub-stuck-unknown" => ["page", "MetricName = 'payhub_unknown_state_payments'"],
-      "payhub-dead-letters" => ["ticket", "MetricName = 'payhub_outbound_events_dead'"],
-      "payhub-error-spans" => ["page", "FROM otel.otel_traces"],
-      "payhub-slo-api-p95" => ["ticket", "FROM otel.otel_traces"],
-      "payhub-slo-outcome" => ["page", "MetricName = 'payhub_unknown_state_payments'"],
-      "payhub-scrape-down" => ["page", "MetricName = 'up'"],
-      "payhub-logs-silent" => ["page", "FROM otel.otel_logs"],
-      "payhub-archive-upload-failed" => ["page", "MetricName = 'otelcol_exporter_send_failed_log_records'"]
+      "payhub-late-success" => ["page", "MetricName = 'payhub_late_success_total'", "gt", 0, "1m", 600],
+      "payhub-psp-never-received" => ["ticket", "MetricName = 'payhub_psp_never_received_total'", "gt", 0, "1m", 900],
+      "payhub-audit-write-failed" => ["page", "MetricName = 'payhub_audit_write_failed_total'", "gt", 0, "1m", 600],
+      "payhub-psp-call-in-tx" => ["ticket", "MetricName = 'payhub_psp_call_in_transaction_total'", "gt", 0, "1m", 3600],
+      "payhub-circuit-open" => ["page", "MetricName = 'payhub_psp_circuit_opened_total'", "gt", 0, "1m", 300],
+      "payhub-recon-breaks" => ["ticket", "MetricName = 'payhub_settlement_discrepancies_total'", "gt", 0, "1m", 86_400],
+      "payhub-ledger-imbalance" => ["page", "MetricName = 'payhub_ledger_imbalance_detected_total'", "gt", 0, "1m", 86_400],
+      "payhub-stuck-alerts" => ["page", "MetricName = 'payhub_stuck_payment_alerts_total'", "gt", 0, "1m", 900],
+      "payhub-stuck-unknown" => ["page", "MetricName = 'payhub_unknown_state_payments'", "gt", 0, "15m", 300],
+      "payhub-dead-letters" => ["ticket", "MetricName = 'payhub_outbound_events_dead'", "gt", 0, "0s", 300],
+      "payhub-error-spans" => ["page", "FROM otel.otel_traces", "gt", 2, "5m", 300],
+      "payhub-slo-api-p95" => ["ticket", "FROM otel.otel_traces", "gt", 300, "10m", 600],
+      "payhub-slo-outcome" => ["page", "MetricName = 'payhub_unknown_state_payments'", "gt", 0, "0s", 3600],
+      "payhub-scrape-down" => ["page", "MetricName = 'up'", "lt", 1, "5m", 60],
+      "payhub-logs-silent" => ["page", "FROM otel.otel_logs", "lt", 1, "0s", 900],
+      "payhub-archive-upload-failed" => ["page", "MetricName = 'otelcol_exporter_send_failed_log_records'",
+                                         "gt", 0, "1m", 3600]
     }
   end
 
@@ -53,6 +54,17 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
     text.scan(/MetricName = '(payhub_\w+)'/).flatten
   end
 
+  # Every rule over otel_metrics_sum: the app's counters and the collector's.
+  def counter_uids
+    rules.keys.select { |uid| sql(uid).include?("FROM otel.otel_metrics_sum") }
+  end
+
+  # The window the query reads, not the extra day of lookback before it.
+  def window_seconds(text)
+    text.scan(/now\(\) - INTERVAL (\d+) (MINUTE|HOUR)(?! - INTERVAL 1 DAY)/)
+        .map { |n, unit| n.to_i * (unit == "HOUR" ? 3600 : 60) }.max
+  end
+
   it "provisions every alert, each reading the metric it is about" do
     expect(rules.keys).to match_array(expected.keys)
     expected.each { |uid, (_, read)| expect(sql(uid)).to include(read), uid }
@@ -69,7 +81,7 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
   it "reads the DB-backed gauges from web only" do
     gauges = Metrics::GAUGES.keys.map { |name| "payhub_#{name}" }
     gauge_rules = rules.keys.select { |uid| metrics_in(sql(uid)).intersect?(gauges) }
-    expect(gauge_rules).to include("payhub-stuck-unknown", "payhub-dead-letters", "payhub-slo-outcome")
+    expect(gauge_rules).to contain_exactly("payhub-stuck-unknown", "payhub-dead-letters", "payhub-slo-outcome")
     expect(gauge_rules.map { |uid| sql(uid) }).to all(include("ServiceName = 'payhub-web'"))
   end
 
@@ -78,15 +90,27 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
   # the window (the first increment since a restart) is an increase from zero,
   # which max(Value) - min(Value) reads as 0. And ClickHouse compares maps by
   # key order, which differs between rows of one series: mapSort first.
-  it "counts counter increases per series, from zero for a new one, never across services" do
-    counters = Metrics::COUNTERS.keys.map { |name| "payhub_#{name}_total" }
-    counter_sqls = rules.keys.filter_map { |uid| sql(uid) if metrics_in(sql(uid)).intersect?(counters) }
-    expect(counter_sqls.size).to be >= 9
-    expect(counter_sqls).to all(include("FROM otel.otel_metrics_sum"))
-    expect(counter_sqls).to all(include("lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), " \
+  it "counts counter increases per series, never across services" do
+    expect(counter_uids.size).to eq(9)
+    counter_sqls = counter_uids.map { |uid| sql(uid) }
+    expect(counter_sqls).to all(include("lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), " \
                                         "mapSort(ResourceAttributes) ORDER BY TimeUnix"))
-    expect(counter_sqls).to all(match(/ServiceName (= 'payhub-worker'|IN \('payhub-web', 'payhub-worker'\))/))
+    expect(counter_sqls).to all(include("if(c.Value >= c.prev, c.Value - c.prev, c.Value)"))
+    expect(counter_sqls).to all(match(/ServiceName (= 'payhub-worker'|= 'otelcol'|IN \('payhub-web', 'payhub-worker'\))/))
     expect(counter_sqls.join).not_to match(/max\(Value\)\s*-\s*min\(Value\)/)
+  end
+
+  # A series' first sample counts in full only if the collector was already
+  # scraping that instance (an older `up`); on a cold start (first deploy, a
+  # new ClickHouse volume, a long collector outage) every series appears with
+  # `up` and its value is the baseline, or every counter would page at once.
+  it "counts a series' first sample only when up for the same instance is at least 30s older" do
+    counter_uids.each do |uid|
+      expect(sql(uid)).to include("if(isNaN(c.prev),", "if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0)",
+                                  "WHERE MetricName = 'up'",
+                                  "ON c.ServiceName = u.ServiceName AND c.instance = u.instance"), uid
+      expect(sql(uid).scan("ResourceAttributes['service.instance.id'] AS instance").size).to eq(2), uid
+    end
   end
 
   it "reads job-only counters from the worker" do
@@ -95,15 +119,19 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
     end
   end
 
-  it "measures errors and latency from server spans in otel_traces" do
-    expect(sql("payhub-error-spans")).to include("StatusCode = 'Error'", "SpanKind IN ('Server', 'Consumer')")
+  it "measures errors and latency from server spans in otel_traces, with a minimum count" do
+    expect(sql("payhub-error-spans")).to include("StatusCode = 'Error'", "SpanKind IN ('Server', 'Consumer')",
+                                                 "NOT IN ('/metrics', '/healthz')", "if(count() < 20, 0,")
     expect(sql("payhub-slo-api-p95")).to include("quantile(0.95)(Duration)", "SpanKind = 'Server'",
                                                  "SpanAttributes['http.route'] LIKE '/v1/%'")
+    expect(sql("payhub-slo-outcome")).not_to include("stuck_payment_alerts") # payhub-stuck-alerts pages for those
   end
 
   it "pages on a failed scrape per service, silent logs, and failed archive uploads" do
     expect(sql("payhub-scrape-down")).to include("FROM otel.otel_metrics_gauge", "'payhub-web', 'payhub-worker'")
-    expect(sql("payhub-logs-silent")).to include("ServiceName LIKE 'payhub%'")
+    # TimestampTime is otel_logs' partition and primary key; Timestamp is not.
+    expect(sql("payhub-logs-silent")).to include("ServiceName LIKE 'payhub%'",
+                                                 "TimestampTime >= now() - INTERVAL 15 MINUTE")
     expect(sql("payhub-archive-upload-failed")).to include("ServiceName = 'otelcol'",
                                                            "Attributes['exporter'] = 'awss3'")
     production = YAML.safe_load_file(Rails.root.join("observability/otel-collector.production.yaml"))
@@ -111,24 +139,46 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
     expect(production.dig("receivers", "prometheus", "config", "scrape_configs").pluck("job_name")).to include("otelcol")
   end
 
-  it "builds every rule as ClickHouse query, reduce last, threshold, at the right severity" do
+  it "builds every rule as ClickHouse query, reduce last, threshold" do
     rules.each do |uid, rule|
       expect(query(rule, "A")).to include("datasourceUid" => "clickhouse"), uid
       expect(query(rule, "B")["model"]).to include("type" => "reduce", "reducer" => "last", "expression" => "A"), uid
       expect(query(rule, "C")["model"]).to include("type" => "threshold", "expression" => "B"), uid
       expect(rule).to include("condition" => "C"), uid
-      expect(rule.dig("labels", "severity")).to eq(expected.dig(uid, 0)), uid
     end
   end
 
-  it "sends every rule to payhub-oncall with a summary and its RUNBOOK section" do
+  it "fires at the pinned threshold, after the pinned wait, over the window its SQL reads" do
+    rules.each do |uid, rule|
+      _, _, type, threshold, wait, window = expected.fetch(uid)
+      expect(query(rule, "C").dig("model", "conditions").sole["evaluator"]).to eq("type" => type, "params" => [threshold]), uid
+      expect(rule["for"]).to eq(wait), uid
+      expect(query(rule, "A").dig("relativeTimeRange", "from")).to eq(window), uid
+      expect(window_seconds(sql(uid))).to eq(window), uid
+    end
+  end
+
+  # Counters wait a minute so one odd sample does not page. A query error
+  # (ClickHouse unreachable) fires DatasourceError; no rows is OK, except where
+  # no rows is itself the incident.
+  it "pins the error and no-data states of every rule" do
+    rules.each do |uid, rule|
+      no_data = %w[payhub-scrape-down payhub-logs-silent].include?(uid) ? "Alerting" : "OK"
+      expect(rule).to include("execErrState" => "Error", "noDataState" => no_data), uid
+    end
+  end
+
+  it "pages on page and tickets on ticket, with a summary showing the value and its RUNBOOK section" do
     anchors = runbook.scan(%r{<a id="([^"]+)"></a>}).flatten
     rules.each do |uid, rule|
-      expect(rule.dig("notification_settings", "receiver")).to eq("payhub-oncall"), uid
-      expect(rule.dig("annotations", "summary")).to be_present, uid
-      anchor = rule.dig("annotations", "runbook_url")[/RUNBOOK\.md#(.+)\z/, 1]
-      expect(anchors).to include(anchor), uid
+      severity = rule.dig("labels", "severity")
+      expect(severity).to eq(expected.dig(uid, 0)), uid
+      expect(rule.dig("notification_settings", "receiver"))
+        .to eq({ "page" => "payhub-oncall", "ticket" => "payhub-tickets" }.fetch(severity)), uid
+      expect(rule.dig("annotations", "summary")).to include('{{ index .Values "B" }}'), uid
+      expect(anchors).to include(rule.dig("annotations", "runbook_url")[/RUNBOOK\.md#(.+)\z/, 1]), uid
     end
+    expect(anchors).to include("datasource-error")
   end
 
   # Grafana expands $VAR in every provisioning file: a "$" in SQL would be
@@ -137,13 +187,18 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
     expect(rules_file.read).not_to include("$")
   end
 
-  it "delivers to a webhook whose URL comes from ALERT_WEBHOOK_URL, never a literal" do
-    receiver = contact["contactPoints"].find { |point| point["name"] == "payhub-oncall" }["receivers"].sole
-    expect(receiver).to include("type" => "webhook")
-    expect(receiver.dig("settings", "url")).to eq("${ALERT_WEBHOOK_URL}")
-    expect(contact["policies"].sole).to include("receiver" => "payhub-oncall", "group_by" => ["alertname"],
+  it "delivers pages and tickets to webhooks whose URLs come from the environment, never a literal" do
+    points = contact["contactPoints"].index_by { |point| point["name"] }.transform_values { |point| point["receivers"].sole }
+    expect(points.keys).to contain_exactly("payhub-oncall", "payhub-tickets")
+    expect(points.values).to all(include("type" => "webhook"))
+    expect(points.transform_values { |receiver| receiver.dig("settings", "url") })
+      .to eq("payhub-oncall" => "${ALERT_WEBHOOK_URL}", "payhub-tickets" => "${ALERT_TICKET_WEBHOOK_URL}")
+    group_by = rules.values.map { |rule| rule.dig("notification_settings", "group_by") }.uniq.sole
+    expect(contact["policies"].sole).to include("receiver" => "payhub-oncall", "group_by" => group_by,
                                                 "repeat_interval" => "4h")
-    compose = YAML.safe_load_file(Rails.root.join("docker-compose.yml"), aliases: true)
-    expect(compose.dig("services", "grafana", "environment", "ALERT_WEBHOOK_URL")).to start_with("${ALERT_WEBHOOK_URL")
+    env = YAML.safe_load_file(Rails.root.join("docker-compose.yml"), aliases: true).dig("services", "grafana", "environment")
+    expect(env.values_at("ALERT_WEBHOOK_URL", "ALERT_TICKET_WEBHOOK_URL")).to eq([
+      "${ALERT_WEBHOOK_URL:-http://localhost:9/payhub-oncall}", "${ALERT_TICKET_WEBHOOK_URL:-http://localhost:9/payhub-tickets}"
+    ])
   end
 end

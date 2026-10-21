@@ -1,17 +1,27 @@
 # Grafana alert rules, provisioned on boot. Every rule reads ClickHouse (the
 # datasource uid `clickhouse`), reduces to the last value and compares it with
-# a threshold; severity `page` wakes someone, `ticket` waits for the morning.
-# All go to the payhub-oncall contact point (contact-points.yaml). RUNBOOK.md
-# "Alerts" maps each uid to what to do.
+# a threshold. Severity `page` goes to the payhub-oncall contact point, which
+# wakes someone; `ticket` goes to payhub-tickets, for the day team
+# (contact-points.yaml). RUNBOOK.md "Alerts" maps each uid to what to do.
 #
 # Counters (otel.otel_metrics_sum) are cumulative per series: the increase over
 # a window adds up each sample's rise over the one before it, per series
 # (ServiceName, Attributes, ResourceAttributes; mapSort because ClickHouse
 # compares maps by key order, which differs between rows of one series). A drop
-# is a process restart, counted as the new value. A series with no sample in the
-# day before the window is new and counts from 0: a counter only appears on its
-# first increment, which max(Value) - min(Value) would miss. A restart whose
-# first value is not below the old one is missed.
+# is a process restart, counted as the new value (a restart whose first value
+# is not below the old one is missed).
+#
+# A series' first sample in the lookback (the window plus a day) has nothing
+# before it. A counter only appears on its first increment, so that sample
+# counts in full when the collector was already scraping that instance: `up`
+# for the same ServiceName and service.instance.id has a sample at least 30s
+# older. Otherwise it is a cold start (first collector deploy, a new ClickHouse
+# volume, a collector down for over a day): every series appears with `up` in
+# the same scrape, and its first value is the baseline, not a rise.
+#
+# Counter rules wait `for: 1m`; a query error (ClickHouse unreachable) fires
+# DatasourceError (execErrState: Error); no rows reads as OK except where
+# silence is the incident (scrape-down, logs-silent: Alerting).
 #
 # The SQL uses now(), not Grafana macros, so each query runs as-is in
 # clickhouse-client. Grafana expands environment variables in provisioning
@@ -28,13 +38,13 @@ groups:
       - uid: payhub-late-success
         title: "Late success: a PSP succeeded after we failed the payment"
         condition: C
-        for: 0s
-        noDataState: NoData
+        for: 1m
+        noDataState: OK
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "A PSP reported success for a payment PayHub had already failed: the customer may be charged for an order the merchant thinks failed."
+          summary: "A PSP reported success for a payment PayHub had already failed: the customer may be charged for an order the merchant thinks failed. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-late-success
         notification_settings:
           receiver: payhub-oncall
@@ -52,16 +62,29 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                SELECT sum(rise) AS value
                 FROM (
-                  SELECT TimeUnix, Value,
-                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
-                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
-                  FROM otel.otel_metrics_sum
-                  WHERE MetricName = 'payhub_late_success_total' AND ServiceName = 'payhub-worker'
-                    AND TimeUnix >= now() - INTERVAL 10 MINUTE - INTERVAL 1 DAY
+                  SELECT c.TimeUnix AS TimeUnix,
+                         if(isNaN(c.prev),
+                            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),
+                            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise
+                  FROM (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,
+                           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                    FROM otel.otel_metrics_sum
+                    WHERE MetricName = 'payhub_late_success_total' AND ServiceName = 'payhub-worker'
+                      AND TimeUnix >= now() - INTERVAL 10 MINUTE - INTERVAL 1 DAY
+                  ) AS c
+                  INNER JOIN (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up
+                    FROM otel.otel_metrics_gauge
+                    WHERE MetricName = 'up' AND ServiceName = 'payhub-worker'
+                      AND TimeUnix >= now() - INTERVAL 10 MINUTE - INTERVAL 1 DAY
+                    GROUP BY ServiceName, instance
+                  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance
+                  WHERE c.TimeUnix >= now() - INTERVAL 10 MINUTE
                 )
-                WHERE TimeUnix >= now() - INTERVAL 10 MINUTE
           - refId: B
             datasourceUid: __expr__
             model:
@@ -83,16 +106,16 @@ groups:
       - uid: payhub-psp-never-received
         title: "PSP never received a payment"
         condition: C
-        for: 0s
-        noDataState: NoData
+        for: 1m
+        noDataState: OK
         execErrState: Error
         labels:
           severity: ticket
         annotations:
-          summary: "The sweeper failed a payment as psp_never_received: the PSP has no record of the charge after 30 minutes."
+          summary: "The sweeper failed a payment as psp_never_received: the PSP has no record of the charge after 30 minutes. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-psp-never-received
         notification_settings:
-          receiver: payhub-oncall
+          receiver: payhub-tickets
           group_by: [alertname, grafana_folder]
           repeat_interval: 4h
         data:
@@ -107,16 +130,29 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                SELECT sum(rise) AS value
                 FROM (
-                  SELECT TimeUnix, Value,
-                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
-                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
-                  FROM otel.otel_metrics_sum
-                  WHERE MetricName = 'payhub_psp_never_received_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
-                    AND TimeUnix >= now() - INTERVAL 15 MINUTE - INTERVAL 1 DAY
+                  SELECT c.TimeUnix AS TimeUnix,
+                         if(isNaN(c.prev),
+                            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),
+                            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise
+                  FROM (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,
+                           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                    FROM otel.otel_metrics_sum
+                    WHERE MetricName = 'payhub_psp_never_received_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                      AND TimeUnix >= now() - INTERVAL 15 MINUTE - INTERVAL 1 DAY
+                  ) AS c
+                  INNER JOIN (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up
+                    FROM otel.otel_metrics_gauge
+                    WHERE MetricName = 'up' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                      AND TimeUnix >= now() - INTERVAL 15 MINUTE - INTERVAL 1 DAY
+                    GROUP BY ServiceName, instance
+                  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance
+                  WHERE c.TimeUnix >= now() - INTERVAL 15 MINUTE
                 )
-                WHERE TimeUnix >= now() - INTERVAL 15 MINUTE
           - refId: B
             datasourceUid: __expr__
             model:
@@ -138,13 +174,13 @@ groups:
       - uid: payhub-audit-write-failed
         title: "Audit log write failed"
         condition: C
-        for: 0s
-        noDataState: NoData
+        for: 1m
+        noDataState: OK
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "An authorization decision could not be written to the audit log."
+          summary: "An authorization decision could not be written to the audit log. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-audit-write-failed
         notification_settings:
           receiver: payhub-oncall
@@ -162,16 +198,29 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                SELECT sum(rise) AS value
                 FROM (
-                  SELECT TimeUnix, Value,
-                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
-                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
-                  FROM otel.otel_metrics_sum
-                  WHERE MetricName = 'payhub_audit_write_failed_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
-                    AND TimeUnix >= now() - INTERVAL 10 MINUTE - INTERVAL 1 DAY
+                  SELECT c.TimeUnix AS TimeUnix,
+                         if(isNaN(c.prev),
+                            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),
+                            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise
+                  FROM (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,
+                           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                    FROM otel.otel_metrics_sum
+                    WHERE MetricName = 'payhub_audit_write_failed_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                      AND TimeUnix >= now() - INTERVAL 10 MINUTE - INTERVAL 1 DAY
+                  ) AS c
+                  INNER JOIN (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up
+                    FROM otel.otel_metrics_gauge
+                    WHERE MetricName = 'up' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                      AND TimeUnix >= now() - INTERVAL 10 MINUTE - INTERVAL 1 DAY
+                    GROUP BY ServiceName, instance
+                  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance
+                  WHERE c.TimeUnix >= now() - INTERVAL 10 MINUTE
                 )
-                WHERE TimeUnix >= now() - INTERVAL 10 MINUTE
           - refId: B
             datasourceUid: __expr__
             model:
@@ -193,16 +242,16 @@ groups:
       - uid: payhub-psp-call-in-tx
         title: "PSP call made inside a database transaction"
         condition: C
-        for: 0s
-        noDataState: NoData
+        for: 1m
+        noDataState: OK
         execErrState: Error
         labels:
           severity: ticket
         annotations:
-          summary: "A PSP call was logged inside an open database transaction: a rollback would lose the record of a call the PSP received."
+          summary: "A PSP call was logged inside an open database transaction: a rollback would lose the record of a call the PSP received. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-psp-call-in-tx
         notification_settings:
-          receiver: payhub-oncall
+          receiver: payhub-tickets
           group_by: [alertname, grafana_folder]
           repeat_interval: 4h
         data:
@@ -217,16 +266,29 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                SELECT sum(rise) AS value
                 FROM (
-                  SELECT TimeUnix, Value,
-                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
-                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
-                  FROM otel.otel_metrics_sum
-                  WHERE MetricName = 'payhub_psp_call_in_transaction_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
-                    AND TimeUnix >= now() - INTERVAL 60 MINUTE - INTERVAL 1 DAY
+                  SELECT c.TimeUnix AS TimeUnix,
+                         if(isNaN(c.prev),
+                            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),
+                            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise
+                  FROM (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,
+                           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                    FROM otel.otel_metrics_sum
+                    WHERE MetricName = 'payhub_psp_call_in_transaction_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                      AND TimeUnix >= now() - INTERVAL 60 MINUTE - INTERVAL 1 DAY
+                  ) AS c
+                  INNER JOIN (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up
+                    FROM otel.otel_metrics_gauge
+                    WHERE MetricName = 'up' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                      AND TimeUnix >= now() - INTERVAL 60 MINUTE - INTERVAL 1 DAY
+                    GROUP BY ServiceName, instance
+                  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance
+                  WHERE c.TimeUnix >= now() - INTERVAL 60 MINUTE
                 )
-                WHERE TimeUnix >= now() - INTERVAL 60 MINUTE
           - refId: B
             datasourceUid: __expr__
             model:
@@ -248,13 +310,13 @@ groups:
       - uid: payhub-circuit-open
         title: "PSP circuit breaker opened"
         condition: C
-        for: 0s
-        noDataState: NoData
+        for: 1m
+        noDataState: OK
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "PayHub stopped calling a PSP: new payments stay pending until it recovers."
+          summary: "PayHub stopped calling a PSP: new payments stay pending until it recovers. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-circuit-open
         notification_settings:
           receiver: payhub-oncall
@@ -272,16 +334,29 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                SELECT sum(rise) AS value
                 FROM (
-                  SELECT TimeUnix, Value,
-                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
-                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
-                  FROM otel.otel_metrics_sum
-                  WHERE MetricName = 'payhub_psp_circuit_opened_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
-                    AND TimeUnix >= now() - INTERVAL 5 MINUTE - INTERVAL 1 DAY
+                  SELECT c.TimeUnix AS TimeUnix,
+                         if(isNaN(c.prev),
+                            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),
+                            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise
+                  FROM (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,
+                           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                    FROM otel.otel_metrics_sum
+                    WHERE MetricName = 'payhub_psp_circuit_opened_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                      AND TimeUnix >= now() - INTERVAL 5 MINUTE - INTERVAL 1 DAY
+                  ) AS c
+                  INNER JOIN (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up
+                    FROM otel.otel_metrics_gauge
+                    WHERE MetricName = 'up' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                      AND TimeUnix >= now() - INTERVAL 5 MINUTE - INTERVAL 1 DAY
+                    GROUP BY ServiceName, instance
+                  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance
+                  WHERE c.TimeUnix >= now() - INTERVAL 5 MINUTE
                 )
-                WHERE TimeUnix >= now() - INTERVAL 5 MINUTE
           - refId: B
             datasourceUid: __expr__
             model:
@@ -304,16 +379,16 @@ groups:
       - uid: payhub-recon-breaks
         title: "Settlement discrepancies"
         condition: C
-        for: 0s
-        noDataState: NoData
+        for: 1m
+        noDataState: OK
         execErrState: Error
         labels:
           severity: ticket
         annotations:
-          summary: "The settlement run found lines that do not match the ledger."
+          summary: "The settlement run found lines that do not match the ledger. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-recon-breaks
         notification_settings:
-          receiver: payhub-oncall
+          receiver: payhub-tickets
           group_by: [alertname, grafana_folder]
           repeat_interval: 4h
         data:
@@ -328,16 +403,29 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                SELECT sum(rise) AS value
                 FROM (
-                  SELECT TimeUnix, Value,
-                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
-                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
-                  FROM otel.otel_metrics_sum
-                  WHERE MetricName = 'payhub_settlement_discrepancies_total' AND ServiceName = 'payhub-worker'
-                    AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY
+                  SELECT c.TimeUnix AS TimeUnix,
+                         if(isNaN(c.prev),
+                            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),
+                            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise
+                  FROM (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,
+                           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                    FROM otel.otel_metrics_sum
+                    WHERE MetricName = 'payhub_settlement_discrepancies_total' AND ServiceName = 'payhub-worker'
+                      AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY
+                  ) AS c
+                  INNER JOIN (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up
+                    FROM otel.otel_metrics_gauge
+                    WHERE MetricName = 'up' AND ServiceName = 'payhub-worker'
+                      AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY
+                    GROUP BY ServiceName, instance
+                  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance
+                  WHERE c.TimeUnix >= now() - INTERVAL 24 HOUR
                 )
-                WHERE TimeUnix >= now() - INTERVAL 24 HOUR
           - refId: B
             datasourceUid: __expr__
             model:
@@ -360,13 +448,13 @@ groups:
       - uid: payhub-ledger-imbalance
         title: "Ledger imbalance detected"
         condition: C
-        for: 0s
-        noDataState: NoData
+        for: 1m
+        noDataState: OK
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "Reconciliation found a ledger transfer that does not net to zero: a bug, not an operator error."
+          summary: "Reconciliation found a ledger transfer that does not net to zero: a bug, not an operator error. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-ledger-imbalance
         notification_settings:
           receiver: payhub-oncall
@@ -384,16 +472,29 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                SELECT sum(rise) AS value
                 FROM (
-                  SELECT TimeUnix, Value,
-                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
-                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
-                  FROM otel.otel_metrics_sum
-                  WHERE MetricName = 'payhub_ledger_imbalance_detected_total' AND ServiceName = 'payhub-worker'
-                    AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY
+                  SELECT c.TimeUnix AS TimeUnix,
+                         if(isNaN(c.prev),
+                            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),
+                            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise
+                  FROM (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,
+                           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                    FROM otel.otel_metrics_sum
+                    WHERE MetricName = 'payhub_ledger_imbalance_detected_total' AND ServiceName = 'payhub-worker'
+                      AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY
+                  ) AS c
+                  INNER JOIN (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up
+                    FROM otel.otel_metrics_gauge
+                    WHERE MetricName = 'up' AND ServiceName = 'payhub-worker'
+                      AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY
+                    GROUP BY ServiceName, instance
+                  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance
+                  WHERE c.TimeUnix >= now() - INTERVAL 24 HOUR
                 )
-                WHERE TimeUnix >= now() - INTERVAL 24 HOUR
           - refId: B
             datasourceUid: __expr__
             model:
@@ -416,13 +517,13 @@ groups:
       - uid: payhub-stuck-alerts
         title: "Payments stuck in pending or unknown"
         condition: C
-        for: 0s
-        noDataState: NoData
+        for: 1m
+        noDataState: OK
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "The sweeper found payments in pending or unknown for more than 15 minutes (alert.stuck_payment in the log)."
+          summary: "The sweeper found payments in pending or unknown for more than 15 minutes (alert.stuck_payment in the log). Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-stuck-alerts
         notification_settings:
           receiver: payhub-oncall
@@ -440,16 +541,29 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                SELECT sum(rise) AS value
                 FROM (
-                  SELECT TimeUnix, Value,
-                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
-                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
-                  FROM otel.otel_metrics_sum
-                  WHERE MetricName = 'payhub_stuck_payment_alerts_total' AND ServiceName = 'payhub-worker'
-                    AND TimeUnix >= now() - INTERVAL 15 MINUTE - INTERVAL 1 DAY
+                  SELECT c.TimeUnix AS TimeUnix,
+                         if(isNaN(c.prev),
+                            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),
+                            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise
+                  FROM (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,
+                           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                    FROM otel.otel_metrics_sum
+                    WHERE MetricName = 'payhub_stuck_payment_alerts_total' AND ServiceName = 'payhub-worker'
+                      AND TimeUnix >= now() - INTERVAL 15 MINUTE - INTERVAL 1 DAY
+                  ) AS c
+                  INNER JOIN (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up
+                    FROM otel.otel_metrics_gauge
+                    WHERE MetricName = 'up' AND ServiceName = 'payhub-worker'
+                      AND TimeUnix >= now() - INTERVAL 15 MINUTE - INTERVAL 1 DAY
+                    GROUP BY ServiceName, instance
+                  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance
+                  WHERE c.TimeUnix >= now() - INTERVAL 15 MINUTE
                 )
-                WHERE TimeUnix >= now() - INTERVAL 15 MINUTE
           - refId: B
             datasourceUid: __expr__
             model:
@@ -473,12 +587,12 @@ groups:
         title: "Payments in unknown state for 15 minutes"
         condition: C
         for: 15m
-        noDataState: NoData
+        noDataState: OK
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "Payments have been in unknown, with the PSP's answer not yet known, for 15 minutes."
+          summary: "Payments have been in unknown, with the PSP's answer not yet known, for 15 minutes. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-stuck-unknown
         notification_settings:
           receiver: payhub-oncall
@@ -523,15 +637,15 @@ groups:
         title: "Outbound events dead"
         condition: C
         for: 0s
-        noDataState: NoData
+        noDataState: OK
         execErrState: Error
         labels:
           severity: ticket
         annotations:
-          summary: "Merchant webhooks have exhausted their retries (dead outbound events); the merchant has not heard about these payments."
+          summary: "Merchant webhooks have exhausted their retries (dead outbound events); the merchant has not heard about these payments. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-dead-letters
         notification_settings:
-          receiver: payhub-oncall
+          receiver: payhub-tickets
           group_by: [alertname, grafana_folder]
           repeat_interval: 4h
         data:
@@ -568,17 +682,17 @@ groups:
                     type: gt
                     params: [0]
 
-      # Percent of server (request) and consumer (job) spans in error; below 20 spans in 5 minutes it reads 0, so one failure at night does not page.
+      # Percent of server (request) and consumer (job) spans in error: jobs are in the denominator too, so a burst of job failures pages as well as failing requests. Below 20 spans in 5 minutes it reads 0, so one failure at night does not page.
       - uid: payhub-error-spans
         title: "Error rate above 2% (requests and jobs)"
         condition: C
         for: 5m
-        noDataState: NoData
+        noDataState: OK
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "More than 2% of requests and jobs ended in error over 5 minutes."
+          summary: "More than 2% of requests and jobs ended in error over 5 minutes. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-error-spans
         notification_settings:
           receiver: payhub-oncall
@@ -623,16 +737,16 @@ groups:
       - uid: payhub-slo-api-p95
         title: "API p95 latency above 300ms"
         condition: C
-        for: 0s
-        noDataState: NoData
+        for: 10m
+        noDataState: OK
         execErrState: Error
         labels:
           severity: ticket
         annotations:
-          summary: "The 95th percentile of /v1 request duration was above 300ms over the last 10 minutes."
+          summary: "The 95th percentile of /v1 request duration was above 300ms over the last 10 minutes. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-slo-api-p95
         notification_settings:
-          receiver: payhub-oncall
+          receiver: payhub-tickets
           group_by: [alertname, grafana_folder]
           repeat_interval: 4h
         data:
@@ -669,17 +783,17 @@ groups:
                     type: gt
                     params: [300]
 
-      # 1 when payhub_unknown_state_payments stayed above 0 for the whole hour (samples back to at least 55 minutes ago) or the sweeper raised a stuck-payment alert in it.
+      # 1 when payhub_unknown_state_payments stayed above 0 for the whole hour (samples back to at least 55 minutes ago). Stuck-payment alerts page on their own (payhub-stuck-alerts).
       - uid: payhub-slo-outcome
         title: "Payment outcome SLO at risk"
         condition: C
         for: 0s
-        noDataState: NoData
+        noDataState: OK
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "A payment has had no final outcome for an hour: unknown payments all hour, or stuck-payment alerts in the last hour."
+          summary: "Payments have stayed in unknown for a whole hour: the payment outcome SLO is burning. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-slo-outcome
         notification_settings:
           receiver: payhub-oncall
@@ -697,23 +811,10 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT toFloat64(
-                  (SELECT min(Value) > 0 AND min(TimeUnix) <= now() - INTERVAL 55 MINUTE
-                   FROM otel.otel_metrics_gauge
-                   WHERE MetricName = 'payhub_unknown_state_payments' AND ServiceName = 'payhub-web'
-                     AND TimeUnix >= now() - INTERVAL 1 HOUR)
-                  OR
-                  (SELECT sum(if(Value >= prev, Value - prev, Value)) > 0
-                   FROM (
-                     SELECT TimeUnix, Value,
-                            lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
-                                                          ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
-                     FROM otel.otel_metrics_sum
-                     WHERE MetricName = 'payhub_stuck_payment_alerts_total' AND ServiceName = 'payhub-worker'
-                       AND TimeUnix >= now() - INTERVAL 1 HOUR - INTERVAL 1 DAY
-                   )
-                   WHERE TimeUnix >= now() - INTERVAL 1 HOUR)
-                ) AS value
+                SELECT toFloat64(min(Value) > 0 AND min(TimeUnix) <= now() - INTERVAL 55 MINUTE) AS value
+                FROM otel.otel_metrics_gauge
+                WHERE MetricName = 'payhub_unknown_state_payments' AND ServiceName = 'payhub-web'
+                  AND TimeUnix >= now() - INTERVAL 1 HOUR
           - refId: B
             datasourceUid: __expr__
             model:
@@ -737,12 +838,12 @@ groups:
         title: "Metrics scrape failing"
         condition: C
         for: 5m
-        noDataState: NoData
+        noDataState: Alerting
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "The collector cannot scrape {{ .Labels.service }}'s /metrics (up = 0, or no scrape at all): its alerts are blind."
+          summary: "The collector cannot scrape {{ .Labels.service }}'s /metrics (up = 0, or no scrape at all): its alerts are blind. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-scrape-down
         notification_settings:
           receiver: payhub-oncall
@@ -752,7 +853,7 @@ groups:
           - refId: A
             datasourceUid: clickhouse
             relativeTimeRange:
-              from: 300
+              from: 60
               to: 0
             model:
               refId: A
@@ -792,12 +893,12 @@ groups:
         title: "No PayHub logs for 15 minutes"
         condition: C
         for: 0s
-        noDataState: NoData
+        noDataState: Alerting
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "No PayHub log line reached ClickHouse in 15 minutes: the collector, the log pipeline or the app is down, and the S3 archive has a gap."
+          summary: "No PayHub log line reached ClickHouse in 15 minutes: the collector, the log pipeline or the app is down, and the S3 archive has a gap. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-logs-silent
         notification_settings:
           receiver: payhub-oncall
@@ -818,7 +919,7 @@ groups:
                 SELECT count() AS value
                 FROM otel.otel_logs
                 WHERE ServiceName LIKE 'payhub%'
-                  AND Timestamp >= now() - INTERVAL 15 MINUTE
+                  AND TimestampTime >= now() - INTERVAL 15 MINUTE
           - refId: B
             datasourceUid: __expr__
             model:
@@ -841,13 +942,13 @@ groups:
       - uid: payhub-archive-upload-failed
         title: "Log archive upload to S3 failed"
         condition: C
-        for: 0s
-        noDataState: NoData
+        for: 1m
+        noDataState: OK
         execErrState: Error
         labels:
           severity: page
         annotations:
-          summary: "The collector failed to upload log records to the S3 archive: those lines are missing from the archive until backfilled."
+          summary: "The collector failed to upload log records to the S3 archive: those lines are missing from the archive until backfilled. Value: {{ index .Values \"B\" }}."
           runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-archive-upload-failed
         notification_settings:
           receiver: payhub-oncall
@@ -865,16 +966,29 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                SELECT sum(rise) AS value
                 FROM (
-                  SELECT TimeUnix, Value,
-                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
-                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
-                  FROM otel.otel_metrics_sum
-                  WHERE MetricName = 'otelcol_exporter_send_failed_log_records' AND ServiceName = 'otelcol' AND Attributes['exporter'] = 'awss3'
-                    AND TimeUnix >= now() - INTERVAL 60 MINUTE - INTERVAL 1 DAY
+                  SELECT c.TimeUnix AS TimeUnix,
+                         if(isNaN(c.prev),
+                            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),
+                            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise
+                  FROM (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,
+                           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                    FROM otel.otel_metrics_sum
+                    WHERE MetricName = 'otelcol_exporter_send_failed_log_records' AND ServiceName = 'otelcol' AND Attributes['exporter'] = 'awss3'
+                      AND TimeUnix >= now() - INTERVAL 60 MINUTE - INTERVAL 1 DAY
+                  ) AS c
+                  INNER JOIN (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up
+                    FROM otel.otel_metrics_gauge
+                    WHERE MetricName = 'up' AND ServiceName = 'otelcol'
+                      AND TimeUnix >= now() - INTERVAL 60 MINUTE - INTERVAL 1 DAY
+                    GROUP BY ServiceName, instance
+                  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance
+                  WHERE c.TimeUnix >= now() - INTERVAL 60 MINUTE
                 )
-                WHERE TimeUnix >= now() - INTERVAL 60 MINUTE
           - refId: B
             datasourceUid: __expr__
             model:
