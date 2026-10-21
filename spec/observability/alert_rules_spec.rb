@@ -198,6 +198,39 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
     expect(rules_file.read).not_to include("$")
   end
 
+  describe "docs/SLO.md and the dashboard's SLOs row" do
+    # The uids in the last column of docs/SLO.md's summary table (the one headed "| SLO |").
+    def slo_alert_uids
+      lines = Rails.root.join("docs/SLO.md").readlines
+      table = lines.drop_while { |line| !line.start_with?("| SLO |") }.take_while { |line| line.start_with?("|") }
+      table.drop(2).flat_map { |row| row.split("|")[-2].scan(/`(payhub-[a-z0-9-]+)`/) }.flatten.uniq
+    end
+
+    # The stat panels after the "SLOs" row, by the alert each names in its description.
+    def slo_panels
+      panels = JSON.parse(Rails.root.join("observability/grafana/dashboards/payhub.json").read)["panels"]
+      row = panels.find { |panel| panel["type"] == "row" && panel["title"] == "SLOs" }
+      panels.select { |panel| panel["type"] == "stat" && panel.dig("gridPos", "y") > row.dig("gridPos", "y") }
+            .index_by { |panel| panel["description"][/`(payhub-[a-z0-9-]+)`/, 1] }
+    end
+
+    it "names only provisioned alerts, and every SLO alert (payhub-slo-*)" do
+      expect(slo_alert_uids.size).to be >= 10
+      expect(slo_alert_uids - rules.keys).to be_empty
+      slo_rules = rules.keys.grep(/\Apayhub-slo-/)
+      expect(slo_rules).not_to be_empty
+      expect(slo_alert_uids).to include(*slo_rules)
+    end
+
+    it "shows each SLO alert's current value on the dashboard, from the alert's own SQL" do
+      expect(slo_panels.keys).to match_array(slo_alert_uids)
+      slo_panels.each do |uid, panel|
+        expect(panel["targets"].sole["rawSql"]).to eq(sql(uid)), uid
+        expect(panel.dig("datasource", "uid")).to eq("clickhouse"), uid
+      end
+    end
+  end
+
   it "delivers pages and tickets to webhooks whose URLs come from the environment, never a literal" do
     points = contact["contactPoints"].index_by { |point| point["name"] }.transform_values { |point| point["receivers"].sole }
     expect(points.keys).to contain_exactly("payhub-oncall", "payhub-tickets")

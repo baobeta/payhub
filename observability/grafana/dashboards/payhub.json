@@ -534,6 +534,680 @@
           "rawSql": "SELECT $__timeInterval(TimeUnix) AS time, max(Value) AS unknown_state_payments FROM otel.otel_metrics_gauge WHERE MetricName = 'payhub_unknown_state_payments' AND ServiceName = 'payhub-web' AND $__timeFilter(TimeUnix) GROUP BY time ORDER BY time"
         }
       ]
+    },
+    {
+      "id": 12,
+      "type": "row",
+      "title": "SLOs",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 55,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "API p95, last 10m",
+      "description": "Alert `payhub-slo-api-p95` (ticket): its query, run now. It fires after 10m when this is above 300. See docs/SLO.md.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 56,
+        "w": 4,
+        "h": 4
+      },
+      "links": [
+        {
+          "title": "RUNBOOK: payhub-slo-api-p95",
+          "url": "https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-slo-api-p95",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT ifNotFinite(quantile(0.95)(Duration) / 1e6, 0) AS value\nFROM otel.otel_traces\nWHERE ServiceName = 'payhub-web' AND SpanKind = 'Server' AND SpanAttributes['http.route'] LIKE '/v1/%'\n  AND Timestamp >= now() - INTERVAL 10 MINUTE"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Unknown all hour (1 = yes)",
+      "description": "Alert `payhub-slo-outcome` (page): its query, run now. It fires at once when this is above 0. See docs/SLO.md.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 56,
+        "w": 4,
+        "h": 4
+      },
+      "links": [
+        {
+          "title": "RUNBOOK: payhub-slo-outcome",
+          "url": "https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-slo-outcome",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT toFloat64(min(Value) > 0 AND min(TimeUnix) <= now() - INTERVAL 55 MINUTE) AS value\nFROM otel.otel_metrics_gauge\nWHERE MetricName = 'payhub_unknown_state_payments' AND ServiceName = 'payhub-web'\n  AND TimeUnix >= now() - INTERVAL 1 HOUR"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Payments in unknown",
+      "description": "Alert `payhub-stuck-unknown` (page): its query, run now. It fires after 15m when this is above 0. See docs/SLO.md.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 56,
+        "w": 4,
+        "h": 4
+      },
+      "links": [
+        {
+          "title": "RUNBOOK: payhub-stuck-unknown",
+          "url": "https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-stuck-unknown",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT argMax(Value, TimeUnix) AS value\nFROM otel.otel_metrics_gauge\nWHERE MetricName = 'payhub_unknown_state_payments' AND ServiceName = 'payhub-web'\n  AND TimeUnix >= now() - INTERVAL 5 MINUTE"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "Stuck-payment alerts, 15m",
+      "description": "Alert `payhub-stuck-alerts` (page): its query, run now. It fires after 1m when this is above 0. See docs/SLO.md.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 56,
+        "w": 4,
+        "h": 4
+      },
+      "links": [
+        {
+          "title": "RUNBOOK: payhub-stuck-alerts",
+          "url": "https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-stuck-alerts",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT sum(rise) AS value\nFROM (\n  SELECT c.TimeUnix AS TimeUnix,\n         if(isNaN(c.prev),\n            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),\n            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise\n  FROM (\n    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,\n           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix\n                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev\n    FROM otel.otel_metrics_sum\n    WHERE MetricName = 'payhub_stuck_payment_alerts_total' AND ServiceName = 'payhub-worker'\n      AND TimeUnix >= now() - INTERVAL 15 MINUTE - INTERVAL 1 DAY\n  ) AS c\n  INNER JOIN (\n    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up\n    FROM otel.otel_metrics_gauge\n    WHERE MetricName = 'up' AND ServiceName = 'payhub-worker'\n      AND TimeUnix >= now() - INTERVAL 15 MINUTE - INTERVAL 1 DAY\n    GROUP BY ServiceName, instance\n  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance\n  WHERE c.TimeUnix >= now() - INTERVAL 15 MINUTE\n)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "Dead outbound events",
+      "description": "Alert `payhub-dead-letters` (ticket): its query, run now. It fires at once when this is above 0. See docs/SLO.md.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 56,
+        "w": 4,
+        "h": 4
+      },
+      "links": [
+        {
+          "title": "RUNBOOK: payhub-dead-letters",
+          "url": "https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-dead-letters",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT argMax(Value, TimeUnix) AS value\nFROM otel.otel_metrics_gauge\nWHERE MetricName = 'payhub_outbound_events_dead' AND ServiceName = 'payhub-web'\n  AND TimeUnix >= now() - INTERVAL 5 MINUTE"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "Unbalanced transfers, 24h",
+      "description": "Alert `payhub-ledger-imbalance` (page): its query, run now. It fires after 1m when this is above 0. See docs/SLO.md.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 20,
+        "y": 56,
+        "w": 4,
+        "h": 4
+      },
+      "links": [
+        {
+          "title": "RUNBOOK: payhub-ledger-imbalance",
+          "url": "https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-ledger-imbalance",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT sum(rise) AS value\nFROM (\n  SELECT c.TimeUnix AS TimeUnix,\n         if(isNaN(c.prev),\n            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),\n            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise\n  FROM (\n    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,\n           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix\n                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev\n    FROM otel.otel_metrics_sum\n    WHERE MetricName = 'payhub_ledger_imbalance_detected_total' AND ServiceName = 'payhub-worker'\n      AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY\n  ) AS c\n  INNER JOIN (\n    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up\n    FROM otel.otel_metrics_gauge\n    WHERE MetricName = 'up' AND ServiceName = 'payhub-worker'\n      AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY\n    GROUP BY ServiceName, instance\n  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance\n  WHERE c.TimeUnix >= now() - INTERVAL 24 HOUR\n)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Settlement discrepancies, 24h",
+      "description": "Alert `payhub-recon-breaks` (ticket): its query, run now. It fires after 1m when this is above 0. See docs/SLO.md.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 4,
+        "h": 4
+      },
+      "links": [
+        {
+          "title": "RUNBOOK: payhub-recon-breaks",
+          "url": "https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-recon-breaks",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT sum(rise) AS value\nFROM (\n  SELECT c.TimeUnix AS TimeUnix,\n         if(isNaN(c.prev),\n            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),\n            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise\n  FROM (\n    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,\n           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix\n                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev\n    FROM otel.otel_metrics_sum\n    WHERE MetricName = 'payhub_settlement_discrepancies_total' AND ServiceName = 'payhub-worker'\n      AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY\n  ) AS c\n  INNER JOIN (\n    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up\n    FROM otel.otel_metrics_gauge\n    WHERE MetricName = 'up' AND ServiceName = 'payhub-worker'\n      AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY\n    GROUP BY ServiceName, instance\n  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance\n  WHERE c.TimeUnix >= now() - INTERVAL 24 HOUR\n)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "Scrape up, last minute",
+      "description": "Alert `payhub-scrape-down` (page): its query, run now. It fires after 5m when this is below 1. See docs/SLO.md.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 4,
+        "y": 60,
+        "w": 4,
+        "h": 4
+      },
+      "links": [
+        {
+          "title": "RUNBOOK: payhub-scrape-down",
+          "url": "https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-scrape-down",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT s.service AS service, toFloat64(u.up) AS value\nFROM (SELECT arrayJoin(['payhub-web', 'payhub-worker']) AS service) AS s\nLEFT JOIN (\n  SELECT ServiceName, min(Value) AS up\n  FROM otel.otel_metrics_gauge\n  WHERE MetricName = 'up' AND ServiceName IN ('payhub-web', 'payhub-worker')\n    AND TimeUnix >= now() - INTERVAL 1 MINUTE\n  GROUP BY ServiceName\n) AS u ON s.service = u.ServiceName"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "/^value$/",
+          "values": true
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "displayName": "${__data.fields.service}"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Log lines, last 15m",
+      "description": "Alert `payhub-logs-silent` (page): its query, run now. It fires after 1m when this is below 1. See docs/SLO.md.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 60,
+        "w": 4,
+        "h": 4
+      },
+      "links": [
+        {
+          "title": "RUNBOOK: payhub-logs-silent",
+          "url": "https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-logs-silent",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT count() AS value\nFROM otel.otel_logs\nWHERE ServiceName LIKE 'payhub%'\n  AND TimestampTime >= now() - INTERVAL 15 MINUTE"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Archive upload failures, 1h",
+      "description": "Alert `payhub-archive-upload-failed` (page): its query, run now. It fires after 1m when this is above 0. See docs/SLO.md.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 60,
+        "w": 4,
+        "h": 4
+      },
+      "links": [
+        {
+          "title": "RUNBOOK: payhub-archive-upload-failed",
+          "url": "https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-archive-upload-failed",
+          "targetBlank": true
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "editorType": "sql",
+          "queryType": "table",
+          "format": 1,
+          "rawSql": "SELECT sum(rise) AS value\nFROM (\n  SELECT c.TimeUnix AS TimeUnix,\n         if(isNaN(c.prev),\n            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),\n            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise\n  FROM (\n    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,\n           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix\n                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev\n    FROM otel.otel_metrics_sum\n    WHERE MetricName = 'otelcol_exporter_send_failed_log_records' AND ServiceName = 'otelcol' AND Attributes['exporter'] = 'awss3'\n      AND TimeUnix >= now() - INTERVAL 60 MINUTE - INTERVAL 1 DAY\n  ) AS c\n  INNER JOIN (\n    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up\n    FROM otel.otel_metrics_gauge\n    WHERE MetricName = 'up' AND ServiceName = 'otelcol'\n      AND TimeUnix >= now() - INTERVAL 60 MINUTE - INTERVAL 1 DAY\n    GROUP BY ServiceName, instance\n  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance\n  WHERE c.TimeUnix >= now() - INTERVAL 60 MINUTE\n)"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
     }
   ]
 }
