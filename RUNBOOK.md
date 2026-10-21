@@ -235,7 +235,7 @@ volumes:
 - **Without `env: OTEL_SERVICE_NAME`** on a container, none of its lines reach ClickHouse or the archive. After any change to the logging options, check that `SELECT ServiceName, count() FROM otel.otel_logs WHERE Timestamp > now() - INTERVAL 10 MINUTE GROUP BY ServiceName` shows both services. Logging options apply only to containers created after the change.
 - **Permissions.** The image runs as uid 10001, which cannot read Docker's logs. Run it as `user: "0"` with the mount read-only (or give uid 10001 read access through a group and ACL). Otherwise filelog only logs permission errors and the archive stays empty, with nothing else failing.
 - **Restarts.** Read positions are checkpointed in `/var/lib/otelcol/storage`, so a restarted collector resumes where it stopped. Lines written while it was down are delivered when it starts again, as long as Docker has not rotated them away in the meantime (with the settings above, 250 MB per container). Without that volume, a restart starts at the end of every file and loses the gap. ClickHouse batches wait in the same volume while ClickHouse is down.
-- **S3 outage.** The 0.111.0 S3 exporter has no queue and no retry: a batch whose upload fails is dropped from the archive (the collector logs an `awss3` export error) but is still in ClickHouse for 90 days. Backfill it from ClickHouse before then, under its own prefix so it is not mistaken for the collector's output:
+- **S3 outage.** The 0.111.0 S3 exporter has no queue and no retry: a batch whose upload fails is dropped from the archive (the collector logs an `awss3` export error) but is still in ClickHouse for 90 days. Alerting on failed uploads, from the collector's own metrics, comes with the Grafana alert rules (Task 8); until then, check the collector's logs. Backfill it from ClickHouse before then, under its own prefix so it is not mistaken for the collector's output:
   `INSERT INTO FUNCTION s3('https://<bucket>.s3.<region>.amazonaws.com/payhub/logs-backfill/<from>_<to>.jsonl.gz', 'JSONEachRow') SELECT Timestamp, ServiceName, SeverityText, Body, LogAttributes FROM otel.otel_logs WHERE Timestamp >= '<from>' AND Timestamp < '<to>'`
 - **Network.** The OTLP receivers (4317, 4318) accept anything sent to them, without authentication. Expose them only on the internal network that web and worker use, never on a public interface.
 - **Retention.** The TTL is set when the exporter creates the tables, the same 90 days for logs, traces and metrics. Changing `ttl` later does not alter existing tables; run e.g. `ALTER TABLE otel.otel_logs MODIFY TTL TimestampTime + toIntervalDay(<days>)` (and the same for `otel_traces` and `otel_metrics_*`, whose TTL columns differ: `SHOW CREATE TABLE` first).
@@ -267,9 +267,18 @@ WHERE body LIKE '%"payment_id":"<PAYMENT_ID>"%'
 ORDER BY ts
 ```
 
+Lines backfilled from ClickHouse (see "S3 outage" above) are under `payhub/logs-backfill/`, one row per line:
+
+```sql
+SELECT Timestamp, ServiceName, Body
+FROM s3('https://<bucket>.s3.<region>.amazonaws.com/payhub/logs-backfill/*', 'JSONEachRow')
+WHERE Body LIKE '%"payment_id":"<PAYMENT_ID>"%'
+ORDER BY Timestamp
+```
+
 Athena works too (a table over `payhub/logs/` partitioned by year/month/day/hour), if one has been set up.
 
-**Quarterly restore drill.** Once a quarter, pick a payment from 6–12 months ago, find its lines with the query above, and record with the team's audit evidence the date, the payment, how long it took and anything that did not work (missing hours, a credential that had expired). An archive that has never been read is not evidence.
+**Quarterly restore drill.** Once a quarter, pick a payment from 6–12 months ago, find its lines under both prefixes (`payhub/logs/` and `payhub/logs-backfill/`, with the two queries above), and check the collector's logs for the quarter for `awss3` export errors (each one is a gap that needs a backfill while ClickHouse still has it). Record with the team's audit evidence the date, the payment, how long it took and anything that did not work (missing hours, a credential that had expired). An archive that has never been read is not evidence.
 
 ## Quick reference
 

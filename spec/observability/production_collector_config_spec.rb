@@ -32,8 +32,21 @@ RSpec.describe "OpenTelemetry production collector config" do # rubocop:disable 
 
   it "reads container stdout logs, rotated files included, never development.log" do
     expect(filelog["include"]).to eq(["/var/lib/docker/containers/*/*-json.log*"])
-    expect(operators.first).to include("type" => "container", "format" => "docker")
+    # Docker's envelope, with its time as the timestamp before anything else
+    # runs; not the 0.111.0 `container` operator, which sets it only after
+    # passing the entry on.
+    expect(operators.first).to include("type" => "json_parser", "parse_from" => "body")
+    expect(operators.first["timestamp"]).to include("parse_from" => "attributes.time")
+    expect(operators.pluck("type")).not_to include("container")
     expect(pairs(config).map(&:last).grep(String).join("\n")).not_to include("development.log")
+  end
+
+  it "archives no redundant attributes: the raw time string or the file path" do
+    removed = operators.filter_map { |op| op["field"] if op["type"] == "remove" }
+    expect(removed).to include("attributes.time", 'attributes["log.file.path"]')
+    # The app's own "time" goes only once the time parse has used it.
+    expect(operators.rindex { |op| op["type"] == "remove" && op["field"] == "attributes.time" })
+      .to be > operators.index { |op| op["type"] == "time_parser" }
   end
 
   it "checkpoints reads and queues ClickHouse exports on a persistent disk" do
@@ -59,7 +72,7 @@ RSpec.describe "OpenTelemetry production collector config" do # rubocop:disable 
   it "keeps every PayHub JSON line, whatever its kind or event" do
     exprs = operators.filter_map { |op| op["expr"] if op["type"] == "filter" }
     expect(exprs.grep(/attributes\.(kind|event)/)).to be_empty
-    # Event lines have no "time": they keep the timestamp Docker gave the line.
+    # Event lines have no "time": they keep the timestamp from Docker's envelope.
     expect(operators.select { |op| op["type"] == "time_parser" })
       .to contain_exactly(include("if" => "attributes.kind != nil and attributes.time != nil",
                                   "layout" => "2006-01-02T15:04:05.999999999Z07:00"))
