@@ -12,3 +12,7 @@ StrongMigrations.target_version = 16
 # gives up after 10s instead of queueing every write behind it.
 StrongMigrations.lock_timeout = 10.seconds
 StrongMigrations.statement_timeout = 1.hour
+# A new index is no use to the planner until the table's statistics are refreshed.
+StrongMigrations.auto_analyze = true
+# A concurrent build that failed leaves an INVALID index; a rerun add_index (same table, columns, options) drops it first.
+StrongMigrations.remove_invalid_indexes = true

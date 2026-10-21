@@ -20,6 +20,11 @@ RSpec.describe "strong_migrations" do # rubocop:disable RSpec/DescribeClass
   end
 
   it "PR-12: leaves migrations up to start_after unchecked (they have already run)" do
-    expect { migration(StrongMigrations.start_after).migrate(:up) }.not_to raise_error # rolled back with the example
+    connection = ActiveRecord::Base.connection
+
+    # The index and the session timeouts both roll back with the example.
+    expect { migration(StrongMigrations.start_after).migrate(:up) }.not_to raise_error
+    expect(connection.index_name_exists?(:merchants, "idx_strong_migrations_spec")).to be(true)
+    expect(connection.select_value("SHOW lock_timeout")).to eq("10s")
   end
 end
