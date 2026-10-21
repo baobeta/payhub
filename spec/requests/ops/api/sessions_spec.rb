@@ -89,6 +89,19 @@ RSpec.describe "Ops sign-in", type: :request do
     expect(json_body.dig("user", "email")).to eq("fresh@example.com")
   end
 
+  it "TC-M4-1 refuses an operator recovery code used a second time" do
+    codes = RecoveryCode.regenerate!(operator)
+    sign_in_password
+    post "/ops/api/session/recovery", params: { code: codes.first }.to_json, headers: ui_headers
+    expect(response).to have_http_status(:ok)
+    delete "/ops/api/session", headers: ui_headers
+
+    sign_in_password
+    post "/ops/api/session/recovery", params: { code: codes.first }.to_json, headers: ui_headers
+    expect(response).to have_http_status(:unauthorized)
+    expect(json_body.dig("error", "code")).to eq("invalid_code")
+  end
+
   it "signs out and revokes the session row" do
     session = sign_in_operator(operator)
     delete "/ops/api/session", headers: ui_headers

@@ -60,4 +60,48 @@ RSpec.describe DeliverOutboundEventsJob do
       expect(event.delivered_at).to be_present
     end
   end
+
+  describe "the retry schedule (H8; Stripe retries for about 3 days)" do
+    let(:url) { "https://hooks.example.com/payhub" }
+    let(:event) { OutboundEvent.emit!(create(:payment, merchant: create(:merchant, webhook_url: url)), "payment.captured") }
+
+    before do
+      allow(WebhookUrlGuard).to receive(:problem).and_return(nil)
+      stub_request(:post, url).to_return(status: 500)
+    end
+
+    # Delivers at each due time until the event leaves `pending`; returns the waits.
+    def fail_until_dead
+      waits = []
+      while event.reload.state == "pending"
+        travel_to(event.next_attempt_at)
+        before = Time.current
+        described_class.deliver_now(event.id)
+        waits << (event.next_attempt_at - before).round if event.reload.state == "pending"
+      end
+      waits
+    end
+
+    it "TC-H8-2: backs off 1m, 5m, 30m, 2h, 8h, 24h, 36h, and is dead after attempt 8, ~70.6h after the first" do
+      freeze_time
+      first = event.next_attempt_at
+
+      waits = fail_until_dead
+
+      expect(waits).to eq([1.minute, 5.minutes, 30.minutes, 2.hours, 8.hours, 24.hours, 36.hours].map(&:to_i))
+      expect(event).to have_attributes(state: "dead", attempts: 8)
+      expect(event.delivery_attempts.maximum(:created_at) - first).to eq(4236.minutes.to_i) # 70.6h
+    end
+
+    it "TC-H8-2: a redelivery restarts the schedule from 1m for its 8 new attempts" do
+      freeze_time
+      fail_until_dead
+      event.redeliver!
+
+      waits = fail_until_dead
+
+      expect(waits).to eq([1.minute, 5.minutes, 30.minutes, 2.hours, 8.hours, 24.hours, 36.hours].map(&:to_i))
+      expect(event).to have_attributes(state: "dead", attempts: 16)
+    end
+  end
 end

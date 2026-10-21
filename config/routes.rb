@@ -27,6 +27,9 @@ Rails.application.routes.draw do
   namespace :dashboard do
     namespace :api, defaults: { format: :json } do
       get "me", to: "me#show"
+      resources :sessions, only: %i[index destroy], controller: "active_sessions" do
+        post :revoke_others, on: :collection
+      end
       resource :session, only: %i[create destroy] do
         post :otp
         post :recovery
@@ -35,6 +38,7 @@ Rails.application.routes.draw do
       resources :invitations, only: %i[create show], param: :token do
         post :accept, on: :member
       end
+      post "invitations/:id/resend", to: "invitations#resend", as: :resend_invitation
       get "otp/setup", to: "otp#setup"
       post "otp/confirm", to: "otp#confirm"
       resource :me, only: [], controller: "me" do
@@ -66,7 +70,9 @@ Rails.application.routes.draw do
       resources :events, only: %i[index show] do
         post :redeliver, on: :member
       end
-      resources :members, only: %i[index update destroy]
+      resources :members, only: %i[index update destroy] do
+        post :reset_otp, on: :member
+      end
       post "ownership_transfer", to: "ownership_transfers#create"
       get "security_history", to: "security_history#index"
       get "security_history/export", to: "security_history#export"
@@ -102,6 +108,9 @@ Rails.application.routes.draw do
       resources :operators, only: %i[index create update destroy]
       get "access_review", to: "operators#access_review"
       resources :audit_events, only: :index
+      resources :sessions, only: %i[index destroy], controller: "active_sessions" do
+        post :revoke_others, on: :collection
+      end
       resource :session, only: %i[create destroy] do
         post :otp
         post :recovery

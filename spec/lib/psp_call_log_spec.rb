@@ -55,4 +55,59 @@ RSpec.describe PspCallLog do
     end
     expect(PspCall.count).to eq(0)
   end
+
+  describe "the psp_call log line (K1; PCI DSS 10.2.1, 10.3: complete logs, shipped off the box)" do
+    let(:pan) { "4242424242424242" }
+    let(:lines) { [] }
+
+    before { allow(Rails.logger).to receive(:info).and_wrap_original { |m, msg| lines << msg.to_s if msg.to_s.include?('"psp_call"'); m.call(msg) } }
+
+    def record_card_call(**overrides)
+      described_class.record(psp: "nordpay", method: :post, path: "/charges?token=tok_secret_1",
+                             request_body: { reference: "ph_#{'e' * 24}", card_number: pan, client_secret: "cs_123" },
+                             headers: { "Authorization" => "Bearer sk_nordpay_live" },
+                             status: nil, response_body: { "pan" => pan }, outcome: "timeout", started_at: started,
+                             error: "Net::ReadTimeout card #{pan}", **overrides)
+    end
+
+    it "TC-K1-3: a call recorded inside a transaction that rolls back loses its row, but its redacted log line was written" do
+      ApplicationRecord.transaction do
+        record_card_call
+        raise ActiveRecord::Rollback
+      end
+
+      expect(PspCall.count).to eq(0)
+      expect(lines.size).to eq(1)
+      line = JSON.parse(lines.first)
+      expect(line).to include("event" => "psp_call", "psp" => "nordpay", "method" => "POST", "status" => nil,
+                              "outcome" => "timeout", "psp_reference" => "ph_#{'e' * 24}",
+                              "path" => a_string_starting_with("POST /charges"), "duration_ms" => a_kind_of(Integer),
+                              "error" => a_string_including("Net::ReadTimeout"))
+      %W[#{pan} tok_secret_1 cs_123 sk_nordpay_live].each { |secret| expect(lines.first).not_to include(secret) }
+    end
+
+    it "TC-K1-4 masks a JSON secret quoted in the error text" do
+      record_card_call(error: 'Faraday::Error: unexpected token at {"client_secret":"abc123"}')
+
+      expect(JSON.parse(lines.sole)["error"]).to include('"client_secret":"[REDACTED]"')
+      expect(lines.sole).not_to include("abc123")
+    end
+
+    it "counts a call made inside an open business transaction (DECISIONS #13: no PSP call under a lock)" do
+      allow(Metrics).to receive(:increment).and_call_original
+
+      ApplicationRecord.transaction { record_card_call }
+
+      expect(Metrics).to have_received(:increment).with(:psp_call_in_transaction, psp: "nordpay").once
+    end
+
+    it "does not count a call made outside any business transaction" do
+      allow(Metrics).to receive(:increment).and_call_original
+
+      record_card_call
+
+      expect(Metrics).not_to have_received(:increment).with(:psp_call_in_transaction, anything)
+      expect(lines.size).to eq(1)
+    end
+  end
 end

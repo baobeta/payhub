@@ -22,6 +22,7 @@ PayHub is a payment orchestration API. Merchants integrate once; PayHub routes e
 - [Local development](#local-development)
 - [Configuration and troubleshooting](#configuration-and-troubleshooting)
 - [API reference](#api-reference)
+- [Webhook delivery guarantees](#webhook-delivery-guarantees)
 - [How it works](#how-it-works)
 - [Domain model and schema](#domain-model-and-schema)
 - [PSP simulators](#psp-simulators)
@@ -272,7 +273,22 @@ A `422` lists **every** failing field under `details`.
 | Same key, different body | `422 idempotency_error` |
 | Same key, first request still running | `409`, retriable |
 
-**Rate limit.** 300 requests per minute per API key. Over the limit, the API returns `429` with `Retry-After`.
+**Rate limits.** Counted per merchant across all of its API keys, with separate budgets: 300 requests per minute live, 75 test (Stripe's 4:1 live-to-sandbox ratio). Adding keys does not add throughput. A request whose key matches no active key is counted per IP at 30 per minute. The dashboard and ops APIs allow 300 requests per minute per signed-in session. Over a limit, the API returns `429` with `Retry-After` and `PayHub-Rate-Limited-Reason: global-rate`. Override with `RATE_LIMIT_PER_MINUTE` and `RATE_LIMIT_TEST_PER_MINUTE`.
+
+## Webhook delivery guarantees
+
+PayHub posts an event to the merchant's webhook URL for every payment, capture and refund change ([#4](DECISIONS.md#4-webhook-order-is-the-psps-timestamp-not-arrival-order), corollary):
+
+```json
+{"id": "…", "type": "payment.captured", "livemode": true, "created_at": "…", "sequence": 3, "attempt": 1, "data": {…}}
+```
+
+- **At least once.** The event is written in the same transaction as the change, so none is lost, but one can arrive twice. Dedupe on `id` (also sent as `X-Payhub-Event-Id`).
+- **No ordering.** A retried event can arrive after a newer one. `sequence` counts each payment's events from 1 and only goes up: ignore an event whose `sequence` is lower than the last one you applied for that payment.
+- **Retries.** Any answer other than 2xx, or no answer, is retried after 1m, 5m, 30m, 2h, 8h, 24h and 36h. After the 8th attempt, about 70.6 hours after the first, the event is dead. It stays listed in `GET /v1/events` with every attempt, and `POST /v1/events/:id/redeliver` gives it 8 more attempts on the same schedule.
+- **Respond fast.** Return 2xx as soon as the event is stored and do the work afterwards. PayHub waits 2 seconds to connect and 5 seconds for the response; anything slower counts as a failure and is retried.
+- **Signature.** `X-Payhub-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<raw body>">`. Compare with a constant-time check and reject a `t` more than 5 minutes from now, which stops a captured delivery being replayed.
+- **Secret rotation.** For 24 hours after a rotation every delivery carries two `v1=` values, one per secret, so you can deploy the new secret at any point in that window ([#15](DECISIONS.md#15-every-webhook-verifier-takes-a-list-of-secrets)).
 
 ## How it works
 
@@ -385,8 +401,8 @@ It exits non-zero on any violation and restores the simulator's configuration af
 
 | Signal | Details |
 | --- | --- |
-| **Logs** | One JSON line per request (lograge) and per job, carrying `request_id`, `merchant_id`, `payment_id`, `psp_name` and `duration_ms`. Jobs inherit the enqueuing request's id, so `grep '"payment_id":"…"' log/*.log` reconstructs a payment's whole life. Request bodies are never logged. |
-| **Metrics** | `GET /metrics` (Prometheus): `payhub_payments_created_total`, `payhub_psp_calls_total`, `payhub_webhook_deliveries_total`, `payhub_webhook_duplicates_total`, `payhub_webhook_signature_failures_total`, `payhub_stuck_payment_alerts_total`, `payhub_ledger_imbalance_detected_total`; gauges `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead` |
+| **Logs** | One JSON line per request (lograge) and per job, carrying `request_id`, `merchant_id`, `payment_id`, `psp_name` and `duration_ms`. Jobs inherit the enqueuing request's id, so `grep '"payment_id":"…"' log/*.log` reconstructs a payment's whole life. Request bodies are never logged. Every PSP call also writes one redacted `psp_call` line (PSP, method, path template, status, outcome, duration, reference, error), which survives when the transaction holding its `psp_calls` row rolls back. |
+| **Metrics** | `GET /metrics` (Prometheus): `payhub_payments_created_total`, `payhub_psp_calls_total`, `payhub_webhook_deliveries_total`, `payhub_webhook_duplicates_total`, `payhub_webhook_signature_failures_total`, `payhub_stuck_payment_alerts_total`, `payhub_ledger_imbalance_detected_total`, `payhub_psp_call_in_transaction_total` (a PSP call made inside a database transaction, which [#13](DECISIONS.md#13-the-sweeper-schedules-each-payment-instead-of-re-scanning-the-oldest) forbids; should stay 0); gauges `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead` |
 | **Traces** | OpenTelemetry across web, Sidekiq and every PSP call, with each SQL statement as a span |
 | **Alert** | `event=alert.stuck_payment` at ERROR, for any payment in `pending` or `unknown` past 15 minutes. This is the only signal that pages; everything else is a dashboard. |
 | **Health** | `GET /healthz` checks the database only. A liveness probe that fails on a slow dependency causes restarts, not fixes. |

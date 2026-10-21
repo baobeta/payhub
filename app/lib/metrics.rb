@@ -27,6 +27,7 @@ module Metrics
       settlement_discrepancies: [:psp, :status],
       ledger_imbalance_detected: [],
       psp_call_log_failures: [:psp],
+      psp_call_in_transaction: [:psp],
       authz_denied: [:area, :permission],
       audit_write_failed: [:area],
       authz_undeclared: [:controller],

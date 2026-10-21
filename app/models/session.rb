@@ -15,6 +15,11 @@ class Session < ApplicationRecord
 
   attribute :last_active_at, :datetime, default: -> { Time.current }
 
+  # The SQL twin of active?: rows that would still let their browser in.
+  scope :live, lambda { |idle:|
+    where(revoked_at: nil).where("last_active_at > ?", idle.ago).where("created_at > ?", ABSOLUTE_LIFETIME.ago)
+  }
+
   sig { params(idle: T.untyped).returns(T::Boolean) }
   def active?(idle:)
     revoked_at.nil? && last_active_at > idle.ago && created_at > ABSOLUTE_LIFETIME.ago

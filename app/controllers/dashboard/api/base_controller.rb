@@ -120,6 +120,17 @@ module Dashboard
         )
       end
 
+      # M12: the owner hears about every change to keys, endpoint and team, with
+      # who made it (Stripe emails the account owner the same way). Sent even
+      # when the owner made the change, so an owner's stolen session shows too.
+      sig { params(event: String, detail: T.nilable(String)).void }
+      def notify_owner(event, detail: nil)
+        owner = live_merchant.merchant_users.active.find_by(role: "owner") # authz-allow-role-check
+        return unless owner
+
+        SecurityMailer.account_changed(owner, event:, actor: current_user.email, at: Time.current, detail:).deliver_later
+      end
+
       # Every error answer passes here, so a refused write is audited once.
       sig { params(error: ApiError).void }
       def render_api_error(error)

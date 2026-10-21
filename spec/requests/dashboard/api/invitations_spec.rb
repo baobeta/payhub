@@ -82,6 +82,118 @@ RSpec.describe "Invitations and enrolment", type: :request do
     expect(response).to have_http_status(:unauthorized)
   end
 
+  # M11: resend, revoke and re-invite (Stripe 10-day expiry; Slack resend and
+  # deleted invites; GitHub re-inviting former members).
+  describe "resend, revoke and re-invite" do
+    let(:pending) { MerchantUser.invite!(merchant: admin.merchant, email: "pending@example.com", role: "viewer", invited_by: admin) }
+
+    def resend(member) = post("/dashboard/api/invitations/#{member.id}/resend", headers: ui_headers)
+
+    it "TC-M11-1 rotates the token: the old link dies, the new one works, the expiry resets, and it is emailed" do
+      user, old_token = pending
+      travel 3.days
+      sign_in_as(admin, stepped_up: true)
+      new_token = nil
+      allow(InvitationMailer).to receive(:invite).and_wrap_original do |m, *args|
+        new_token = args.last
+        m.call(*args)
+      end
+
+      expect { resend(user) }.to have_enqueued_mail(InvitationMailer, :invite)
+
+      expect(response).to have_http_status(:ok)
+      expect(user.reload.invitation_expires_at).to be_within(1.minute).of(10.days.from_now)
+      expect(AuditEvent.last).to have_attributes(action: "team.invitation_resent", target_id: user.id)
+      get "/dashboard/api/invitations/#{old_token}"
+      expect(response).to have_http_status(:not_found)
+      get "/dashboard/api/invitations/#{new_token}"
+      expect(response).to have_http_status(:ok)
+    end
+
+    it "TC-M11-6 a resend whose transaction rolls back emails nothing (the link would be dead)" do
+      user, = pending
+      sign_in_as(admin, stepped_up: true)
+      # The whole unit of work rolls back at its end, as a failed COMMIT would.
+      allow(MerchantUser).to receive(:transaction).and_wrap_original do |m, *args, **opts, &blk|
+        m.call(*args, **opts) do |tx|
+          blk.call(tx)
+          raise ActiveRecord::Rollback
+        end
+      end
+
+      expect { resend(user) }.not_to have_enqueued_mail(InvitationMailer, :invite)
+    end
+
+    it "TC-M11-1 needs team.manage with step-up" do
+      user, = pending
+      sign_in_as(admin)
+      resend(user)
+      expect(json_body.dig("error", "code")).to eq("step_up_required")
+    end
+
+    it "TC-M11-2 refuses an accepted member with 409 invalid_state" do
+      sign_in_as(admin, stepped_up: true)
+      resend(create(:merchant_user, merchant: admin.merchant, role: "viewer"))
+      expect(response).to have_http_status(:conflict)
+      expect(json_body.dig("error", "code")).to eq("invalid_state")
+    end
+
+    it "TC-M11-2 refuses the 6th resend within 24 hours with 429 resend_limit" do
+      user, = pending
+      sign_in_as(admin, stepped_up: true)
+      5.times do
+        resend(user)
+        expect(response).to have_http_status(:ok)
+      end
+      resend(user)
+      expect(response).to have_http_status(:too_many_requests)
+      expect(json_body.dig("error", "code")).to eq("resend_limit")
+    end
+
+    it "TC-M11-3 a removed pending invite's link is not found" do
+      user, token = pending
+      sign_in_as(admin, stepped_up: true)
+      delete "/dashboard/api/members/#{user.id}", headers: ui_headers
+      expect(response).to have_http_status(:ok)
+      get "/dashboard/api/invitations/#{token}"
+      expect(response).to have_http_status(:not_found)
+      resend(user)
+      expect(response).to have_http_status(:conflict)
+    end
+
+    it "TC-M11-4 a removed member's email can be invited again, in any case, as a new row" do
+      former = create(:merchant_user, merchant: admin.merchant, email: "back@example.com", role: "viewer")
+      sign_in_as(admin, stepped_up: true)
+      delete "/dashboard/api/members/#{former.id}", headers: ui_headers
+      before = former.reload.attributes
+
+      invite(email: "Back@Example.com")
+
+      expect(response).to have_http_status(:created)
+      expect(json_body["id"]).not_to eq(former.id)
+      expect(former.reload.attributes).to eq(before)
+      expect(MerchantUser.where("lower(email) = ?", "back@example.com").count).to eq(2)
+    end
+
+    it "TC-M11-4 sign-in after a re-invite matches only the active row" do
+      former = create(:merchant_user, merchant: admin.merchant, email: "back@example.com", role: "viewer")
+      former.update!(disabled_at: Time.current)
+      create(:merchant_user, merchant: admin.merchant, email: "back@example.com", role: "support",
+                             password: "another long password")
+      expect(SignIn.password(MerchantUser, email: "BACK@example.com", password: "another long password").status).to eq(:ok)
+      expect(SignIn.password(MerchantUser, email: "back@example.com", password: "correct horse battery staple").status)
+        .to eq(:invalid)
+    end
+
+    it "TC-M11-5 refuses an email that belongs to an active user of any merchant" do
+      create(:merchant_user, email: "taken@example.com")
+      sign_in_as(admin, stepped_up: true)
+      invite(email: "TAKEN@example.com")
+      expect(response).to have_http_status(:unprocessable_content)
+      expect(json_body.dig("error", "details", "email")).to eq(["already belongs to a PayHub user"])
+    end
+  end
+
   it "refuses an expired invitation" do
     _user, token = MerchantUser.invite!(merchant: admin.merchant, email: "late@example.com", role: "viewer", invited_by: admin)
     travel 11.days

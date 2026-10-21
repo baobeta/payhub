@@ -29,6 +29,7 @@ const list = useQuery({
           <option value="failed">failed</option>
           <option value="rejected">rejected</option>
           <option value="withdrawn">withdrawn</option>
+          <option value="expired">expired</option>
         </select>
       </label>
     </div>

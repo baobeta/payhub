@@ -52,8 +52,19 @@ Rails.application.configure do
   # want to log everything, set the level to "debug".
   config.log_level = ENV.fetch("RAILS_LOG_LEVEL", "info")
 
-  # Use a different cache store in production.
-  # config.cache_store = :mem_cache_store
+  # One cache for every Puma and Sidekiq process, so Rack::Attack's counters
+  # are shared: per-process memory stores would multiply each limit by the
+  # process count (TC-L6-5; RUNBOOK "Rate limits"). The Redis Sidekiq already
+  # uses, under its own namespace. A Redis outage is logged, and the cache
+  # then reads as empty: throttles fail open rather than failing requests.
+  config.cache_store = :redis_cache_store, {
+    url: ENV.fetch("REDIS_URL", "redis://localhost:6379/0"),
+    namespace: "payhub-cache",
+    error_handler: lambda { |method:, returning:, exception:|
+      Rails.logger.error({ event: "cache_error", method:, returning: returning.inspect,
+                           error: exception.class.name }.to_json)
+    }
+  }
 
   # Use a real queuing backend for Active Job (and separate queues per environment).
   # config.active_job.queue_adapter = :resque

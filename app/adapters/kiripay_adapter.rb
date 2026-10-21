@@ -194,18 +194,18 @@ class KiripayAdapter < PspAdapter
   rescue Faraday::TimeoutError => e
     Metrics.increment(:psp_calls, psp: "kiripay", operation: operation, outcome: "timeout")
     PspCallLog.record(psp: "kiripay", method:, path:, params:, request_body: body, status: nil, response_body: nil,
-                      outcome: "timeout", started_at: T.must(started_at))
+                      outcome: "timeout", started_at: T.must(started_at), error: PspCallLog.describe_error(e))
     raise TimedOut, "kiripay #{method.upcase} #{path}: #{e.message}"
   rescue Faraday::ConnectionFailed => e
     Metrics.increment(:psp_calls, psp: "kiripay", operation: operation, outcome: "unreachable")
     PspCallLog.record(psp: "kiripay", method:, path:, params:, request_body: body, status: nil, response_body: nil,
-                      outcome: "unreachable", started_at: T.must(started_at))
+                      outcome: "unreachable", started_at: T.must(started_at), error: PspCallLog.describe_error(e))
     raise Unavailable, "kiripay unreachable: #{e.message}"
-  rescue Faraday::Error
+  rescue Faraday::Error => e
     # Any other transport failure (TLS, malformed response); record and surface.
     Metrics.increment(:psp_calls, psp: "kiripay", operation: operation, outcome: "unreachable")
     PspCallLog.record(psp: "kiripay", method:, path:, params:, request_body: body, status: nil, response_body: nil,
-                      outcome: "unreachable", started_at: T.must(started_at))
+                      outcome: "unreachable", started_at: T.must(started_at), error: PspCallLog.describe_error(e))
     raise
   end
 

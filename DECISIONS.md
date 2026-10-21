@@ -50,6 +50,8 @@ Each entry: what we chose in plain words, what we chose exactly, what we rejecte
 
 **Trade-off:** We trust the PSP's clock. When its timestamps don't reflect the real order, or our own timestamps are chosen badly, a genuine verdict can look stale and be ignored; #11 is exactly that failure. Stale events are also stored forever, which costs space.
 
+**Corollary, outbound:** we owe merchants what we ask of PSPs. Our webhooks are at-least-once and unordered, like Stripe's ([Stripe: webhooks](https://docs.stripe.com/webhooks)) and Checkout.com's ([Checkout.com: webhooks](https://www.checkout.com/docs/developer-resources/webhooks)): the outbox commits with the state change, a retry can follow a delivery whose 2xx we never saw, and a later event can overtake an earlier one that is still backing off. So every event carries `id` to dedupe on and `sequence`, a per-payment counter that only goes up, to drop a stale update — Adyen's `sequenceNumber` ([Adyen: handle webhook events](https://docs.adyen.com/development-resources/webhooks/handle-webhook-events)), and our own `sort_key` seen from the receiving end. `sequence` is `max + 1` under the payment's row lock, which every emitter already holds, with a unique index behind it; a counter column on `payments` would also work but writes the hottest row once more per event. Failed deliveries retry after 1m, 5m, 30m, 2h, 8h, 24h and 36h, and the event is dead after attempt 8, about 70.6 hours after the first: Stripe's "about 3 days", long enough to outlast a merchant's weekend outage, short of Adyen's 30 days because a dead event is redelivered by hand anyway. A redelivery gets 8 more attempts on the same schedule.
+
 ## 5. Balances are derived from an append-only double-entry ledger
 
 **In plain words:** We keep an account book written in pen. Every movement is two lines that cancel out, a balance is the sum, and mistakes are fixed with new lines, never erased.
@@ -246,7 +248,7 @@ The failover rule comes from the orchestrators that do route across PSPs. Spreed
 
 **In plain words:** Like checking your bank statement against your receipts: every day we compare what the card company actually paid with what our books say.
 
-**Decision:** `SettlementReconciliationJob` runs daily after the API reconciliation. For every PSP that publishes a settlement report (Nordpay: a CSV per UTC day, one line per capture net of fee and per refund), it ingests each line exactly once, matches it to our books, and books the matched ones: a capture clears `psp_receivable` into `psp_payouts` and `psp_fees`; a refund clears `refunds_paid` against `psp_payouts`. Lines that don't add up (net ≠ gross − fee), match nothing, are in another currency, settle more than the ledger captured, pay a refund our books still call pending or for another amount, or settle a refund another line already settled are stored with the problem, logged at ERROR, counted, and never booked; a booking the ledger refuses is flagged the same way and the run carries on. Several capture lines for one payment are normal (one per capture). Captures not settled within 3 days are flagged. Kiripay publishes no report we can fetch and is skipped, explicitly.
+**Decision:** `SettlementReconciliationJob` runs daily after the API reconciliation. For every PSP that publishes a settlement report (Nordpay: a CSV per UTC day, one line per capture net of fee and per refund), it ingests each line exactly once, matches it to our books, and books the matched ones: a capture clears `psp_receivable` into `psp_payouts` and `psp_fees`; a refund clears `refunds_paid` against `psp_payouts`. Lines that don't add up (net ≠ gross − fee), match nothing, are in another currency, settle more than the ledger captured, pay a refund our books still call pending or for another amount, or settle a refund another line already settled are stored with the problem, logged at ERROR, counted, and never booked; a booking the ledger refuses is flagged the same way and the run carries on. Several capture lines for one payment are normal (one per capture). Captures not settled within 3 days are flagged. Kiripay publishes no report we can fetch: its run logs `settlement.no_report` and still flags its captures older than 3 days, the check Stripe falls back to without a report ([Stripe: payout reconciliation](https://docs.stripe.com/payouts/reconciliation)).
 
 **Rejected:** relying on the daily API check alone (#6's ReconciliationJob); booking discrepancies anyway "so the books balance"; matching payouts against the bank statement (the third leg of a three-way reconciliation) — out of scope, recorded here.
 
@@ -256,7 +258,7 @@ Clearing is the point of the accounts: `psp_receivable` rises at capture and fal
 
 **Not handled:** the bank leg (payout ↔ deposit), chargebacks, and fee disputes. The accounts are shaped for them — `psp_payouts` is exactly what a bank statement would be matched against — but the data isn't there.
 
-**Trade-off:** Discrepancies surface a day late, not in real time. Kiripay is not reconciled at all, and every unmatched line needs a person, which costs operations time.
+**Trade-off:** Discrepancies surface a day late, not in real time. Kiripay is checked only for captures that never settle, never line by line, and every unmatched line needs a person, which costs operations time.
 
 ## 19. A seeded, deterministic simulation holds the whole system to the PSP's truth
 
@@ -324,6 +326,8 @@ The uncaptured remainder is not released at the PSP (#14). Adyen does the same: 
 
 **Trade-off:** Each live merchant can have a second merchant row, and anything that wants live and test numbers together has to join the twin.
 
+**Held by the database (L4, M10):** twins don't nest, as [Stripe sandboxes](https://docs.stripe.com/sandboxes) don't: a trigger (`trg_merchants_twin_parent_is_live`) refuses a `live_merchant_id` that points at a non-live merchant. And a team has exactly [one owner](https://support.stripe.com/questions/change-account-owner): the partial unique index stops a second, and a `DEFERRABLE INITIALLY DEFERRED` constraint trigger (`trg_merchant_users_keep_one_owner`) refuses, at commit, a live merchant with active members and no active owner. Checking at commit lets `TransferOwnership` demote then promote in one transaction, and lets a brand-new merchant exist before its first owner is invited. The migration that installs both triggers first checks the existing rows and aborts the deploy with the offending ids (TC-M10-3), because the owner trigger only checks rows that change: data that already breaks the rule would otherwise surface later as a failure of some unrelated write. RUNBOOK "Deploy stopped: merchant without an owner" has the queries and the fix.
+
 ## 23. Operators change money only with two people
 
 **In plain words:** Like a bank vault with two keys held by two people: one staff member proposes a money change, and a different one approves it.
@@ -337,6 +341,8 @@ The "proposer ≠ approver" rule is enforced in three places: `OperatorProposal#
 **Reason:** Segregation of duties is the baseline for manual money movement (`reports/RBAC implementation patterns.md`), and "proposer ≠ approver" is worth a CHECK constraint, not just a code path. Failing the whole decision on a failed apply would lose the approver's intent and hide the error; the savepoint keeps the audit trail honest.
 
 **Trade-off:** Manual fixes are slower and need two operators available, which is hard at 3am or in a small team. We accept the delay because a single person moving money is the larger risk.
+
+**Frozen and expiring (N6):** as in [Stripe Approvals](https://docs.stripe.com/account/approvals), a request is approved exactly as captured and expires after 14 days. The immutability trigger covers the reason (`reason_code`, `reason_text`, `case_reference`) as well as the payload. `ExpireProposalsJob` runs daily, moves proposals still `pending` after 14 days to `expired` under the same row lock `DecideProposal` takes, and audits each as `proposal.expired` with the system as actor. Approving, rejecting or withdrawing an expired proposal answers `409`; the maker resubmits if the change is still needed.
 
 ## 24. Permissions are a catalogue in code, checked per action, verified in CI
 
@@ -361,6 +367,8 @@ The "proposer ≠ approver" rule is enforced in three places: `OperatorProposal#
 **Reason:** PCI DSS 8.2.8 (idle timeout), 8.3.4 (lockout) and 8.4 (MFA for access to the cardholder-data environment's admin functions), and use cases A-01 to A-07. Revocation is the deciding property: removing a teammate or changing a role must take effect on their very next request, which needs a server-side session row and the role read from the database every time.
 
 **Trade-off:** Every user carries an authenticator and sees step-up prompts. Each request reads the session from the database. And because lockout exists, someone who knows a user's email can deliberately lock that account for 30 minutes.
+
+**Lost authenticator (M12):** as in [Stripe's 2FA recovery](https://support.stripe.com/questions/what-do-i-do-if-i-ve-lost-access-to-my-two-step-verification-codes), an admin with `team.manage` and step-up resets a member's authenticator, and the member gets an email with a recovery link. The reset clears the authenticator and recovery codes, ends every session, and stores the SHA-256 digest of a single-use token that expires after 72 hours (`merchant_users.otp_reset_digest` / `otp_reset_expires_at`, like an invitation's). Enrolling a new authenticator needs both the link's token and the password: `POST /session` with `reset_token`, then the usual enrol cookie and `otp/setup` + `otp/confirm`. The token is spent by a conditional UPDATE at the password step, so a replayed link fails. A correct password with no valid token answers the same `401 invalid_credentials` as a wrong one, so a sign-in attempt cannot tell that an account was reset. An expired link is refused; the admin resets again. **Rejected:** re-enrolling on the password alone (the previous behaviour): anyone holding a leaked password could then bind their own authenticator to an account an admin had just reset. **Trade-off:** a member who lets the link lapse, or closes the tab between the password and the code, needs another reset.
 
 ## 26. Operator writes are made safe by state, not idempotency keys
 

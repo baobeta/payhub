@@ -10,8 +10,14 @@
 # reads have no side effects; a charge reports `captured` only when fully
 # captured. It also keeps the truth (what it really charged and refunded) so
 # the simulation can hold the ledger to it.
+#
+# Played as Kiripay (`SimPsp.kiripay_like`), it does NOT deduplicate authorize:
+# every POST makes a new charge, even for a reference it already holds, and a
+# fresh charge may not show up in a lookup yet (replica lag). Only our own
+# one-POST-per-reference rule (DECISIONS #12) keeps the customer from being
+# charged twice; `duplicate_charges` is how the simulation catches a lapse.
 class SimPsp < PspAdapter
-  Charge = Struct.new(:reference, :amount, :status, :captured, :updated_at, keyword_init: true)
+  Charge = Struct.new(:reference, :amount, :status, :captured, :created_at, :updated_at, keyword_init: true)
   RefundRow = Struct.new(:reference, :charge_reference, :amount, :status, :at, keyword_init: true)
 
   RATES = {
@@ -20,38 +26,47 @@ class SimPsp < PspAdapter
     read_timeout: 0.08,    # a status read times out
     decline: 0.10,
     webhook_never: 0.10,
-    webhook_twice: 0.20
+    webhook_twice: 0.20,
+    # Off unless asked for. A zero rate draws nothing from the seed, so the
+    # runs above replay exactly as before these existed.
+    refund_reject: 0.0,    # a new refund refused outright (4xx)
+    lookup_lag: 0.0        # a charge younger than LAG is not found yet
   }.freeze
+  LAG = 60 # seconds
 
-  attr_reader :charges, :refunds, :outbox
+  attr_reader :charges, :refunds, :outbox, :name, :currencies
   attr_accessor :faults
 
-  def initialize(rng)
+  # Kiripay as far as this simulation can tell it apart: VND, no
+  # deduplication on authorize, a read replica that lags.
+  def self.kiripay_like(rng, rates: {})
+    new(rng, name: "kiripay", currencies: %w[VND], idempotent_authorize: false, rates: { lookup_lag: 0.3 }.merge(rates))
+  end
+
+  def initialize(rng, name: "nordpay", currencies: %w[EUR], idempotent_authorize: true, rates: {})
     super()
     @rng = rng
+    @name = name
+    @currencies = currencies
+    @idempotent_authorize = idempotent_authorize
+    @rates = RATES.merge(rates)
     @faults = true
-    @charges = {}
+    @charges = {}     # reference => the charge reads, captures and refunds act on (the first one)
+    @all_charges = [] # every charge made, a second one for the same reference included
     @refunds = {}
     @outbox = [] # webhooks sent but not yet delivered, in no particular order
   end
 
-  def name = "nordpay"
-  def currencies = %w[EUR]
   def supports_partial_refund? = true
   def separate_authorize_and_capture? = true
   def supports_multicapture? = true
   def supports_void? = true
-  def idempotent_authorize? = true # charges keyed by our reference, like Nordpay
+  def idempotent_authorize? = @idempotent_authorize # Nordpay keys charges by our reference; Kiripay does not
   def settlement_report(_date) = nil
 
   def authorize(payment)
     fail_before!
-    charge = @charges[payment.psp_reference] ||= begin
-      declined = roll(:decline)
-      Charge.new(reference: payment.psp_reference, amount: payment.amount_minor, captured: 0,
-                 status: declined ? "declined" : "authorized", updated_at: Time.current)
-        .tap { |c| emit(c, declined ? "charge.declined" : "charge.authorized") }
-    end
+    charge = (@charges[payment.psp_reference] if @idempotent_authorize) || new_charge(payment)
     fail_after!
     result(charge)
   end
@@ -60,7 +75,7 @@ class SimPsp < PspAdapter
     raise TimedOut, "sim: read timed out" if roll(:read_timeout)
 
     charge = @charges[psp_reference]
-    charge ? result(charge) : not_found(psp_reference)
+    charge && !lagging?(charge) ? result(charge) : not_found(psp_reference)
   end
 
   # Not idempotent, like Nordpay's: a repeated capture captures again, and
@@ -93,6 +108,8 @@ class SimPsp < PspAdapter
   # Idempotent on OUR refund reference, like Nordpay's X-Request-Id.
   def refund(refund)
     fail_before!
+    raise Rejected.new(422, "sim: refund refused") if !@refunds.key?(refund.psp_reference) && roll(:refund_reject)
+
     charge = @charges.fetch(refund.payment.psp_reference)
     row = @refunds[refund.psp_reference] ||= begin
       refunded = @refunds.values.select { |r| r.charge_reference == charge.reference && r.status == "succeeded" }.sum(&:amount)
@@ -128,13 +145,27 @@ class SimPsp < PspAdapter
 
   # ── The truth, for the invariants ──────────────────────────────────────
   def captured_for(reference) = @charges[reference]&.captured.to_i
+  # References the PSP charged more than once: a double charge.
+  def duplicate_charges = @all_charges.map(&:reference).tally.select { |_, n| n > 1 }
   def refunded_for(reference) = @refunds.values.select { |r| r.charge_reference == reference && r.status == "succeeded" }.sum(&:amount)
 
   private
 
-  def roll(kind) = @faults && @rng.rand < RATES.fetch(kind)
+  def roll(kind) = @faults && @rates.fetch(kind).positive? && @rng.rand < @rates.fetch(kind)
   def fail_before! = (raise Unavailable, "sim: unavailable" if roll(:unavailable))
   def fail_after! = (raise TimedOut, "sim: recorded, response lost" if roll(:timeout_after))
+
+  def new_charge(payment)
+    declined = roll(:decline)
+    charge = Charge.new(reference: payment.psp_reference, amount: payment.amount_minor, captured: 0,
+                        status: declined ? "declined" : "authorized", created_at: Time.current, updated_at: Time.current)
+    emit(charge, declined ? "charge.declined" : "charge.authorized")
+    @all_charges << charge
+    @charges[payment.psp_reference] ||= charge
+    charge
+  end
+
+  def lagging?(charge) = Time.current - charge.created_at < LAG && roll(:lookup_lag)
 
   def emit(charge, type)
     return if roll(:webhook_never)

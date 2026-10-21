@@ -28,10 +28,11 @@ class PaymentSimulation
   attr_reader :psp
 
   # `travel_to` is the example's time helper; `jobs` the ActiveJob test adapter.
-  def initialize(seed:, merchant:, travel_to:, jobs:)
+  # `kiripay_like:` plays a PSP that does not deduplicate authorize (VND).
+  def initialize(seed:, merchant:, travel_to:, jobs:, kiripay_like: false)
     @seed = seed
     @rng = Random.new(seed)
-    @psp = SimPsp.new(@rng)
+    @psp = kiripay_like ? SimPsp.kiripay_like(@rng) : SimPsp.new(@rng)
     @merchant = merchant
     @travel_to = travel_to
     @jobs = jobs
@@ -77,7 +78,7 @@ class PaymentSimulation
   # ── Actions ──────────────────────────────────────────────────────────────
 
   def do_create
-    CreatePayment.call(@merchant, CreatePayment::Params.new(amount_minor: @rng.rand(500..20_000), currency: "EUR",
+    CreatePayment.call(@merchant, CreatePayment::Params.new(amount_minor: @rng.rand(500..20_000), currency: @psp.currencies.first,
                                                             payment_method_token: "tok_visa"))
   end
 
@@ -110,7 +111,7 @@ class PaymentSimulation
 
   def receive_webhook(event) # what WebhooksController does once the signature is verified
     record = InboundEvent.create!(
-      psp_name: "nordpay", external_id: event["id"], event_type: event["type"], psp_reference: event.dig("data", "reference"),
+      psp_name: @psp.name, external_id: event["id"], event_type: event["type"], psp_reference: event.dig("data", "reference"),
       payload: event, signature_valid: true, psp_timestamp: Time.iso8601(event["created_at"]), received_at: Time.current
     )
     ProcessInboundEventJob.perform_later(record.id)
@@ -202,6 +203,9 @@ class PaymentSimulation
     violation!("unbalanced ledger transfers") if Ledger.unbalanced_transfer_ids.any?
     stray = @psp.charges.keys - payments.pluck(:psp_reference)
     violation!("the PSP holds charges for references we never created: #{stray}") if stray.any?
+    # The double-charge rule (DECISIONS #12): one charge per reference, ever.
+    twice = @psp.duplicate_charges
+    violation!("the PSP charged one reference more than once: #{twice}") if twice.any?
 
     payments.find_each do |p|
       captured = Ledger.captured_minor(p)
@@ -231,8 +235,9 @@ class PaymentSimulation
       violation!("#{where}: ledger refunded != PSP refunded") if Ledger.refunded_minor(p) != @psp.refunded_for(p.psp_reference)
       violation!("#{where}: a reservation outlived its refund") unless Ledger.reserved_minor(p).zero?
     end
+    currency = @psp.currencies.first
     owed = payments.sum { |p| Ledger.captured_minor(p) - Ledger.refunded_minor(p) }
-    balance = Ledger.balances(@merchant).fetch("EUR", 0)
-    violation!("merchant balance #{balance} != captured - refunded #{owed}") if balance != owed
+    balance = Ledger.balances(@merchant).fetch(currency, 0)
+    violation!("merchant balance #{balance} #{currency} != captured - refunded #{owed}") if balance != owed
   end
 end

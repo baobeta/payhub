@@ -78,4 +78,110 @@ RSpec.describe "Ledger invariants", type: :property do
       expect(Ledger.balances(payment.merchant)["EUR"].to_i).to eq(captured - refunded), "balance drift — #{msg}"
     end
   end
+
+  # TC-I5-2: the same invariants with everything the first property leaves
+  # out. Several payments for two merchants, in EUR (a Nordpay-like PSP) and
+  # VND (a Kiripay-like one that does not deduplicate). Both PSPs decline,
+  # time out before and after recording, and refuse some refunds. Captures
+  # (some non-final, so a payment is captured again), refunds and cancels are
+  # interleaved with the jobs they enqueue. Fixed seeds: a failure replays.
+  describe "TC-I5-2 many payments, two currencies, a faulty PSP" do
+    def drain!
+      40.times do
+        jobs = enqueued_jobs.dup
+        break if jobs.empty?
+
+        enqueued_jobs.clear
+        jobs.each do |job|
+          ActiveJob::Base.execute(job)
+        rescue PspAdapter::TimedOut, PspAdapter::Unavailable
+          enqueued_jobs << job # escaped the job: Sidekiq retries it later
+        end
+      end
+    end
+
+    # Faults off; let jobs and the sweeper resolve every unknown and pending.
+    def settle!(psps)
+      psps.each_value { |psp| psp.faults = false }
+      clock = Time.current
+      30.times do
+        drain!
+        travel_to(clock += 31.minutes)
+        StuckPaymentSweeperJob.perform_now
+        drain!
+      end
+    end
+
+    def act(rng, payment)
+      case %i[capture capture refund refund cancel].sample(random: rng)
+      when :capture
+        amount = rng.rand < 0.3 ? nil : rng.rand(1..(payment.amount_minor * 1.2).ceil)
+        CapturePayment.call(payment, amount_minor: amount, final: rng.rand < 0.5)
+      when :refund then CreateRefund.call(payment, amount_minor: rng.rand(1..payment.amount_minor))
+      when :cancel then CancelPayment.call(payment)
+      end
+    rescue ApiError, PspAdapter::TimedOut, PspAdapter::Unavailable
+      nil # refused by a guard, or the PSP failed a synchronous call
+    end
+
+    # Per merchant per currency, at any instant.
+    def check!(merchants, context)
+      expect(Ledger.unbalanced_transfer_ids).to be_empty, "unbalanced transfer — #{context}"
+      merchants.each do |merchant|
+        balances = Ledger.balances(merchant)
+        reserved_balances = Ledger.reserved_balances(merchant)
+        merchant.payments.group_by(&:currency).each do |currency, payments|
+          rows = payments.map { |p| [p, Ledger.captured_minor(p), Ledger.refunded_minor(p), Ledger.reserved_minor(p)] }
+          rows.each do |p, captured, refunded, reserved|
+            where = "#{p.currency} payment #{p.id} (#{p.state}) — #{context}"
+            expect(captured).to be <= p.amount_minor, "over-capture: #{captured} > #{p.amount_minor}, #{where}"
+            expect(refunded + reserved).to be <= captured, "over-refund: #{refunded}+#{reserved} > #{captured}, #{where}"
+          end
+          owed = rows.sum { |_, captured, refunded, reserved| captured - refunded - reserved }
+          expect(balances.fetch(currency, 0)).to eq(owed), "balance drift in #{currency} — #{context}"
+          expect(reserved_balances.fetch(currency, 0)).to eq(rows.sum(&:last)), "reserved drift in #{currency} — #{context}"
+        end
+      end
+    end
+
+    (1..ENV.fetch("PROPERTY_RUNS", 25).to_i).each do |seed|
+      it "TC-I5-2 holds for seed #{seed}" do
+        rng = Random.new(seed)
+        create(:fx_rate, base: "VND", quote: "EUR")
+        psps = { "nordpay" => SimPsp.new(rng, rates: { refund_reject: 0.15 }),
+                 "kiripay" => SimPsp.kiripay_like(rng, rates: { refund_reject: 0.15 }) }
+        allow(PspRouter).to receive(:adapter) { |name| psps.fetch(name) }
+        allow(Rails.logger).to receive(:error) # expected under faults; the invariants are the judge
+
+        merchants = create_list(:merchant, 2)
+        payments = Array.new(rng.rand(3..6)) do
+          currency = %w[EUR VND].sample(random: rng)
+          CreatePayment.call(merchants.sample(random: rng),
+                             CreatePayment::Params.new(amount_minor: rng.rand(500..20_000), currency:,
+                                                       payment_method_token: "tok_visa"))
+        end
+        drain!
+
+        log = []
+        rng.rand(8..20).times do |n|
+          payment = payments.sample(random: rng).reload
+          log << "#{n}:#{payment.currency}/#{payment.state}"
+          act(rng, payment)
+          drain! if rng.rand < 0.7 # sometimes the next action races the jobs of this one
+          check!(merchants, "seed=#{seed} steps=#{log.join(' ')}")
+        end
+        settle!(psps)
+
+        context = "seed=#{seed} settled, steps=#{log.join(' ')}"
+        check!(merchants, context)
+        payments.each do |p|
+          psp = psps.fetch(p.psp_name)
+          expect(Ledger.reserved_minor(p)).to eq(0), "reservation outlived its refund — #{context}"
+          expect(Ledger.captured_minor(p)).to eq(psp.captured_for(p.psp_reference)), "captured != PSP — #{context}"
+          expect(Ledger.refunded_minor(p)).to eq(psp.refunded_for(p.psp_reference)), "refunded != PSP — #{context}"
+        end
+        expect(psps.values.flat_map { |psp| psp.duplicate_charges.keys }).to be_empty, "double charge — #{context}"
+      end
+    end
+  end
 end

@@ -9,7 +9,7 @@
 >
 > IDs map to USE_CASES.md: `TC-B7-1` tests use case B7. `TC-BUG3-…` tests bug #3 in USE_CASES §1.
 >
-> **Status (2026-10-20):** every case below has a passing spec. That is 108 TC ids: the 98 listed here, 9 added by the code review, and TC-A4-2 (§4). The full suite is 885 examples, 0 failures, 0 pending. Find a case with `grep -rn "TC-E3-2" spec`.
+> **Status (2026-10-20):** every case below has a passing spec. That is 108 TC ids: the 98 listed here, 9 added by the code review, and TC-A4-2 (§4). The full suite is 885 examples, 0 failures, 0 pending. Second pass (§5–§6, 2026-10-21): 1073 examples, 0 failures; line coverage 97.68%, branch 85.59%. Find a case with `grep -rn "TC-E3-2" spec`.
 
 ---
 
@@ -778,7 +778,7 @@ Research sources are cited per item. Each one says what PayHub does and why. Out
 - **Resetting a member's authenticator:** `POST /dashboard/api/members/:id/reset_otp`. It needs `team.manage` and step-up. An admin can't reset an owner, and nobody can reset themselves. A reset:
   - clears the authenticator and recovery codes
   - ends all of that user's sessions
-  - makes their next password sign-in answer `{next: "enrol_otp"}`, so they enrol a new authenticator before getting a session
+  - emails them a single-use link (`/dashboard/reset-authenticator?token=…`, 72 hours); only the link's token plus the password answers `{next: "enrol_otp"}`, so they enrol a new authenticator before getting a session (TC-M12-5)
 
 - **TC-M12-1:** Each user event sends exactly one email to the user: password changed, recovery codes regenerated, a recovery code used, account locked.
 - **TC-M12-2:** Each owner event emails the owner and names the actor: key created, rolled or revoked; member removed; role changed; webhook URL or secret changed.
@@ -860,3 +860,44 @@ Research sources are cited per item. Each one says what PayHub does and why. Out
 - A PSP call made inside an open business transaction increments `psp_call_in_transaction`, because it breaks DECISIONS #13.
 
 - **TC-K1-3:** A recorded PSP call inside a transaction that then rolls back loses the row, but its `psp_call` log line was written, redacted, with no PAN or secrets.
+
+**Status (2026-10-21):** every TC in §5 has a passing spec, and so does each test-only gap below.
+
+---
+
+## 6. Test-only gaps closed in the second pass
+
+Each spec asserts behaviour that already worked. The one exception is TC-M16-1, which found a missing CSP directive; it is now fixed.
+
+| TC | Situation | Expected | Spec |
+| --- | --- | --- | --- |
+| TC-M4-1 | A recovery code is used to sign in, then used again | First use 200, second use 401 `invalid_code` (dashboard and ops) | `spec/requests/{dashboard,ops}/api/sessions_spec.rb` |
+| TC-M15-1 | An email or label starting with `=`, `+`, `-` or `@` lands in a CSV export | Prefixed with `'` in the security-history and access-review CSVs (OWASP CSV injection) | `security_history_spec.rb`, `ops/api/operators_spec.rb` |
+| TC-M16-1 | Any UI shell is loaded | CSP is `script-src 'self'`, `base-uri 'self'`, `form-action 'self'`, **`object-src 'none'`** (added) | `spec/requests/web/csp_spec.rb` |
+| TC-N4-1 | A ledger correction is proposed through the API | Balanced: 201, and after approval it is applied as one balanced transfer. Unbalanced: 422 | `spec/requests/ops/api/proposals_spec.rb` |
+| TC-N6-1 | The proposer withdraws, then proposes again | 200 `withdrawn`, audited; the new proposal is 201; a withdrawn one can't be approved (409) | same |
+| TC-L5-1 | Live and test keys or sessions read balances | Each sees only its own twin's ledger | `v1/test_mode_spec.rb`, `dashboard/api/balances_spec.rb` |
+| TC-K1-2 | A call-log row younger than 12 months is deleted | Refused by the trigger; a 13-month-old row can be deleted | `spec/models/psp_call_spec.rb` |
+| TC-O3-1…14 | The chaos run checks its results against the PSP's records | Orphans, captured or refunded drift, a refund the PSP never confirmed, a reservation left behind, settlement problems and unbalanced transfers are each detected; a clean run passes | `spec/lib/chaos_run_spec.rb` |
+| TC-I5-2 | 25 fixed seeds: several payments in EUR and VND with a faulty PSP | Per merchant and currency: every transfer nets to zero, captured ≤ authorized, refunded + reserved ≤ captured, balance holds; no duplicate charges | `spec/properties/ledger_invariants_spec.rb` |
+| TC-C9-1 | The simulation plays a Kiripay-like PSP that does not dedupe charges, seeds 1–10 | At most one PSP charge per payment reference, after every step (DECISIONS #12) | `spec/simulation/payment_simulation_spec.rb` |
+| TC-J5-2 | A large unsettled backlog | At most 20 lines per PSP per run, plus one `settlement.unsettled_summary` with the full count | `spec/jobs/settlement_reconciliation_job_spec.rb` |
+| TC-COV-… | Remaining branches in the Nordpay adapter, ApplyPspResult, BookCapture and OperatorMailer | Every reachable line and branch is asserted | the matching specs |
+
+---
+
+## 7. Review fixes (second pass)
+
+An independent review of §5 found these. Each TC was written first, seen failing, then fixed.
+
+| TC | Situation | Expected | Ref | Spec |
+| --- | --- | --- | --- | --- |
+| TC-M12-5 | An admin resets a member's authenticator; the member signs in with the password alone, with the emailed token and the password, replays the token, or uses it after 72 hours | Password alone: 401 `invalid_credentials`, as for a wrong password, and no enrol cookie. Token + password: `next: enrol_otp`, then enrol gives a session and 10 new recovery codes. Replayed or expired token: 401; the admin can reset again and the new link works | [Stripe 2FA recovery](https://support.stripe.com/questions/what-do-i-do-if-i-ve-lost-access-to-my-two-step-verification-codes); DECISIONS #25 | `spec/requests/dashboard/api/security_emails_spec.rb`, `spec/mailers/security_mailer_spec.rb`, `SignIn.test.ts`, `ResetAuthenticator.test.ts` |
+| TC-H8-3 | The sequence migration runs on a large `outbound_events` table | No DDL transaction; nullable column; backfill numbers each payment's events 1..n by `created_at` in 5,000-row batches; unique partial index built `CONCURRENTLY`; reversible. Verified by rollback and migrate on 12,003 seeded events | [Postgres CREATE INDEX CONCURRENTLY](https://www.postgresql.org/docs/current/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY) | `spec/migrations/add_sequence_to_outbound_events_spec.rb` |
+| TC-M10-3 | The one-owner / twin-parent trigger migration runs on data that already breaks the rules | It raises before installing the triggers, listing the ownerless live merchants and the twins whose parent is not live; RUNBOOK has the query and the fix | DECISIONS #22 | `spec/migrations/guard_twin_parent_and_one_owner_spec.rb` |
+| TC-N6-4 | A proposal is approved or expires after a withdraw request read it | Withdraw re-reads it under the row lock `DecideProposal` and `ExpireProposalsJob` take: 409, state unchanged, no `proposal.withdrawn` audit | [Stripe Approvals](https://docs.stripe.com/account/approvals); DECISIONS #23 | `spec/requests/ops/api/proposals_spec.rb` |
+| TC-M11-6 | Resending an invitation rolls back after the new token was minted | No invitation email is enqueued (it is sent only after commit) | [Rails `ActiveRecord.after_all_transactions_commit`](https://api.rubyonrails.org/classes/ActiveRecord.html#method-c-after_all_transactions_commit) | `spec/requests/dashboard/api/invitations_spec.rb` |
+| TC-L6-5 | `/v1` requests carry bearer strings that cannot be a PayHub key, or a well-formed unknown key | No `ApiKey` query and no cache entry for a malformed string; a miss is not cached; garbage tokens still hit the 30/min per-IP throttle. Production's cache (the throttle counters) is Redis, shared by every process | [Stripe rate limits](https://docs.stripe.com/rate-limits); [Rack::Attack](https://github.com/rack/rack-attack#cache-store-configuration) | `spec/requests/rate_limit_spec.rb` |
+| TC-K1-4 | A PSP call fails with a parse error whose message quotes the body, or an error text holds `"client_secret":"abc123"` | The `psp_call` log line keeps only `Faraday::ParsingError`; key/value secrets (client_secret, secret, token, api_key, password, authorization) in JSON- or query-like text are masked, as are PANs | [PCI DSS v4.0 3.3, 10.3](https://learn.microsoft.com/en-us/entra/standards/pci-requirement-10); [OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html#data-to-exclude) | `spec/adapters/nordpay_adapter_spec.rb`, `spec/lib/psp_call_redactor_spec.rb`, `spec/lib/psp_call_log_spec.rb` |
+| TC-M12-6 | The owner's change notice is delivered long after the change | The email states when the change happened (passed by the caller), not when it was delivered | [NIST 800-63B §4.1.2.1](https://pages.nist.gov/800-63-4/sp800-63b.html) | `spec/mailers/security_mailer_spec.rb` |
+| TC-N6-5 | More stale proposals than one batch | `ExpireProposalsJob` takes batches until none is left, at most `MAX_BATCHES` (100 × 500) per run; the rest expire on the next run | DECISIONS #23 | `spec/jobs/expire_proposals_job_spec.rb` |

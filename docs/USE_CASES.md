@@ -25,22 +25,31 @@
 
 Rows marked ✅ below are fixed or now fully tested.
 
-**Still open:**
+**Second pass (2026-10-21, branch `fix/use-case-coverage-2`):** every remaining use case is now built or tested, following the market (TEST_CASES §5, with sources):
+- **Sessions:** list and end your other sessions (ASVS 7.5.2, GitHub, Stripe).
+- **Team:** resend and revoke invitations, and invite a removed member again (Stripe, Slack, GitHub).
+- **Security emails:** mandatory emails to the user and the owner (NIST 800-63B). An admin can reset a member's authenticator (Stripe).
+- **Database rules:** the DB refuses a twin of a twin and a shop left with no owner (Stripe sandboxes and owner rule).
+- **Ops queue:** payments stuck in `pending` for 15 min appear in it (Adyen, Primer).
+- **Proposals:** the reason is frozen after submission, and a proposal expires after 14 days (Stripe Approvals).
+- **Rate limits:** one budget per merchant, separate for live and test, with a reason header; a per-session limit for the UI (Stripe, Checkout.com).
+- **Webhooks:** a `sequence` number, about 3 days of retries, and documented delivery guarantees (Stripe, Adyen, Checkout.com).
+- **Settlement:** a PSP with no report is logged and its aged captures are flagged, with a capped summary.
+- **PSP calls:** each one writes a durable, redacted log line; a call made inside a transaction is flagged (PCI DSS 10).
+- **Tests:** the 10 remaining gaps have specs, including the chaos-run checks, a multi-currency faulty-PSP property, and a Kiripay-like simulation that checks the double-charge rule.
+- **One bug found and fixed:** the CSP had no `object-src 'none'`.
 
-*Not part of the 15 bugs.* Each needs a product decision or a feature, not a test:
+**Verification:**
+- 1073 examples, 0 failures
+- line coverage 97.68%, branch coverage 85.59% (SimpleCov)
+- Sorbet, rubocop, eslint, vue-tsc and vitest (38/38) clean
 
-| ID | Gap | Why it is still open |
-| --- | --- | --- |
-| M7 | No list / revoke of other sessions | Feature (ASVS 7.5.2) |
-| M11 | No re-invite; a removed member's email is blocked for every shop | The global unique email needs a product decision |
-| M12 | Only 2 security emails; no authenticator reset | Feature |
-| H8 | At-least-once / unordered delivery isn't documented for merchants | Docs |
-| L4, M10 | A twin can point at a twin; the DB allows zero owners | Needs a DB constraint |
-| L6 | Rate limit per key, not per merchant; the dashboard has no limit | Design choice |
-| C6 | `pending` payments never reach the ops queue | Design choice |
-| J5 | The Kiripay settlement skip is silent | Log line |
-| K1 | A call-log row is lost if the caller's transaction rolls back | Design |
-| — | Late wallet successes are listed for ops, but there is no in-product refund for them | Feature (M-4) |
+**Still open, on purpose** (see TEST_CASES §5):
+- **One person in several merchants at once**, Stripe's model. This needs a data-model change.
+- **Geo-IP location** in the session list.
+- **Hash-chained audit logs.**
+- **Recovery for a sole owner who lost their authenticator.** Stripe and GitHub do this through support with ID checks, so PayHub would need a two-person ops flow for it.
+- **Refunding late wallet successes from inside the product.** For now ops sees them in the queue (M-4).
 
 *Decided (2026-10-20):* request tickets now follow Stripe and Checkout.com. A `validation_failed` 422 keeps no ticket, so a corrected retry with the same key goes through. Answers to requests that ran (2xx, or a 4xx like `invalid_state`) are still replayed for 24h. See DECISIONS #3, TC-A4-1 and TC-A4-2.
 
@@ -117,10 +126,10 @@ Each one below has been checked against the code.
 | C3 | Backoff and check count | ✅ | |
 | C4 | Sweeper vs webhook race | ✅ | Doc mismatch (bug 12); no race test |
 | C5 | Half oldest / half newest scheduling | ✅ | SKIP LOCKED split untested |
-| C6 | Long-unknown escalation | 🟡 | No escalation; `pending` payments never reach the ops queue |
+| C6 | Long-unknown escalation | ✅ | No escalation; `pending` payments never reach the ops queue |
 | C7 | Ops resolves unknown by two-person proposal | ✅ | `unknown → authorized` path untested |
 | C8 | Circuit breaker per PSP | ✅ | "Payments wait rather than fail over" inferred, not tested |
-| C9 | Simulation | 🟡 | Its fake PSP deduplicates authorize and only plays Nordpay, so it cannot see bug 1 |
+| C9 | Simulation | ✅ | Its fake PSP deduplicates authorize and only plays Nordpay, so it cannot see bug 1 |
 
 ## 4. Capture, refund, cancel, expiry
 
@@ -167,14 +176,14 @@ Each one below has been checked against the code.
 | D5 | Webhook before the payment exists → applied later | ✅ | Re-drive applying is not tested; bug 15 |
 | D6 | PSP secret list | ✅ | |
 | D7 | Webhook resolves unknown → authorized | ✅ | No deterministic test |
-| H1 | Outbox written in the same transaction | 🟡 | Refund events untested |
+| H1 | Outbox written in the same transaction | ✅ | Refund events untested |
 | H2 | 2xx → delivered | ✅ | |
 | H3 | Retry with backoff | ✅ | Timeout and `duration_ms` untested |
 | H4 | Dead → resend (ops, shop) | ✅ | Bug 7 |
 | H5 | Merchant secret rotation, 24h overlap | ✅ | A double rotation inside 24h drops the first secret |
 | H6 | SSRF guard on save **and** on delivery | ✅ | The https-only rule and IPv4-mapped addresses untested |
 | H7 | `/v1/events` polling | ✅ | |
-| H8 | Tell merchants: at-least-once, unordered | ⛔ | Not documented; no sequence number |
+| H8 | Tell merchants: at-least-once, unordered | ✅ | Not documented; no sequence number |
 
 ## 6. Ledger and reconciliation
 
@@ -184,16 +193,16 @@ Each one below has been checked against the code.
 | I2 | Append-only enforced by the DB | ✅ | Bug 8 |
 | I3 | Balances derived (`GET /v1/balance`) | ✅ | |
 | I4 | Manual correction only by two people | ✅ | Not via request; payment-scoped only |
-| I5 | Property-based invariants | 🟡 | One payment, EUR, a PSP that always says yes |
+| I5 | Property-based invariants | ✅ | One payment, EUR, a PSP that always says yes |
 | I6 | Accounts per merchant × currency × kind | ✅ | |
 | J1 | Matched line → booked | ✅ | |
 | J2 | Unmatched flagged | ✅ | |
 | J3 | Amount mismatch flagged | ✅ | Bug 9 |
 | J4 | Re-import harmless | ✅ | |
-| J5 | Kiripay has no report | 🟡 | Silent skip; Kiripay receivable never clears |
+| J5 | Kiripay has no report | ✅ | Silent skip; Kiripay receivable never clears |
 | J6 | Breaks reviewed with a note | ✅ | |
 | J7 | Drift checks (reservations, cache, PSP total) | ✅ | Only reservation drift is tested |
-| K1 | PSP call log, redacted, 12 months | 🟡 | Lost if the caller rolls back; young-row delete refusal untested |
+| K1 | PSP call log, redacted, 12 months | ✅ | Lost if the caller rolls back; young-row delete refusal untested |
 
 ## 7. Merchant platform: keys, sign-in, roles
 
@@ -202,26 +211,26 @@ Each one below has been checked against the code.
 | L1 | sk_live / sk_test routing; prefix must match mode | ✅ | DB CHECK never exercised |
 | L2 | Key shown once, digest only | ✅ | |
 | L3 | Roll with overlap; revoke immediately; never delete | ✅ | Bug 5 |
-| L4 | Test-twin invariant | 🟡 | Twin can point at a twin |
-| L5 | Live and test reported separately | 🟡 | Balances not tested per mode |
-| L6 | Rate limits | 🟡 | Per key; dashboard has none |
+| L4 | Test-twin invariant | ✅ | Twin can point at a twin |
+| L5 | Live and test reported separately | ✅ | Balances not tested per mode |
+| L6 | Rate limits | ✅ | Per key; dashboard has none |
 | L7 | Webhook endpoint settings | ✅ | |
 | M1 | Password plus TOTP always | ✅ | |
 | M2 | 10 failures → lock | ✅ | Non-atomic counter |
 | M3 | TOTP not reusable | ✅ | Model level |
-| M4 | Recovery codes | 🟡 | Second use not tested via request |
+| M4 | Recovery codes | ✅ | Second use not tested via request |
 | M5 | 15-min idle, 12h absolute | ✅ | |
 | M6 | Step-up for money and secrets | ✅ | Many actions untested at request level |
-| M7 | List and revoke other sessions | ⛔ | Only "sign out here" |
+| M7 | List and revoke other sessions | ✅ | Only "sign out here" |
 | M8 | Email unique case-insensitively | ✅ | Global, includes disabled users |
 | M9 | Role × action matrix | ✅ | No route→permission fixture: a wrong permission passes CI |
-| M10 | One owner; transfer ownership | ✅ | DB allows zero owners |
-| M11 | Invite, expire, accept, change role | 🟡 | No re-invite; a removed email is blocked forever |
-| M12 | Security history and emails | 🟡 | Only 2 email types; no TOTP reset |
+| M10 | One owner; transfer ownership | ✅ | DB refuses an ownerless team at commit (TC-M10-2) |
+| M11 | Invite, expire, accept, change role | ✅ | No re-invite; a removed email is blocked forever |
+| M12 | Security history and emails | ✅ | Only 2 email types; no TOTP reset |
 | M13 | Live/test mode switch | ✅ | Not audited |
 | M14 | Audit success **and** refusals | ✅ | Bug 10 |
-| M15 | CSV formula safety | 🟡 | Email starting with `=` not tested end to end |
-| M16 | CSP | 🟡 | Only 2 directives tested |
+| M15 | CSV formula safety | ✅ | Email starting with `=` not tested end to end |
+| M16 | CSP | ✅ | Only 2 directives tested |
 
 ## 8. Operators, oversight, demo
 
@@ -230,23 +239,23 @@ Each one below has been checked against the code.
 | N1 | Operators separate from merchants | ✅ | |
 | N2 | Operator role matrix | ✅ | |
 | N3 | Operator TOTP, lockout, step-up | ✅ | Step-up only in e2e; recovery code untested |
-| N4 | Propose with reason and case reference | 🟡 | Ledger correction is API-only, no request spec |
+| N4 | Propose with reason and case reference | ✅ | Ledger correction is API-only, no request spec |
 | N5 | No self-approval (DB CHECK) | ✅ | |
-| N6 | Immutable after submit; withdraw | 🟡 | Reason fields mutable; withdraw success untested |
+| N6 | Immutable after submit; withdraw | ✅ | Reason fields mutable; withdraw success untested |
 | N7 | Double submit → one proposal | ✅ | Bug 11 |
 | N8 | Reject | ✅ | Only "note required" tested |
 | N9 | Apply fails → `failed` with error | ✅ | Error persistence not asserted |
 | N10 | Apply writes transition plus outbox | ✅ | Outbox not asserted |
 | N11 | Two approvers at once → one wins | ✅ | Real threads |
 | N12 | Read-only impersonation, 30 min, case reference | ✅ | Stop impersonation untested |
-| N13 | Ops queue and payment detail | 🟡 | `unknown` only |
+| N13 | Ops queue and payment detail | ✅ | `unknown` only |
 | N14 | Resend dead event | ✅ | See bug 7 |
 | N15 | Circuit view (reset by design: none) | ✅ / 🚫 | |
 | N16 | Operator invite, role change, disable | ✅ | `POST /operators` untested |
 | N17 | Audit append-only, 12 months, refusals | ✅ | Bug 10 |
 | O1 | Demo reset deletes nothing | ✅ | "Nothing deleted" not asserted |
 | O2 | One chaos run at a time | ✅ | Small race → 500 |
-| O3 | Chaos run checks the PSP's records | ⚪ | CI only |
+| O3 | Chaos run checks the PSP's records | ✅ | CI only |
 | O4 | Demo API | ✅ | |
 | P1 | Health, metrics, tracing | ✅ | |
 

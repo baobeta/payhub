@@ -17,6 +17,8 @@
 #      problem, logged at ERROR and counted, and never booked.
 #   4. Flag captures the PSP has not settled within SETTLE_WITHIN.
 #
+# A PSP with no report skips 1-3, logs settlement.no_report, and still gets 4.
+#
 # It never fixes money. It finds the disagreement and makes it loud.
 class SettlementReconciliationJob < ApplicationJob
   extend T::Sig
@@ -24,13 +26,20 @@ class SettlementReconciliationJob < ApplicationJob
   queue_as :sweepers
 
   SETTLE_WITHIN = T.let(3.days, ActiveSupport::Duration)
+  DETAIL_LIMIT = 20 # unsettled captures logged one by one per PSP per run
 
   sig { params(date: T.nilable(String)).void }
   def perform(date = nil)
     day = date ? Date.iso8601(date) : Date.current.yesterday
     Payment::PSPS.each do |psp_name|
       lines = PspRouter.adapter(psp_name).settlement_report(day)
-      next if lines.nil? # this PSP publishes no report
+      # A PSP that publishes no report (Kiripay) still owes us its captures:
+      # with nothing to match, the receivable check is the whole reconciliation
+      # (Stripe: reconcile from transaction history; DECISIONS #18, TEST_CASES J5).
+      if lines.nil?
+        Rails.logger.info({ event: "settlement.no_report", psp: psp_name, date: day.iso8601 }.to_json)
+        lines = []
+      end
 
       report = Hash.new(0)
       lines.each { |line| report[ingest(psp_name, day, line)] += 1 }
@@ -162,9 +171,16 @@ class SettlementReconciliationJob < ApplicationJob
                             .sum(Arel.sql("CASE ledger_entries.direction WHEN 'debit' THEN ledger_entries.amount_minor " \
                                           "ELSE -ledger_entries.amount_minor END"))
     unsettled = receivable.select { |_, outstanding| outstanding.to_i.positive? }
-    unsettled.each do |payment_id, outstanding|
+    # A PSP with no report (Kiripay) never clears its receivable, so this list
+    # only grows. Log the first few in detail and the size once, every run:
+    # counts and exceptions per run, not one line per item forever.
+    unsettled.to_a.take(DETAIL_LIMIT).each do |payment_id, outstanding|
       Rails.logger.warn({ event: "settlement.unsettled_capture", psp: psp_name, payment_id: payment_id,
                           outstanding_minor: outstanding.to_i }.to_json)
+    end
+    if unsettled.size > DETAIL_LIMIT
+      Rails.logger.warn({ event: "settlement.unsettled_summary", psp: psp_name, count: unsettled.size,
+                          detailed: DETAIL_LIMIT }.to_json)
     end
     unsettled.size
   end

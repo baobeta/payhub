@@ -138,6 +138,12 @@ Every verifier accepts a list of secrets, so no step below drops a webhook (DECI
 - **A PSP's secret (inbound).** Set `NORDPAY_WEBHOOK_SECRETS=<new>,<old>` (or `KIRIPAY_…`) on web and restart; the single-secret variable is ignored while the list is set. Switch the secret in the PSP's dashboard. Once `inbound_events` shows no `signature_valid=false` rows for an hour, set the list to `<new>` alone.
 - **A merchant's secret (outbound).** `bin/rails "merchants:rotate_webhook_secret[<MERCHANT_ID>]"` prints the new secret once. For 24 hours every webhook carries two `v1=` signatures, new and old, so the merchant can deploy the new secret whenever suits them in that window.
 
+## A merchant reports 429s (not a page — a support ticket)
+
+The `/v1` budget is per merchant, shared by all its keys: 300/min live, 75/min test (`config/initializers/rack_attack.rb`). Spreading traffic over more keys does not help them; batching or backing off on `Retry-After` does. `PayHub-Rate-Limited-Reason: global-rate` means the merchant's whole budget; `endpoint-rate` means the sign-in throttle (20/min per IP). Raising the budget for everyone is `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_TEST_PER_MINUTE` on web and a restart; there is no per-merchant override. A revoked key keeps counting against its merchant for up to a minute (the key lookup is cached), then falls to the 30/min per-IP budget. A bearer string that is not shaped like a PayHub key (`sk_live_`/`sk_test_` + 16-96 letters or digits) is never looked up, and a key that is not found is not cached; both count against the 30/min per-IP budget.
+
+The counters live in `Rails.cache`, which in production is the Redis Sidekiq uses (`REDIS_URL`, keys under `payhub-cache:`; `config/environments/production.rb`), so every web process shares one count. If Redis is down, cache errors are logged as `"event":"cache_error"` and the throttles fail open (requests pass, unthrottled) until it is back; Sidekiq will be paging for the same outage. Never point production at a per-process memory store: each limit would silently multiply by the number of processes.
+
 ## A merchant user is locked out (not a page — a support ticket)
 
 Ten wrong passwords or codes lock an account for 30 minutes; it unlocks by itself. If it cannot wait (confirm who is asking, through the merchant's owner):
@@ -149,7 +155,33 @@ AuditEvent.record!(action: "user.unlocked_by_support", result: "success", mercha
                    target: u, metadata: { "ticket" => "<TICKET-ID>" })
 ```
 
-Lost phone: they sign in with a recovery code, then regenerate codes on their Profile page. Lost both: an admin or the owner removes them and invites them again (a new invitation means a new authenticator enrolment).
+Lost phone: they sign in with a recovery code, then regenerate codes on their Profile page. Lost both: an admin or the owner resets their authenticator on the Team page (DECISIONS #25). They get an email link, valid once for 72 hours, and set up a new authenticator by opening it and entering their password; the password alone is refused like a wrong one. Link expired or used: reset again. A lost owner authenticator cannot be reset by another member; that is a support-assisted flow.
+
+## Deploy stopped: merchant without an owner (planned work, before the deploy)
+
+Migration `20261021500001_guard_twin_parent_and_one_owner` installs the "one active owner" and "a twin's parent is live" triggers (DECISIONS #22). It first checks the existing data and aborts the deploy with the offending merchant ids (TC-M10-3) rather than install triggers that data already breaks. Nothing was changed; fix the data, then deploy again. To find them ahead of time:
+
+```sql
+-- live merchants with active members and no active owner
+SELECT m.id, m.name FROM merchants m
+WHERE m.livemode
+  AND EXISTS (SELECT 1 FROM merchant_users u WHERE u.merchant_id = m.id AND u.disabled_at IS NULL)
+  AND NOT EXISTS (SELECT 1 FROM merchant_users u WHERE u.merchant_id = m.id AND u.disabled_at IS NULL AND u.role = 'owner');
+
+-- test twins whose parent is not a live merchant (a twin of a twin)
+SELECT t.id, t.live_merchant_id FROM merchants t JOIN merchants p ON p.id = t.live_merchant_id WHERE NOT p.livemode;
+```
+
+An ownerless merchant: agree with the merchant who becomes owner (an active, enrolled admin) and promote them, the promote half of an ownership transfer (`TransferOwnership`; there is no current owner to demote). The trigger is not installed yet, so this is a plain update:
+
+```ruby
+u = MerchantUser.find_by!(merchant_id: "<merchant id>", email: "<new owner email>")
+u.update!(role: "owner")
+AuditEvent.record!(action: "team.ownership_transferred", result: "success", merchant_id: u.merchant_id,
+                   target: u, actor_label: "support", metadata: { "ticket" => "<TICKET-ID>", "to" => u.email })
+```
+
+If nobody suitable is left, `bin/rails "merchants:invite_owner[<merchant id>,<email>]"` invites one. A twin of a twin: point its `live_merchant_id` at the live merchant at the top of the chain (or delete the empty twin), then deploy.
 
 ## Quick reference
 
@@ -159,5 +191,5 @@ Lost phone: they sign in with a recovery code, then regenerate codes on their Pr
 | What state, and how did it get there? | `payment_transitions` ordered by `sort_key` |
 | Did money move? | `ledger_entries` for the payment |
 | What did the PSP tell us? | `inbound_events` (`signature_valid=false` rows were rejected, never processed) |
-| What did we tell the merchant? | `outbound_events` + `outbound_delivery_attempts`; `POST /v1/events/:id/redeliver` for dead ones. A redelivery gets a fresh 8-attempt budget (backoff from 1 min); attempt numbers continue from where they stopped |
+| What did we tell the merchant? | `outbound_events` + `outbound_delivery_attempts`; `POST /v1/events/:id/redeliver` for dead ones. Retries back off 1m, 5m, 30m, 2h, 8h, 24h, 36h; dead after attempt 8 (~70.6h). A redelivery gets a fresh 8-attempt budget on the same schedule; attempt numbers continue from where they stopped |
 | Backlog right now | `/metrics`: `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead` |

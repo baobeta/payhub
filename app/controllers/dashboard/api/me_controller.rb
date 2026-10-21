@@ -24,6 +24,7 @@ module Dashboard
         current_user.sessions.where.not(id: current_session.id).where(revoked_at: nil)
                     .update_all(revoked_at: Time.current) # rubocop:disable Rails/SkipsModelValidations
         audit!("user.password_changed")
+        SecurityMailer.password_changed(current_user).deliver_later
         head :no_content
       end
 
@@ -31,6 +32,7 @@ module Dashboard
       def recovery_codes
         codes = RecoveryCode.regenerate!(current_user)
         audit!("user.recovery_codes_regenerated")
+        SecurityMailer.recovery_codes_regenerated(current_user).deliver_later
         render json: { "recovery_codes" => codes }
       end
 

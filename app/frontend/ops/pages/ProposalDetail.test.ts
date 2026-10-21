@@ -59,6 +59,12 @@ describe("ProposalDetail", () => {
     expect(text).toContain("Withdraw");
   });
 
+  it("TC-N6-3: says an expired proposal expired and offers no decision", async () => {
+    const text = (await render(proposal({ state: "expired", can: { approve: false, reject: false, withdraw: false } }))).text();
+    expect(text).toContain("Expired: nobody decided it within 14 days");
+    expect(text).not.toContain("Approve");
+  });
+
   it("shows Approve when can.approve is true", async () => {
     const text = (await render(proposal({ can: { approve: true, reject: true, withdraw: false } }))).text();
     expect(text).toContain("Approve");
