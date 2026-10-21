@@ -60,6 +60,116 @@ jobs:
       - name: Quality gate
         run: bin/check
 
+  # The production image (Dockerfile, target production) builds, runs as
+  # non-root and boots in production: web answers /healthz and guards /metrics,
+  # the worker boots from the same image. Real-looking config, no TLS.
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: payhub
+          POSTGRES_PASSWORD: payhub
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U payhub"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: production
+          tags: payhub:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Runs as non-root
+        run: |
+          uid="$(docker run --rm payhub:ci id -u)"
+          echo "uid=$uid"
+          test "$uid" != "0"
+
+      # Every variable production requires (README "Configuration"), with
+      # throwaway values that are not the simulators' defaults. Host network:
+      # the services above listen on localhost.
+      - name: Production environment
+        run: |
+          {
+            echo "SECRET_KEY_BASE=$(openssl rand -hex 64)"
+            echo "APP_HOST=ci.payhub.invalid"
+            echo "DATABASE_URL=postgres://payhub:payhub@localhost:5432/payhub_production"
+            echo "REDIS_URL=redis://localhost:6379/0"
+            echo "AR_ENCRYPTION_PRIMARY_KEY=$(openssl rand -hex 16)"
+            echo "AR_ENCRYPTION_DETERMINISTIC_KEY=$(openssl rand -hex 16)"
+            echo "AR_ENCRYPTION_KEY_DERIVATION_SALT=$(openssl rand -hex 16)"
+            echo "NORDPAY_URL=https://nordpay.invalid"
+            echo "NORDPAY_API_KEY=np_live_ci"
+            echo "NORDPAY_WEBHOOK_SECRET=np_whsec_ci"
+            echo "KIRIPAY_URL=https://kiripay.invalid"
+            echo "KIRIPAY_API_KEY=kp_live_ci"
+            echo "KIRIPAY_WEBHOOK_SECRET=kp_whsec_ci"
+            echo "METRICS_TOKEN=$(openssl rand -hex 32)"
+            echo "RAILS_FORCE_SSL=false"
+          } > "$RUNNER_TEMP/app.env"
+
+      - name: Web boots (migrating a fresh database) and answers /healthz
+        run: |
+          docker run -d --name web --network host --env-file "$RUNNER_TEMP/app.env" -e RUN_MIGRATIONS=true payhub:ci
+          for _ in $(seq 60); do
+            curl -sf localhost:3000/healthz && exit 0
+            sleep 1
+          done
+          echo "web did not answer /healthz in 60s"
+          docker logs web
+          exit 1
+
+      - name: /metrics wants the token
+        run: |
+          token="$(grep ^METRICS_TOKEN= "$RUNNER_TEMP/app.env" | cut -d= -f2)"
+          without="$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/metrics)"
+          with="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" localhost:3000/metrics)"
+          echo "without token: $without, with token: $with"
+          test "$without" = 401 && test "$with" = 200
+
+      - name: Rails serves the Vite bundles
+        run: |
+          asset="$(curl -sf localhost:3000/dashboard | grep -o '/vite/assets/[^"]*\.js' | head -1)"
+          echo "asset: $asset"
+          test -n "$asset"
+          curl -sf -o /dev/null "localhost:3000$asset"
+
+      - name: Worker boots from the same image
+        run: |
+          docker run -d --name worker --network host --env-file "$RUNNER_TEMP/app.env" payhub:ci bundle exec sidekiq
+          for _ in $(seq 60); do
+            docker logs worker 2>&1 | grep -q "Worker metrics on" && exit 0
+            sleep 1
+          done
+          echo "worker did not start in 60s"
+          docker logs worker
+          exit 1
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          docker logs web || true
+          docker logs worker || true
+
   # Browser flows against the real app in the test env (playwright.config.ts
   # builds its own payhub_e2e database, seed and Vite bundle).
   e2e:
