@@ -122,6 +122,21 @@ RSpec.describe "Ops proposals", type: :request do
     expect(OperatorProposal.find(id).state).to eq("pending")
   end
 
+  it "TC-N6-3: answers 409 to approving or withdrawing an expired proposal" do
+    sign_in_operator(maker, stepped_up: true)
+    create_proposal(create(:payment, state: "unknown"))
+    id = json_body["id"]
+    OperatorProposal.where(id:).update_all(state: "expired") # rubocop:disable Rails/SkipsModelValidations
+
+    post "/ops/api/proposals/#{id}/withdraw", headers: ui_headers
+    expect(response).to have_http_status(409)
+
+    sign_in_operator(create(:operator, role: "approver"), stepped_up: true)
+    post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+    expect(response).to have_http_status(409)
+    expect(OperatorProposal.find(id).state).to eq("expired")
+  end
+
   it "applies an approved transition and audits who approved" do
     approver = create(:operator, role: "approver")
     sign_in_operator(maker, stepped_up: true)

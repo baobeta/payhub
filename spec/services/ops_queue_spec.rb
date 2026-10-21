@@ -39,4 +39,19 @@ RSpec.describe OpsQueue do
 
     expect(described_class.call["late_successes"].map { |p| p["id"] }).to eq([charged.id])
   end
+
+  it "TC-C6-1: lists a payment still pending after 15 minutes, oldest first, and not a fresh one" do
+    stuck = create(:payment, merchant:, state: "pending")
+    older = create(:payment, merchant:, state: "pending")
+    fresh = create(:payment, merchant:, state: "pending")
+    stuck.update_columns(created_at: 20.minutes.ago)
+    older.update_columns(created_at: 40.minutes.ago)
+    fresh.update_columns(created_at: 2.minutes.ago)
+
+    rows = described_class.call["stuck_pending"]
+
+    expect(rows.map { |p| p["id"] }).to eq([older.id, stuck.id])
+    expect(rows.first).to include("merchant" => merchant.name, "psp_reference" => older.psp_reference)
+    expect(rows.map { |p| p["id"] }).not_to include(fresh.id)
+  end
 end

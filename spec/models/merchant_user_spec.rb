@@ -10,6 +10,48 @@ RSpec.describe MerchantUser do
     expect { create(:merchant_user, merchant:, role: "owner") }.to raise_error(ActiveRecord::RecordNotUnique)
   end
 
+  # The check is a DEFERRABLE INITIALLY DEFERRED constraint trigger, so it runs
+  # at COMMIT. Examples run inside a rolled-back transaction, so they ask
+  # Postgres to run the queued checks now (SET CONSTRAINTS ALL IMMEDIATE),
+  # inside a savepoint that the failure rolls back.
+  describe "the one active owner, held by the database (DECISIONS #22)" do
+    let!(:owner) { create(:merchant_user, merchant:, role: "owner") }
+    let!(:admin) { create(:merchant_user, merchant:, role: "admin") }
+
+    def commit_check!
+      described_class.transaction(requires_new: true) do
+        yield
+        described_class.connection.execute("SET CONSTRAINTS ALL IMMEDIATE")
+      end
+    end
+
+    it "TC-M10-2: refuses disabling the only active owner with raw SQL at commit" do
+      expect { commit_check! { described_class.connection.execute("UPDATE merchant_users SET disabled_at = now() WHERE id = '#{owner.id}'") } }
+        .to raise_error(ActiveRecord::StatementInvalid, /must keep one active owner/)
+    end
+
+    it "TC-M10-2: refuses demoting the only active owner with raw SQL at commit" do
+      expect { commit_check! { described_class.connection.execute("UPDATE merchant_users SET role = 'admin' WHERE id = '#{owner.id}'") } }
+        .to raise_error(ActiveRecord::StatementInvalid, /must keep one active owner/)
+    end
+
+    it "TC-M10-2: TransferOwnership still commits, since the check waits for the end of the transaction" do
+      expect { commit_check! { TransferOwnership.call(owner:, to: admin) } }.not_to raise_error
+      expect(admin.reload.role).to eq("owner")
+    end
+
+    it "TC-M10-2: allows a merchant whose members are all disabled" do
+      expect do
+        commit_check! { described_class.where(merchant:).update_all(disabled_at: Time.current) } # rubocop:disable Rails/SkipsModelValidations
+      end.not_to raise_error
+    end
+
+    it "TC-M10-2: allows a brand-new merchant's first owner" do
+      expect { commit_check! { described_class.invite_first_owner!(merchant: create(:merchant), email: "new@example.com") } }
+        .not_to raise_error
+    end
+  end
+
   it "rejects an unknown role in the database, not only in the model" do
     user = create(:merchant_user, merchant:)
     expect { described_class.where(id: user.id).update_all(role: "superuser") }

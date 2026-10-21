@@ -57,8 +57,12 @@ export type LateSuccess = {
   failed_at: string;
 };
 
+// Still `pending` 15 minutes after creation: no outcome yet, a human looks (C6/N13).
+export type StuckPending = Omit<QueuePayment, "stuck_since"> & { pending_since: string };
+
 export type Queue = {
   unknown_payments: QueuePayment[];
+  stuck_pending: StuckPending[];
   late_successes: LateSuccess[];
   dead_events: QueueEvent[];
   reconciliation_breaks: number;

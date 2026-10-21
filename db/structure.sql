@@ -54,6 +54,49 @@ $$;
 
 
 --
+-- Name: merchant_users_keep_one_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.merchant_users_keep_one_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  mid uuid;
+BEGIN
+  -- Both sides of a row that moved merchants (raw SQL only; the app never does).
+  FOREACH mid IN ARRAY ARRAY[NEW.merchant_id, OLD.merchant_id] LOOP
+    IF mid IS NOT NULL
+       AND EXISTS (SELECT 1 FROM merchant_users WHERE merchant_id = mid AND disabled_at IS NULL)
+       AND NOT EXISTS (SELECT 1 FROM merchant_users WHERE merchant_id = mid AND disabled_at IS NULL AND role = 'owner') THEN
+      RAISE EXCEPTION 'merchant % must keep one active owner while it has active members; transfer ownership instead', mid;
+    END IF;
+  END LOOP;
+  RETURN NULL;
+END
+$$;
+
+
+--
+-- Name: merchants_twin_parent_is_live(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.merchants_twin_parent_is_live() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.live_merchant_id IS NOT NULL
+     AND NOT EXISTS (SELECT 1 FROM merchants WHERE id = NEW.live_merchant_id AND livemode) THEN
+    RAISE EXCEPTION 'merchants.live_merchant_id must point at a live merchant (a test twin has no twin)';
+  END IF;
+  IF NOT NEW.livemode AND EXISTS (SELECT 1 FROM merchants WHERE live_merchant_id = NEW.id) THEN
+    RAISE EXCEPTION 'merchants.live_merchant_id must point at a live merchant (this merchant has a twin)';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+
+--
 -- Name: operator_proposal_payload_immutable(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -62,8 +105,10 @@ CREATE FUNCTION public.operator_proposal_payload_immutable() RETURNS trigger
     AS $$
 BEGIN
   IF NEW.payload IS DISTINCT FROM OLD.payload OR NEW.kind IS DISTINCT FROM OLD.kind
-     OR NEW.payment_id IS DISTINCT FROM OLD.payment_id OR NEW.proposed_by_id IS DISTINCT FROM OLD.proposed_by_id THEN
-    RAISE EXCEPTION 'operator_proposals payload is immutable; withdraw and resubmit';
+     OR NEW.payment_id IS DISTINCT FROM OLD.payment_id OR NEW.proposed_by_id IS DISTINCT FROM OLD.proposed_by_id
+     OR NEW.reason_code IS DISTINCT FROM OLD.reason_code OR NEW.reason_text IS DISTINCT FROM OLD.reason_text
+     OR NEW.case_reference IS DISTINCT FROM OLD.case_reference THEN
+    RAISE EXCEPTION 'operator_proposals payload and reason are immutable; withdraw and resubmit';
   END IF;
   RETURN NEW;
 END
@@ -390,10 +435,10 @@ CREATE TABLE public.operator_proposals (
     error character varying,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_operator_proposals_decided_shape CHECK (((((state)::text = 'pending'::text) = (decided_at IS NULL)) OR ((state)::text = 'withdrawn'::text))),
+    CONSTRAINT chk_operator_proposals_decided_shape CHECK (((((state)::text = 'pending'::text) = (decided_at IS NULL)) OR ((state)::text = ANY ((ARRAY['withdrawn'::character varying, 'expired'::character varying])::text[])))),
     CONSTRAINT chk_operator_proposals_kind CHECK (((kind)::text = ANY ((ARRAY['payment_transition'::character varying, 'ledger_correction'::character varying])::text[]))),
     CONSTRAINT chk_operator_proposals_not_self CHECK (((decided_by_id IS NULL) OR (decided_by_id <> proposed_by_id))),
-    CONSTRAINT chk_operator_proposals_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'withdrawn'::character varying, 'rejected'::character varying, 'applied'::character varying, 'failed'::character varying])::text[])))
+    CONSTRAINT chk_operator_proposals_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'withdrawn'::character varying, 'rejected'::character varying, 'applied'::character varying, 'failed'::character varying, 'expired'::character varying])::text[])))
 );
 
 
@@ -1253,6 +1298,20 @@ CREATE TRIGGER trg_ledger_entries_no_truncate BEFORE TRUNCATE ON public.ledger_e
 
 
 --
+-- Name: merchant_users trg_merchant_users_keep_one_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trg_merchant_users_keep_one_owner AFTER INSERT OR DELETE OR UPDATE ON public.merchant_users DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.merchant_users_keep_one_owner();
+
+
+--
+-- Name: merchants trg_merchants_twin_parent_is_live; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_merchants_twin_parent_is_live BEFORE INSERT OR UPDATE OF livemode, live_merchant_id ON public.merchants FOR EACH ROW EXECUTE FUNCTION public.merchants_twin_parent_is_live();
+
+
+--
 -- Name: operator_proposals trg_operator_proposals_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -1501,6 +1560,8 @@ ALTER TABLE ONLY public.api_keys
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261021500002'),
+('20261021500001'),
 ('20261020100002'),
 ('20261020100001'),
 ('20261020000302'),

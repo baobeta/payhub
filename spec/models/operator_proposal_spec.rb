@@ -21,6 +21,15 @@ RSpec.describe OperatorProposal do
       .to raise_error(ActiveRecord::StatementInvalid, /immutable/)
   end
 
+  it "TC-N6-2: refuses a raw UPDATE of the reason after submission (Stripe Approvals: approved as captured)" do
+    proposal = create(:operator_proposal, payment:, proposed_by: maker)
+    { reason_text: "edited", reason_code: "other", case_reference: "OPS-2" }.each do |column, value|
+      # A savepoint each, so one refusal does not abort the next attempt.
+      expect { described_class.transaction(requires_new: true) { described_class.where(id: proposal.id).update_all(column => value) } } # rubocop:disable Rails/SkipsModelValidations
+        .to raise_error(ActiveRecord::StatementInvalid, /immutable/)
+    end
+  end
+
   it "accepts only transitions out of unknown that the state machine allows" do
     expect(build(:operator_proposal, payment:, proposed_by: maker, payload: { "to_state" => "captured" })).not_to be_valid
     expect(build(:operator_proposal, payment:, proposed_by: maker, payload: { "to_state" => "failed" })).to be_valid

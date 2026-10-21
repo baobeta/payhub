@@ -324,6 +324,8 @@ The uncaptured remainder is not released at the PSP (#14). Adyen does the same: 
 
 **Trade-off:** Each live merchant can have a second merchant row, and anything that wants live and test numbers together has to join the twin.
 
+**Held by the database (L4, M10):** twins don't nest, as [Stripe sandboxes](https://docs.stripe.com/sandboxes) don't: a trigger (`trg_merchants_twin_parent_is_live`) refuses a `live_merchant_id` that points at a non-live merchant. And a team has exactly [one owner](https://support.stripe.com/questions/change-account-owner): the partial unique index stops a second, and a `DEFERRABLE INITIALLY DEFERRED` constraint trigger (`trg_merchant_users_keep_one_owner`) refuses, at commit, a live merchant with active members and no active owner. Checking at commit lets `TransferOwnership` demote then promote in one transaction, and lets a brand-new merchant exist before its first owner is invited.
+
 ## 23. Operators change money only with two people
 
 **In plain words:** Like a bank vault with two keys held by two people: one staff member proposes a money change, and a different one approves it.
@@ -337,6 +339,8 @@ The "proposer ≠ approver" rule is enforced in three places: `OperatorProposal#
 **Reason:** Segregation of duties is the baseline for manual money movement (`reports/RBAC implementation patterns.md`), and "proposer ≠ approver" is worth a CHECK constraint, not just a code path. Failing the whole decision on a failed apply would lose the approver's intent and hide the error; the savepoint keeps the audit trail honest.
 
 **Trade-off:** Manual fixes are slower and need two operators available, which is hard at 3am or in a small team. We accept the delay because a single person moving money is the larger risk.
+
+**Frozen and expiring (N6):** as in [Stripe Approvals](https://docs.stripe.com/account/approvals), a request is approved exactly as captured and expires after 14 days. The immutability trigger covers the reason (`reason_code`, `reason_text`, `case_reference`) as well as the payload. `ExpireProposalsJob` runs daily, moves proposals still `pending` after 14 days to `expired` under the same row lock `DecideProposal` takes, and audits each as `proposal.expired` with the system as actor. Approving, rejecting or withdrawing an expired proposal answers `409`; the maker resubmits if the change is still needed.
 
 ## 24. Permissions are a catalogue in code, checked per action, verified in CI
 

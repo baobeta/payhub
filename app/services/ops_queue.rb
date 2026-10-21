@@ -6,6 +6,7 @@ module OpsQueue
   extend T::Sig
 
   LIMIT = 50
+  STUCK_PENDING_AFTER = 15.minutes
 
   sig { returns(T::Hash[String, T.untyped]) }
   def self.call
@@ -14,6 +15,15 @@ module OpsQueue
         { "id" => p.id, "merchant" => T.must(p.merchant).name, "psp_name" => p.psp_name,
           "psp_reference" => p.psp_reference, "amount_minor" => p.amount_minor, "currency" => p.currency,
           "stuck_since" => p.updated_at.utc.iso8601, "check_attempts" => p.check_attempts }
+      end,
+      # C6/N13: still `pending` after 15 minutes, so neither the worker nor the
+      # sweeper got an outcome. Never auto-failed on a timeout (Adyen, Primer);
+      # a human looks. The sweeper's alert at the same age stays.
+      "stuck_pending" => Payment.where(state: "pending", created_at: ...STUCK_PENDING_AFTER.ago)
+                                .order(:created_at).limit(LIMIT).includes(:merchant).map do |p|
+        { "id" => p.id, "merchant" => T.must(p.merchant).name, "psp_name" => p.psp_name,
+          "psp_reference" => p.psp_reference, "amount_minor" => p.amount_minor, "currency" => p.currency,
+          "pending_since" => p.created_at.utc.iso8601, "check_attempts" => p.check_attempts }
       end,
       # The PSP took the money after we failed the payment (TC-B3-3): a human refunds it.
       "late_successes" => late_successes.map do |p|

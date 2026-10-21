@@ -96,6 +96,52 @@ function relative(iso: string): string {
       </section>
 
       <section
+        v-if="data.stuck_pending?.length"
+        aria-labelledby="stuck-pending"
+      >
+        <h2
+          id="stuck-pending"
+          class="mb-2 text-lg font-semibold"
+        >
+          Pending for over 15 minutes
+          <span class="text-sm font-normal text-slate-500">({{ data.stuck_pending.length }})</span>
+        </h2>
+        <p class="mb-2 text-sm text-slate-600">
+          No outcome from the PSP yet. PayHub never fails these on a timeout; check the PSP.
+        </p>
+        <table class="w-full rounded bg-white text-sm shadow-sm">
+          <tbody>
+            <tr
+              v-for="p in data.stuck_pending"
+              :key="p.id"
+              class="border-t border-slate-100"
+            >
+              <td class="p-2">
+                {{ p.merchant }}
+              </td>
+              <td class="p-2">
+                <RouterLink
+                  :to="`/payments/${p.id}`"
+                  class="underline"
+                >
+                  {{ formatMoney(p.amount_minor, p.currency) }}
+                </RouterLink>
+              </td>
+              <td class="p-2">
+                {{ relative(p.pending_since) }}
+              </td>
+              <td class="p-2">
+                {{ p.check_attempts }}
+              </td>
+              <td class="p-2 font-mono text-xs">
+                {{ p.psp_reference }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section
         v-if="data.late_successes?.length"
         aria-labelledby="late"
       >
