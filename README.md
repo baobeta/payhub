@@ -410,7 +410,7 @@ It exits non-zero on any violation and restores the simulator's configuration af
 | **Logs** | One JSON line per request (lograge) and per job, carrying `request_id`, `merchant_id`, `payment_id`, `psp_name` and `duration_ms`. Jobs inherit the enqueuing request's id, so `grep '"payment_id":"…"' log/*.log` reconstructs a payment's whole life. Request bodies are never logged. Every PSP call also writes one redacted `psp_call` line (PSP, method, path template, status, outcome, duration, reference, error), which survives when the transaction holding its `psp_calls` row rolls back. |
 | **Metrics** | `GET /metrics` (Prometheus): `payhub_payments_created_total`, `payhub_psp_calls_total`, `payhub_webhook_deliveries_total`, `payhub_webhook_duplicates_total`, `payhub_webhook_signature_failures_total`, `payhub_stuck_payment_alerts_total`, `payhub_ledger_imbalance_detected_total`, `payhub_psp_call_in_transaction_total` (a PSP call made inside a database transaction, which [#13](DECISIONS.md#13-the-sweeper-schedules-each-payment-instead-of-re-scanning-the-oldest) forbids; should stay 0); gauges `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead`. Requires a bearer token; see `METRICS_TOKEN`. Metrics are per service: with `PROMETHEUS_MULTIPROC_DIR` set, every process of that service writes to files there, and its scrape sums counters and reports each gauge's most recently set value. Docker Compose sets one directory each for web and worker. The web scrape does not include counters raised in Sidekiq jobs (`payhub_late_success_total`, `payhub_stuck_payment_alerts_total`, …): the worker serves those on its own `GET :9394/metrics` (`WORKER_METRICS_PORT`, bound on `WORKER_METRICS_HOST`, default `0.0.0.0`), with the same token rule. It does not refresh the DB-backed gauges on scrape; the sweepers set them. |
 | **Traces** | OpenTelemetry across web, Sidekiq and every PSP call, with each SQL statement as a span |
-| **Alert** | `event=alert.stuck_payment` at ERROR, for any payment in `pending` or `unknown` past 15 minutes. This is the only signal that pages; everything else is a dashboard. |
+| **Alerts** | 16 Grafana alert rules over ClickHouse (stuck and unknown payments, late successes, ledger imbalance, the circuit breaker, error rate and latency, failed scrapes, silent logs, failed log archive uploads), each `page` or `ticket`, sent to the `payhub-oncall` webhook. See [Alerting](#alerting) below; [RUNBOOK.md](RUNBOOK.md#alerts-grafana) says what to do for each. The log also carries `event=alert.stuck_payment` at ERROR for any payment in `pending` or `unknown` past 15 minutes. |
 | **Health** | `GET /healthz` checks the database only. A liveness probe that fails on a slow dependency causes restarts, not fixes. |
 
 Docker Compose also runs a telemetry stack ([observability/](observability/)):
@@ -420,10 +420,11 @@ flowchart LR
     W["web"] & K["worker"] -- "OTLP spans" --> OC["otel-collector"]
     L["log/development.log<br/>JSON request + job lines"] -- tailed --> OC
     M["web :3000/metrics<br/>worker :9394/metrics"] -- "scraped every 15s" --> OC
-    OC --> CH[("ClickHouse<br/>otel db · 72h TTL")] --> GF["Grafana · :3300<br/>PayHub tracing"]
+    OC --> CH[("ClickHouse<br/>otel db · 72h TTL")] --> GF["Grafana · :3300<br/>PayHub tracing · alert rules"]
+    GF -- "alerts" --> WH["ALERT_WEBHOOK_URL<br/>payhub-oncall"]
 ```
 
-The collector scrapes web and worker as two jobs, `payhub-web` and `payhub-worker`:
+The collector scrapes web and worker as two jobs, `payhub-web` and `payhub-worker` (and its own metrics, from `localhost:8888`, as `otelcol`):
 
 - **Token.** It sends `METRICS_TOKEN` as the bearer token on both. Compose passes the same `METRICS_TOKEN` to web, worker and collector.
 - **Unset (the default).** The header goes out as `Authorization: Bearer` with nothing after it, and `/metrics` stays open outside production.
@@ -436,6 +437,14 @@ In Grafana (<http://localhost:3300>, no login locally), the *PayHub tracing* das
 
 - **Ad-hoc SQL:** `curl 'localhost:8123/?user=otel&password=otel' -d 'SELECT SpanName, count() FROM otel.otel_traces GROUP BY 1'`
 - **"Error spans" include handled exceptions.** For example, a duplicate webhook is rejected by a unique index on purpose, and that still counts.
+
+### Alerting
+
+Grafana provisions its alert rules and contact point from [observability/grafana/provisioning/alerting/](observability/grafana/provisioning/alerting/) (`spec/observability/alert_rules_spec.rb` pins them). Each rule is plain ClickHouse SQL (paste it into the ad-hoc `curl` above to see the number the rule saw), evaluated every minute. Every rule notifies the `payhub-oncall` contact point: a webhook to `ALERT_WEBHOOK_URL`, grouped by alert name, repeated every 4 hours while firing. The rules are listed in the *PayHub* folder under Alerting in Grafana, or with `curl -s -u admin:admin localhost:3300/api/v1/provisioning/alert-rules | jq length` (16).
+
+- **Locally, alerts go nowhere.** The Compose default URL refuses the connection, which Grafana logs. To watch them arrive, run anything that prints HTTP requests on the Compose network and point Grafana at it, e.g. `docker run --rm -d --name alert-sink --network payhub_default mendhak/http-https-echo:31`, then `ALERT_WEBHOOK_URL=http://alert-sink:8080/ docker compose up -d grafana` and `docker logs -f alert-sink`. Stopping the worker makes `payhub-scrape-down` fire within about 7 minutes (5 of them its `for`).
+- **In production**, set `ALERT_WEBHOOK_URL` on Grafana to the paging integration's webhook (PagerDuty, Opsgenie, a Slack bridge). It is a secret: never commit it.
+- **Counters count from zero.** A counter series appears on its first increment, so the rules add up each sample's rise per series (a drop being a restart) instead of `max - min`, which would miss the first late success after a restart.
 
 ## Performance
 

@@ -1,0 +1,894 @@
+# Grafana alert rules, provisioned on boot. Every rule reads ClickHouse (the
+# datasource uid `clickhouse`), reduces to the last value and compares it with
+# a threshold; severity `page` wakes someone, `ticket` waits for the morning.
+# All go to the payhub-oncall contact point (contact-points.yaml). RUNBOOK.md
+# "Alerts" maps each uid to what to do.
+#
+# Counters (otel.otel_metrics_sum) are cumulative per series: the increase over
+# a window adds up each sample's rise over the one before it, per series
+# (ServiceName, Attributes, ResourceAttributes; mapSort because ClickHouse
+# compares maps by key order, which differs between rows of one series). A drop
+# is a process restart, counted as the new value. A series with no sample in the
+# day before the window is new and counts from 0: a counter only appears on its
+# first increment, which max(Value) - min(Value) would miss. A restart whose
+# first value is not below the old one is missed.
+#
+# The SQL uses now(), not Grafana macros, so each query runs as-is in
+# clickhouse-client. Grafana expands environment variables in provisioning
+# files, so the file has no dollar sign anywhere (the spec checks).
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: payhub
+    folder: PayHub
+    interval: 1m
+    rules:
+      # Raised by ProcessInboundEventJob (worker).
+      - uid: payhub-late-success
+        title: "Late success: a PSP succeeded after we failed the payment"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "A PSP reported success for a payment PayHub had already failed: the customer may be charged for an order the merchant thinks failed."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-late-success
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                FROM (
+                  SELECT TimeUnix, Value,
+                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                  FROM otel.otel_metrics_sum
+                  WHERE MetricName = 'payhub_late_success_total' AND ServiceName = 'payhub-worker'
+                    AND TimeUnix >= now() - INTERVAL 10 MINUTE - INTERVAL 1 DAY
+                )
+                WHERE TimeUnix >= now() - INTERVAL 10 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      - uid: payhub-psp-never-received
+        title: "PSP never received a payment"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The sweeper failed a payment as psp_never_received: the PSP has no record of the charge after 30 minutes."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-psp-never-received
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                FROM (
+                  SELECT TimeUnix, Value,
+                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                  FROM otel.otel_metrics_sum
+                  WHERE MetricName = 'payhub_psp_never_received_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                    AND TimeUnix >= now() - INTERVAL 15 MINUTE - INTERVAL 1 DAY
+                )
+                WHERE TimeUnix >= now() - INTERVAL 15 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      - uid: payhub-audit-write-failed
+        title: "Audit log write failed"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "An authorization decision could not be written to the audit log."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-audit-write-failed
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                FROM (
+                  SELECT TimeUnix, Value,
+                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                  FROM otel.otel_metrics_sum
+                  WHERE MetricName = 'payhub_audit_write_failed_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                    AND TimeUnix >= now() - INTERVAL 10 MINUTE - INTERVAL 1 DAY
+                )
+                WHERE TimeUnix >= now() - INTERVAL 10 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      - uid: payhub-psp-call-in-tx
+        title: "PSP call made inside a database transaction"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: ticket
+        annotations:
+          summary: "A PSP call was logged inside an open database transaction: a rollback would lose the record of a call the PSP received."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-psp-call-in-tx
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                FROM (
+                  SELECT TimeUnix, Value,
+                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                  FROM otel.otel_metrics_sum
+                  WHERE MetricName = 'payhub_psp_call_in_transaction_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                    AND TimeUnix >= now() - INTERVAL 60 MINUTE - INTERVAL 1 DAY
+                )
+                WHERE TimeUnix >= now() - INTERVAL 60 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      - uid: payhub-circuit-open
+        title: "PSP circuit breaker opened"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "PayHub stopped calling a PSP: new payments stay pending until it recovers."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-circuit-open
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                FROM (
+                  SELECT TimeUnix, Value,
+                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                  FROM otel.otel_metrics_sum
+                  WHERE MetricName = 'payhub_psp_circuit_opened_total' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                    AND TimeUnix >= now() - INTERVAL 5 MINUTE - INTERVAL 1 DAY
+                )
+                WHERE TimeUnix >= now() - INTERVAL 5 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # Raised by SettlementReconciliationJob (worker).
+      - uid: payhub-recon-breaks
+        title: "Settlement discrepancies"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The settlement run found lines that do not match the ledger."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-recon-breaks
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                FROM (
+                  SELECT TimeUnix, Value,
+                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                  FROM otel.otel_metrics_sum
+                  WHERE MetricName = 'payhub_settlement_discrepancies_total' AND ServiceName = 'payhub-worker'
+                    AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY
+                )
+                WHERE TimeUnix >= now() - INTERVAL 24 HOUR
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # Raised by ReconciliationJob (worker).
+      - uid: payhub-ledger-imbalance
+        title: "Ledger imbalance detected"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "Reconciliation found a ledger transfer that does not net to zero: a bug, not an operator error."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-ledger-imbalance
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 86400
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                FROM (
+                  SELECT TimeUnix, Value,
+                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                  FROM otel.otel_metrics_sum
+                  WHERE MetricName = 'payhub_ledger_imbalance_detected_total' AND ServiceName = 'payhub-worker'
+                    AND TimeUnix >= now() - INTERVAL 24 HOUR - INTERVAL 1 DAY
+                )
+                WHERE TimeUnix >= now() - INTERVAL 24 HOUR
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # Raised by StuckPaymentSweeperJob (worker).
+      - uid: payhub-stuck-alerts
+        title: "Payments stuck in pending or unknown"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "The sweeper found payments in pending or unknown for more than 15 minutes (alert.stuck_payment in the log)."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-stuck-alerts
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                FROM (
+                  SELECT TimeUnix, Value,
+                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                  FROM otel.otel_metrics_sum
+                  WHERE MetricName = 'payhub_stuck_payment_alerts_total' AND ServiceName = 'payhub-worker'
+                    AND TimeUnix >= now() - INTERVAL 15 MINUTE - INTERVAL 1 DAY
+                )
+                WHERE TimeUnix >= now() - INTERVAL 15 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # DB-backed gauge: web refreshes it on every scrape, the worker only when its sweeper runs.
+      - uid: payhub-stuck-unknown
+        title: "Payments in unknown state for 15 minutes"
+        condition: C
+        for: 15m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "Payments have been in unknown, with the PSP's answer not yet known, for 15 minutes."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-stuck-unknown
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT argMax(Value, TimeUnix) AS value
+                FROM otel.otel_metrics_gauge
+                WHERE MetricName = 'payhub_unknown_state_payments' AND ServiceName = 'payhub-web'
+                  AND TimeUnix >= now() - INTERVAL 5 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # DB-backed gauge: read from web, which refreshes it on every scrape.
+      - uid: payhub-dead-letters
+        title: "Outbound events dead"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: ticket
+        annotations:
+          summary: "Merchant webhooks have exhausted their retries (dead outbound events); the merchant has not heard about these payments."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-dead-letters
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT argMax(Value, TimeUnix) AS value
+                FROM otel.otel_metrics_gauge
+                WHERE MetricName = 'payhub_outbound_events_dead' AND ServiceName = 'payhub-web'
+                  AND TimeUnix >= now() - INTERVAL 5 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # Percent of server (request) and consumer (job) spans in error; below 20 spans in 5 minutes it reads 0, so one failure at night does not page.
+      - uid: payhub-error-spans
+        title: "Error rate above 2% (requests and jobs)"
+        condition: C
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "More than 2% of requests and jobs ended in error over 5 minutes."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-error-spans
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT if(count() < 20, 0, 100 * countIf(StatusCode = 'Error') / count()) AS value
+                FROM otel.otel_traces
+                WHERE ServiceName IN ('payhub-web', 'payhub-worker') AND SpanKind IN ('Server', 'Consumer')
+                  AND SpanAttributes['http.route'] NOT IN ('/metrics', '/healthz')
+                  AND Timestamp >= now() - INTERVAL 5 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [2]
+
+      # Duration is in nanoseconds; the value is milliseconds (0 when there were no /v1 requests).
+      - uid: payhub-slo-api-p95
+        title: "API p95 latency above 300ms"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: ticket
+        annotations:
+          summary: "The 95th percentile of /v1 request duration was above 300ms over the last 10 minutes."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-slo-api-p95
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT ifNotFinite(quantile(0.95)(Duration) / 1e6, 0) AS value
+                FROM otel.otel_traces
+                WHERE ServiceName = 'payhub-web' AND SpanKind = 'Server' AND SpanAttributes['http.route'] LIKE '/v1/%'
+                  AND Timestamp >= now() - INTERVAL 10 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [300]
+
+      # 1 when payhub_unknown_state_payments stayed above 0 for the whole hour (samples back to at least 55 minutes ago) or the sweeper raised a stuck-payment alert in it.
+      - uid: payhub-slo-outcome
+        title: "Payment outcome SLO at risk"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "A payment has had no final outcome for an hour: unknown payments all hour, or stuck-payment alerts in the last hour."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-slo-outcome
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT toFloat64(
+                  (SELECT min(Value) > 0 AND min(TimeUnix) <= now() - INTERVAL 55 MINUTE
+                   FROM otel.otel_metrics_gauge
+                   WHERE MetricName = 'payhub_unknown_state_payments' AND ServiceName = 'payhub-web'
+                     AND TimeUnix >= now() - INTERVAL 1 HOUR)
+                  OR
+                  (SELECT sum(if(Value >= prev, Value - prev, Value)) > 0
+                   FROM (
+                     SELECT TimeUnix, Value,
+                            lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                          ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                     FROM otel.otel_metrics_sum
+                     WHERE MetricName = 'payhub_stuck_payment_alerts_total' AND ServiceName = 'payhub-worker'
+                       AND TimeUnix >= now() - INTERVAL 1 HOUR - INTERVAL 1 DAY
+                   )
+                   WHERE TimeUnix >= now() - INTERVAL 1 HOUR)
+                ) AS value
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
+      # One row per service, labelled `service`. No `up` row in the last minute (collector down) reads as 0.
+      - uid: payhub-scrape-down
+        title: "Metrics scrape failing"
+        condition: C
+        for: 5m
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "The collector cannot scrape {{ .Labels.service }}'s /metrics (up = 0, or no scrape at all): its alerts are blind."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-scrape-down
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT s.service AS service, toFloat64(u.up) AS value
+                FROM (SELECT arrayJoin(['payhub-web', 'payhub-worker']) AS service) AS s
+                LEFT JOIN (
+                  SELECT ServiceName, min(Value) AS up
+                  FROM otel.otel_metrics_gauge
+                  WHERE MetricName = 'up' AND ServiceName IN ('payhub-web', 'payhub-worker')
+                    AND TimeUnix >= now() - INTERVAL 1 MINUTE
+                  GROUP BY ServiceName
+                ) AS u ON s.service = u.ServiceName
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+
+      # The sweepers log every minute, so silence means the pipeline, not a quiet night. Production tags lines payhub-web / payhub-worker, development payhub.
+      - uid: payhub-logs-silent
+        title: "No PayHub logs for 15 minutes"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "No PayHub log line reached ClickHouse in 15 minutes: the collector, the log pipeline or the app is down, and the S3 archive has a gap."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-logs-silent
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 900
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT count() AS value
+                FROM otel.otel_logs
+                WHERE ServiceName LIKE 'payhub%'
+                  AND Timestamp >= now() - INTERVAL 15 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+
+      # The collector's own metric (otelcol scrape job); the 0.111.0 awss3 exporter has no retry, so every failed record is an archive gap.
+      - uid: payhub-archive-upload-failed
+        title: "Log archive upload to S3 failed"
+        condition: C
+        for: 0s
+        noDataState: NoData
+        execErrState: Error
+        labels:
+          severity: page
+        annotations:
+          summary: "The collector failed to upload log records to the S3 archive: those lines are missing from the archive until backfilled."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-archive-upload-failed
+        notification_settings:
+          receiver: payhub-oncall
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT sum(if(Value >= prev, Value - prev, Value)) AS value
+                FROM (
+                  SELECT TimeUnix, Value,
+                         lagInFrame(Value, 1, 0) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                  FROM otel.otel_metrics_sum
+                  WHERE MetricName = 'otelcol_exporter_send_failed_log_records' AND ServiceName = 'otelcol' AND Attributes['exporter'] = 'awss3'
+                    AND TimeUnix >= now() - INTERVAL 60 MINUTE - INTERVAL 1 DAY
+                )
+                WHERE TimeUnix >= now() - INTERVAL 60 MINUTE
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]

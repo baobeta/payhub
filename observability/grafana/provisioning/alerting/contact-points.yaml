@@ -1,0 +1,23 @@
+# Where alerts go: one webhook, the on-call's paging integration (PagerDuty,
+# Opsgenie, a Slack bridge, …). Its URL is a secret, so it comes from the
+# environment: Grafana expands ${ALERT_WEBHOOK_URL} when it loads this file.
+# Every rule in payhub-rules.yaml names this contact point (and the default
+# policy below routes anything else here too).
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: payhub-oncall
+    receivers:
+      - uid: payhub-oncall-webhook
+        type: webhook
+        settings:
+          url: ${ALERT_WEBHOOK_URL}
+          httpMethod: POST
+        disableResolveMessage: false
+
+policies:
+  - orgId: 1
+    receiver: payhub-oncall
+    group_by: [alertname]
+    repeat_interval: 4h

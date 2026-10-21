@@ -199,6 +199,11 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/payhub.json
+      # Where the payhub-oncall contact point POSTs alerts
+      # (provisioning/alerting/contact-points.yaml). The default goes nowhere
+      # (connection refused, logged by Grafana); to watch alerts arrive locally,
+      # see README "Observability".
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-http://localhost:9/payhub-oncall}
     ports:
       - "${GRAFANA_PORT:-3300}:3000" # not 3000: that is the app's default port
     volumes:
