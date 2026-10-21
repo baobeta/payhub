@@ -833,7 +833,7 @@ groups:
                     type: gt
                     params: [0]
 
-      # One row per service, labelled `service`. No `up` row in the last minute (collector down) reads as 0.
+      # One row per service, labelled `service`. No `up` row in the last minute (collector down) reads as 0 (ifNull: whatever join_use_nulls is).
       - uid: payhub-scrape-down
         title: "Metrics scrape failing"
         condition: C
@@ -861,7 +861,7 @@ groups:
               queryType: table
               format: 1
               rawSql: |-
-                SELECT s.service AS service, toFloat64(u.up) AS value
+                SELECT s.service AS service, toFloat64(ifNull(u.up, 0)) AS value
                 FROM (SELECT arrayJoin(['payhub-web', 'payhub-worker']) AS service) AS s
                 LEFT JOIN (
                   SELECT ServiceName, min(Value) AS up

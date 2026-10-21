@@ -222,11 +222,33 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
       expect(slo_alert_uids).to include(*slo_rules)
     end
 
+    it "gives each of its alerts' severity and for" do
+      doc = Rails.root.join("docs/SLO.md").read
+      slo_alert_uids.each do |uid|
+        rule = rules.fetch(uid)
+        expect(doc).to include("`#{uid}` (#{rule.dig('labels', 'severity')}, `for: #{rule['for']}`)"), uid
+      end
+    end
+
     it "shows each SLO alert's current value on the dashboard, from the alert's own SQL" do
       expect(slo_panels.keys).to match_array(slo_alert_uids)
       slo_panels.each do |uid, panel|
         expect(panel["targets"].sole["rawSql"]).to eq(sql(uid)), uid
         expect(panel.dig("datasource", "uid")).to eq("clickhouse"), uid
+      end
+    end
+
+    # Grafana colours a value by the highest step at or below it. An "above T"
+    # rule turns red at the next whole number (its values are counts, or ms for
+    # p95), so a quiet 0 stays green; a "below T" rule is red until T.
+    it "turns each panel red where its alert's condition starts, and states the alert's for" do
+      slo_panels.each do |uid, panel|
+        rule = rules.fetch(uid)
+        evaluator = query(rule, "C").dig("model", "conditions").sole["evaluator"]
+        threshold = evaluator["params"].sole
+        steps = panel.dig("fieldConfig", "defaults", "thresholds", "steps").map { |step| step.values_at("color", "value") }
+        expect(steps).to eq(evaluator["type"] == "gt" ? [["green", nil], ["red", threshold + 1]] : [["red", nil], ["green", threshold]]), uid
+        expect(panel["description"]).to include("`for: #{rule['for']}`"), uid
       end
     end
   end

@@ -552,7 +552,7 @@
       "id": 13,
       "type": "stat",
       "title": "API p95, last 10m",
-      "description": "Alert `payhub-slo-api-p95` (ticket): its query, run now. It fires after 10m when this is above 300. See docs/SLO.md.",
+      "description": "Alert `payhub-slo-api-p95` (ticket, `for: 10m`): its query, run now. The alert fires when it has been above 300 for 10m. See docs/SLO.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -606,7 +606,7 @@
               },
               {
                 "color": "red",
-                "value": 300
+                "value": 301
               }
             ]
           }
@@ -618,7 +618,7 @@
       "id": 14,
       "type": "stat",
       "title": "Unknown all hour (1 = yes)",
-      "description": "Alert `payhub-slo-outcome` (page): its query, run now. It fires at once when this is above 0. See docs/SLO.md.",
+      "description": "Alert `payhub-slo-outcome` (page, `for: 0s`): its query, run now. The alert fires as soon as it is above 0. See docs/SLO.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -684,7 +684,7 @@
       "id": 15,
       "type": "stat",
       "title": "Payments in unknown",
-      "description": "Alert `payhub-stuck-unknown` (page): its query, run now. It fires after 15m when this is above 0. See docs/SLO.md.",
+      "description": "Alert `payhub-stuck-unknown` (page, `for: 15m`): its query, run now. The alert fires when it has been above 0 for 15m. See docs/SLO.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -750,7 +750,7 @@
       "id": 16,
       "type": "stat",
       "title": "Stuck-payment alerts, 15m",
-      "description": "Alert `payhub-stuck-alerts` (page): its query, run now. It fires after 1m when this is above 0. See docs/SLO.md.",
+      "description": "Alert `payhub-stuck-alerts` (page, `for: 1m`): its query, run now. The alert fires when it has been above 0 for 1m. See docs/SLO.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -816,7 +816,7 @@
       "id": 17,
       "type": "stat",
       "title": "Dead outbound events",
-      "description": "Alert `payhub-dead-letters` (ticket): its query, run now. It fires at once when this is above 0. See docs/SLO.md.",
+      "description": "Alert `payhub-dead-letters` (ticket, `for: 0s`): its query, run now. The alert fires as soon as it is above 0. See docs/SLO.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -882,7 +882,7 @@
       "id": 18,
       "type": "stat",
       "title": "Unbalanced transfers, 24h",
-      "description": "Alert `payhub-ledger-imbalance` (page): its query, run now. It fires after 1m when this is above 0. See docs/SLO.md.",
+      "description": "Alert `payhub-ledger-imbalance` (page, `for: 1m`): its query, run now. The alert fires when it has been above 0 for 1m. See docs/SLO.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -948,7 +948,7 @@
       "id": 19,
       "type": "stat",
       "title": "Settlement discrepancies, 24h",
-      "description": "Alert `payhub-recon-breaks` (ticket): its query, run now. It fires after 1m when this is above 0. See docs/SLO.md.",
+      "description": "Alert `payhub-recon-breaks` (ticket, `for: 1m`): its query, run now. The alert fires when it has been above 0 for 1m. See docs/SLO.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -1014,7 +1014,7 @@
       "id": 20,
       "type": "stat",
       "title": "Scrape up, last minute",
-      "description": "Alert `payhub-scrape-down` (page): its query, run now. It fires after 5m when this is below 1. See docs/SLO.md.",
+      "description": "Alert `payhub-scrape-down` (page, `for: 5m`): its query, run now. The alert fires when it has been below 1 for 5m. See docs/SLO.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -1042,7 +1042,7 @@
           "editorType": "sql",
           "queryType": "table",
           "format": 1,
-          "rawSql": "SELECT s.service AS service, toFloat64(u.up) AS value\nFROM (SELECT arrayJoin(['payhub-web', 'payhub-worker']) AS service) AS s\nLEFT JOIN (\n  SELECT ServiceName, min(Value) AS up\n  FROM otel.otel_metrics_gauge\n  WHERE MetricName = 'up' AND ServiceName IN ('payhub-web', 'payhub-worker')\n    AND TimeUnix >= now() - INTERVAL 1 MINUTE\n  GROUP BY ServiceName\n) AS u ON s.service = u.ServiceName"
+          "rawSql": "SELECT s.service AS service, toFloat64(ifNull(u.up, 0)) AS value\nFROM (SELECT arrayJoin(['payhub-web', 'payhub-worker']) AS service) AS s\nLEFT JOIN (\n  SELECT ServiceName, min(Value) AS up\n  FROM otel.otel_metrics_gauge\n  WHERE MetricName = 'up' AND ServiceName IN ('payhub-web', 'payhub-worker')\n    AND TimeUnix >= now() - INTERVAL 1 MINUTE\n  GROUP BY ServiceName\n) AS u ON s.service = u.ServiceName"
         }
       ],
       "options": {
@@ -1081,7 +1081,7 @@
       "id": 21,
       "type": "stat",
       "title": "Log lines, last 15m",
-      "description": "Alert `payhub-logs-silent` (page): its query, run now. It fires after 1m when this is below 1. See docs/SLO.md.",
+      "description": "Alert `payhub-logs-silent` (page, `for: 1m`): its query, run now. The alert fires when it has been below 1 for 1m. See docs/SLO.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -1147,7 +1147,7 @@
       "id": 22,
       "type": "stat",
       "title": "Archive upload failures, 1h",
-      "description": "Alert `payhub-archive-upload-failed` (page): its query, run now. It fires after 1m when this is above 0. See docs/SLO.md.",
+      "description": "Alert `payhub-archive-upload-failed` (page, `for: 1m`): its query, run now. The alert fires when it has been above 0 for 1m. See docs/SLO.md.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
