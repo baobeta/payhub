@@ -28,9 +28,25 @@ if [ -n "${PROMETHEUS_MULTIPROC_DIR}" ]; then
   find "${metrics_dir}" -mindepth 1 -delete
 fi
 
-# Opt in, on one container per deploy (e.g. a release task), never on every
-# web and worker: concurrent migrations race.
+# Opt in on one short-lived container per deploy (a release task, an init
+# container), whose command exits: `docker run -e RUN_MIGRATIONS=true payhub true`.
+# Never on web or worker: that container holds the owner's DATABASE_URL, so a
+# server started after the migration would serve traffic as the owner, and two
+# migrating at once fail on Rails' migration lock (ConcurrentMigrationError).
+# A server command is refused unless ALLOW_MIGRATE_AND_SERVE=true (one-container
+# setups with a single database user). README "Production image".
 if [ "${RUN_MIGRATIONS}" == "true" ]; then
+  # Matches `puma`, `bundle exec sidekiq`, `bin/rails server`, also inside `sh -c "..."`.
+  case " ${*} " in
+    *[\ /]puma[\ ]* | *[\ /]sidekiq[\ ]* | *[\ /]rails\ server[\ ]* | *[\ /]rails\ s[\ ]*) server=yes ;;
+    *) server=no ;;
+  esac
+  if [ "${server}" == yes ] && [ "${ALLOW_MIGRATE_AND_SERVE}" != "true" ]; then
+    echo "docker-entrypoint: refusing RUN_MIGRATIONS=true with a server command (${*}):" \
+         "migrate in a one-off container whose command exits (e.g. \`true\`), then start" \
+         "web and worker without RUN_MIGRATIONS and with the app's DATABASE_URL" >&2
+    exit 1
+  fi
   ./bin/rails db:prepare
 fi
 
