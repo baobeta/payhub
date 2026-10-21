@@ -31,4 +31,29 @@ RSpec.describe "Dashboard security history", type: :request do
     get "/dashboard/api/security_history"
     expect(response).to have_http_status(:forbidden)
   end
+
+  describe "TC-M15-1 formula-looking actors in the CSV export" do
+    def export_rows
+      sign_in_as(admin)
+      get "/dashboard/api/security_history/export.csv"
+      CSV.parse(response.body, headers: true)
+    end
+
+    %w[=1+1@evil.test +1@evil.test -1@evil.test].each do |email|
+      it "TC-M15-1 neutralises a member email starting with #{email[0]} recorded by a failed sign-in" do
+        create(:merchant_user, merchant:, email:)
+        post "/dashboard/api/session", params: { email:, password: "not-the-password" }.to_json, headers: ui_headers
+        expect(response).to have_http_status(:unauthorized)
+
+        actors = export_rows.select { |r| r["action"] == "session.failed" }.pluck("actor")
+        expect(actors).to eq(["'#{email}"])
+      end
+    end
+
+    it "TC-M15-1 neutralises an actor label starting with @" do
+      AuditEvent.record!(action: "member.removed", result: "success", merchant_id: merchant.id, actor_label: "@SUM(A1:A9)")
+      actors = export_rows.select { |r| r["action"] == "member.removed" }.pluck("actor")
+      expect(actors).to eq(["'@SUM(A1:A9)"])
+    end
+  end
 end
