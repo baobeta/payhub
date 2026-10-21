@@ -197,6 +197,44 @@ AuditEvent.record!(action: "team.ownership_transferred", result: "success", merc
 
 If nobody suitable is left, `bin/rails "merchants:invite_owner[<merchant id>,<email>]"` invites one. A twin of a twin: point its `live_merchant_id` at the live merchant at the top of the chain (or delete the empty twin), then deploy.
 
+## Logs and retention
+
+PCI DSS 10.5.1: keep audit logs 12 months, the last 3 immediately available.
+
+- **90 days queryable in Grafana.** The production collector writes logs, traces and metrics to ClickHouse with a 2160h TTL; older rows drop out.
+- **12 months archived in S3.** Every log line also goes to `s3://$LOG_ARCHIVE_BUCKET/payhub/logs/year=YYYY/month=MM/day=DD/hour=HH/` as OTLP JSON. The bucket, set up outside this repo, needs a lifecycle rule that expires objects after **13 months** (one month of slack over the requirement), and should block deletes before then (S3 Object Lock in compliance mode is optional, but it is what proves no one trimmed the archive).
+
+**Running the production collector.** `otelcol-contrib --config=/etc/otelcol/config.production.yaml`, with `observability/otel-collector.production.yaml` mounted there, plus the host's `/var/lib/docker/containers` mounted read-only (it reads each container's stdout from Docker's json-file log driver, so web and worker must use that driver). It reads only PayHub's request and job lines (`"kind":"request"` / `"kind":"job"`), whichever container wrote them; `container.id` on the log record says which one. The collector cannot refuse to start without a variable, so the deploy must set all of these:
+
+| Variable | What |
+|---|---|
+| `CLICKHOUSE_ENDPOINT`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` | ClickHouse, e.g. `tcp://clickhouse.internal:9000?dial_timeout=10s` |
+| `LOG_ARCHIVE_REGION`, `LOG_ARCHIVE_BUCKET` | The archive bucket. AWS credentials come from the default chain (instance role or `AWS_*`) |
+| `WEB_METRICS_TARGET`, `WORKER_METRICS_TARGET` | `host:port` of web's and the worker's `/metrics` (the worker serves on 9394) |
+| `METRICS_TOKEN` | The same value web and worker have. Unset or different, every scrape gets 401: `up` is 0 and the metrics panels go empty |
+
+In any production compose file, write `METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}` (for the collector, web and worker) so a missing token stops the deploy instead of the scrape.
+
+**Querying the archive** (an incident or an auditor asks about something older than 90 days). From ClickHouse, with the `s3()` table function (credentials as its extra arguments, or the server's own); narrow the path to the days you need:
+
+```sql
+SELECT fromUnixTimestamp64Nano(toInt64(JSONExtractString(rec, 'timeUnixNano'))) AS ts,
+       JSONExtractString(rec, 'body', 'stringValue') AS body
+FROM (
+  SELECT arrayJoin(JSONExtractArrayRaw(scope, 'logRecords')) AS rec
+  FROM (
+    SELECT arrayJoin(JSONExtractArrayRaw(arrayJoin(JSONExtractArrayRaw(json, 'resourceLogs')), 'scopeLogs')) AS scope
+    FROM s3('https://<bucket>.s3.<region>.amazonaws.com/payhub/logs/year=2026/month=03/day=14/hour=*/*', 'JSONAsString')
+  )
+)
+WHERE body LIKE '%"payment_id":"<PAYMENT_ID>"%'
+ORDER BY ts
+```
+
+Athena works too (a table over `payhub/logs/` partitioned by year/month/day/hour), if one has been set up.
+
+**Quarterly restore drill.** Once a quarter, pick a payment from 6–12 months ago, find its lines with the query above, and record with the team's audit evidence the date, the payment, how long it took and anything that did not work (missing hours, a credential that had expired). An archive that has never been read is not evidence.
+
 ## Quick reference
 
 | Question | Where |
