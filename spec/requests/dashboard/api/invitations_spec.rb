@@ -110,6 +110,20 @@ RSpec.describe "Invitations and enrolment", type: :request do
       expect(response).to have_http_status(:ok)
     end
 
+    it "TC-M11-6 a resend whose transaction rolls back emails nothing (the link would be dead)" do
+      user, = pending
+      sign_in_as(admin, stepped_up: true)
+      # The whole unit of work rolls back at its end, as a failed COMMIT would.
+      allow(MerchantUser).to receive(:transaction).and_wrap_original do |m, *args, **opts, &blk|
+        m.call(*args, **opts) do |tx|
+          blk.call(tx)
+          raise ActiveRecord::Rollback
+        end
+      end
+
+      expect { resend(user) }.not_to have_enqueued_mail(InvitationMailer, :invite)
+    end
+
     it "TC-M11-1 needs team.manage with step-up" do
       user, = pending
       sign_in_as(admin)
