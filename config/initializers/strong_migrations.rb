@@ -9,7 +9,7 @@ StrongMigrations.start_after = 20261021600001
 # Checks follow PostgreSQL 16 in development and test; production uses the server's own version.
 StrongMigrations.target_version = 16
 # Session SETs on the migration connection only: a migration that waits on a lock
-# gives up after 10s instead of queueing every write behind it.
+# queues writes behind it for at most 10s, then fails.
 StrongMigrations.lock_timeout = 10.seconds
 StrongMigrations.statement_timeout = 1.hour
 # A new index is no use to the planner until the table's statistics are refreshed.
