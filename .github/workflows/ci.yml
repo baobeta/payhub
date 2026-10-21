@@ -152,16 +152,23 @@ jobs:
       # takes 5 s, served with the app's config/puma.rb and two workers.
       - name: docker stop drains a request in flight and exits 0
         run: |
+          trap 'docker rm -f drain >/dev/null 2>&1 || true' EXIT
           mkdir -p "$RUNNER_TEMP/drain"
           cat > "$RUNNER_TEMP/drain/slow.ru" <<'RU'
           run ->(_env) { sleep 5; [200, { "content-type" => "text/plain" }, ["drained\n"]] }
           RU
           docker run -d --name drain -p 3002:3000 -e WEB_CONCURRENCY=2 \
             -v "$RUNNER_TEMP/drain:/drain:ro" payhub:ci bundle exec puma -C config/puma.rb /drain/slow.ru
+          booted=no
           for _ in $(seq 30); do
-            [ "$(docker logs drain 2>&1 | grep -c ' booted in ')" = 2 ] && break
+            [ "$(docker logs drain 2>&1 | grep -c ' booted in ')" = 2 ] && booted=yes && break
             sleep 1
           done
+          if [ "$booted" != yes ]; then
+            echo "drain: two workers did not boot in 30s"
+            docker logs drain
+            exit 1
+          fi
           curl -s -o /dev/null -w '%{http_code}' --max-time 20 localhost:3002/ > "$RUNNER_TEMP/drain/code" &
           curl_pid=$!
           sleep 1

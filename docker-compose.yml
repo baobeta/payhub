@@ -33,6 +33,8 @@ services:
     # restarts, and Puma refuses to boot if it sees one.
     command: sh -c "rm -f tmp/pids/server.pid && exec bin/rails server -b 0.0.0.0 -p 3000"
     # Above Puma's worker_shutdown_timeout (25 s, config/puma.rb); Docker's default is 10 s.
+    # Compose runs single mode (no WEB_CONCURRENCY): Puma then waits for requests
+    # with no limit, and this grace period is the only bound.
     stop_grace_period: 30s
     ports:
       - "${WEB_PORT:-3000}:3000" # host port; set WEB_PORT in .env if 3000 is taken
