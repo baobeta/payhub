@@ -8,7 +8,7 @@ module Dashboard
       extend T::Sig
 
       requires_permission "team.read", only: :index
-      requires_permission "team.manage", only: %i[update destroy]
+      requires_permission "team.manage", only: %i[update destroy reset_otp]
 
       rescue_from ChangeMemberRole::Refused do |e|
         T.bind(self, Dashboard::Api::MembersController)
@@ -27,6 +27,7 @@ module Dashboard
         from = member.role
         ChangeMemberRole.call(actor: current_user, member:, role: params.require(:role).to_s)
         audit!("team.role_changed", target: member, metadata: { "email" => member.email, "from" => from, "to" => member.role })
+        notify_owner("team.role_changed", detail: "#{member.email}: #{from} → #{member.role}")
         render json: MemberSerializer.call(member)
       end
 
@@ -35,6 +36,18 @@ module Dashboard
         member = live_merchant.merchant_users.find(params[:id])
         ChangeMemberRole.remove(actor: current_user, member:)
         audit!("team.removed", target: member, metadata: { "email" => member.email })
+        notify_owner("team.removed", detail: member.email)
+        render json: MemberSerializer.call(member)
+      end
+
+      # M12: reset a member's lost authenticator (team.manage, step-up).
+      sig { void }
+      def reset_otp
+        member = live_merchant.merchant_users.find(params[:id])
+        ChangeMemberRole.reset_otp(actor: current_user, member:)
+        audit!("team.otp_reset", target: member, metadata: { "email" => member.email })
+        SecurityMailer.otp_reset(member).deliver_later
+        notify_owner("team.otp_reset", detail: member.email)
         render json: MemberSerializer.call(member)
       end
     end

@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useMe } from "../useMe";
 import { ApiFailure } from "../../shared/http";
 import ErrorBanner from "../../shared/components/ErrorBanner.vue";
+import SessionsList from "../../shared/components/SessionsList.vue";
 
 const { data: me } = useMe();
 const current = ref("");
@@ -112,5 +113,6 @@ const regenerate = () =>
       {{ message }}
     </p>
     <ErrorBanner :message="error" />
+    <SessionsList :client="api" />
   </div>
 </template>

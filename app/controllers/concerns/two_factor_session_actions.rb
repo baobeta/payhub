@@ -14,6 +14,7 @@ module TwoFactorSessionActions
   requires_ancestor { ActionController::Base }
 
   PENDING_TTL = 5.minutes
+  ENROL_TTL = 15.minutes # as long as an invitation's enrol step
 
   sig { void }
   def create
@@ -25,6 +26,7 @@ module TwoFactorSessionActions
 
       raise ApiError.unauthenticated(code: "invalid_credentials", message: "Email or password is wrong")
     end
+    return start_enrolment(result.principal) unless result.principal.otp_enabled?
 
     cookies.encrypted[pending_cookie] = { value: { "id" => result.principal.id, "exp" => PENDING_TTL.from_now.to_i },
                                           httponly: true, same_site: :strict, secure: Rails.env.production?,
@@ -34,8 +36,12 @@ module TwoFactorSessionActions
 
   sig { void }
   def otp = second_factor { |principal| principal.verify_otp!(params.require(:code)) }
+  # NIST 800-63B §4.2: using a recovery code is worth telling the person about.
   sig { void }
-  def recovery = second_factor { |principal| RecoveryCode.consume!(principal, params.require(:code)) }
+  def recovery
+    second_factor { |principal| RecoveryCode.consume!(principal, params.require(:code)) }
+    SecurityMailer.recovery_code_used(current_user).deliver_later
+  end
 
   # Step-up guards a live session; a stolen cookie must not get unlimited
   # guesses. Ten wrong codes lock the account and end every session.
@@ -66,6 +72,20 @@ module TwoFactorSessionActions
 
   sig { returns(Symbol) }
   def pending_cookie = :"#{session_cookie_name}_2fa"
+
+  # M12: an admin reset this person's authenticator (Stripe's 2FA recovery).
+  # The password proved who they are; still no session until they enrol a
+  # new authenticator, through the same enrol cookie and otp/setup + confirm
+  # steps as accepting an invitation (InvitationsController::ENROL_COOKIE is
+  # "<session cookie>_enrol" in both areas).
+  sig { params(principal: T.any(MerchantUser, Operator)).void }
+  def start_enrolment(principal)
+    cookies.encrypted[:"#{session_cookie_name}_enrol"] = {
+      value: { "id" => principal.id, "exp" => ENROL_TTL.from_now.to_i },
+      httponly: true, same_site: :strict, secure: Rails.env.production?, path: session_cookie_path
+    }
+    render json: { "next" => "enrol_otp" }
+  end
 
   sig { returns(T.nilable(T.any(MerchantUser, Operator))) }
   def pending_principal
@@ -111,7 +131,10 @@ module TwoFactorSessionActions
                 merchant_id: principal.try(:merchant_id), ip: request.remote_ip,
                 user_agent: request.user_agent, request_id: request.request_id }
     AuditEvent.record!(action: "session.failed", result: "failure", metadata: { "factor" => factor }, **context)
-    AuditEvent.record!(action: "account.locked", result: "denied", metadata: { "factor" => factor }, **context) if just_locked
+    return unless just_locked && principal
+
+    AuditEvent.record!(action: "account.locked", result: "denied", metadata: { "factor" => factor }, **context)
+    SecurityMailer.account_locked(principal, until_at: T.must(principal.locked_until)).deliver_later
   end
 
   sig { params(principal: T.any(MerchantUser, Operator), session_row: Session).void }

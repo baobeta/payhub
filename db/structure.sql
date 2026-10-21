@@ -973,7 +973,7 @@ CREATE INDEX idx_ledger_entries_transfer ON public.ledger_entries USING btree (t
 -- Name: idx_merchant_users_email; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_merchant_users_email ON public.merchant_users USING btree (lower((email)::text));
+CREATE UNIQUE INDEX idx_merchant_users_email ON public.merchant_users USING btree (lower((email)::text)) WHERE (disabled_at IS NULL);
 
 
 --
@@ -1570,6 +1570,7 @@ SET search_path TO "$user", public;
 INSERT INTO "schema_migrations" (version) VALUES
 ('20261021500002'),
 ('20261021500001'),
+('20261021400001'),
 ('20261021000001'),
 ('20261020100002'),
 ('20261020100001'),
