@@ -13,13 +13,14 @@ RSpec.describe "OpenTelemetry collector config" do # rubocop:disable RSpec/Descr
     config.dig("receivers", "prometheus", "config", "scrape_configs").index_by { |job| job["job_name"] }
   end
   let(:targets) { jobs.transform_values { |job| job["static_configs"].flat_map { |static| static["targets"] } } }
+  let(:app_jobs) { jobs.except("otelcol") }
 
   def compose_env(service, key)
     compose.dig("services", service, "environment", key)
   end
 
   it "scrapes web and worker as separate jobs" do
-    expect(targets.keys).to contain_exactly("payhub-web", "payhub-worker")
+    expect(targets.keys).to contain_exactly("payhub-web", "payhub-worker", "otelcol")
     expect(targets["payhub-web"]).to eq(["web:3000"])
     expect(targets["payhub-worker"].size).to eq(1)
   end
@@ -41,13 +42,22 @@ RSpec.describe "OpenTelemetry collector config" do # rubocop:disable RSpec/Descr
   end
 
   it "names each job after the service's OTEL_SERVICE_NAME, so ClickHouse ServiceName matches traces" do
-    expect(jobs.keys).to contain_exactly(compose_env("web", "OTEL_SERVICE_NAME"),
-                                         compose_env("worker", "OTEL_SERVICE_NAME"))
+    expect(app_jobs.keys).to contain_exactly(compose_env("web", "OTEL_SERVICE_NAME"),
+                                             compose_env("worker", "OTEL_SERVICE_NAME"))
   end
 
-  it "sends METRICS_TOKEN as the bearer credentials on every scrape" do
-    expect(jobs.values).to all(include("metrics_path" => "/metrics"))
-    expect(jobs.values.map { |job| job.dig("authorization", "credentials") }).to all(include("METRICS_TOKEN"))
+  it "sends METRICS_TOKEN as the bearer credentials on every app scrape" do
+    expect(app_jobs.values).to all(include("metrics_path" => "/metrics"))
+    expect(app_jobs.values.map { |job| job.dig("authorization", "credentials") }).to all(include("METRICS_TOKEN"))
+  end
+
+  # The collector's own metrics (export failures, queue size) land in
+  # ClickHouse as ServiceName 'otelcol', where the alert rules read them.
+  it "scrapes the collector's own metrics from the address it serves them on" do
+    telemetry = config.dig("service", "telemetry", "metrics")
+    expect(telemetry).to include("level" => "normal")
+    expect(targets["otelcol"]).to eq([telemetry["address"]])
+    expect(jobs["otelcol"]).not_to have_key("authorization")
   end
 
   it "passes METRICS_TOKEN to the collector and the app from the same variable" do

@@ -5,7 +5,8 @@
 #   metrics <- Prometheus scrape of web:3000/metrics and worker:9394/metrics,
 #              each its own job (ClickHouse ServiceName = the job name), sending
 #              METRICS_TOKEN as the bearer token. Unset in development, the
-#              header goes out empty and /metrics stays open.
+#              header goes out empty and /metrics stays open. Plus the
+#              collector's own metrics (localhost:8888) as job otelcol.
 # Tables are created by the exporter (create_schema) in the `otel` database.
 
 receivers:
@@ -33,6 +34,12 @@ receivers:
             credentials: "${env:METRICS_TOKEN}"
           static_configs:
             - targets: ["worker:9394"]
+        # The collector's own metrics (service.telemetry below): exporter
+        # failures, queue sizes. ServiceName 'otelcol' in ClickHouse.
+        - job_name: otelcol
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["localhost:8888"]
 
   filelog:
     include: [/var/log/payhub/development.log]
@@ -84,6 +91,11 @@ exporters:
       enabled: true
 
 service:
+  # Served on localhost only, for the otelcol scrape job above.
+  telemetry:
+    metrics:
+      level: normal
+      address: localhost:8888
   pipelines:
     traces:
       receivers: [otlp]

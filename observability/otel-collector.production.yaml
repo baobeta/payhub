@@ -10,7 +10,9 @@
 #              as payhub-web / payhub-worker (the same job names as development,
 #              so ClickHouse ServiceName is the same everywhere), with
 #              METRICS_TOKEN as the bearer token. Unset, /metrics answers 401
-#              and `up` is 0.
+#              and `up` is 0. Plus the collector's own metrics (localhost:8888)
+#              as job otelcol: payhub-archive-upload-failed reads its failed
+#              awss3 exports.
 #   retention: 90 days queryable in ClickHouse (ttl 2160h, the same for logs,
 #              traces and metrics: one retention, on purpose) and every log line
 #              archived to S3 (bucket lifecycle >= 13 months, set on the bucket).
@@ -51,6 +53,12 @@ receivers:
             credentials: "${env:METRICS_TOKEN}"
           static_configs:
             - targets: ["${env:WORKER_METRICS_TARGET}"]
+        # The collector's own metrics (service.telemetry below): exporter
+        # failures, queue sizes. ServiceName 'otelcol' in ClickHouse.
+        - job_name: otelcol
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["localhost:8888"]
 
   filelog:
     # *-json.log* also matches Docker's rotated files (<id>-json.log.1, …), so
@@ -202,6 +210,11 @@ exporters:
     marshaler: otlp_json
 
 service:
+  # Served on localhost only, for the otelcol scrape job above.
+  telemetry:
+    metrics:
+      level: normal
+      address: localhost:8888
   extensions: [file_storage]
   pipelines:
     traces:

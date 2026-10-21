@@ -125,9 +125,17 @@ RSpec.describe "OpenTelemetry production collector config" do # rubocop:disable 
   it "scrapes web and worker from configured targets with METRICS_TOKEN" do
     targets = jobs.transform_values { |job| job["static_configs"].flat_map { |static| static["targets"] } }
     expect(targets).to eq("payhub-web" => ["${env:WEB_METRICS_TARGET}"],
-                          "payhub-worker" => ["${env:WORKER_METRICS_TARGET}"])
-    expect(jobs.values).to all(include("metrics_path" => "/metrics"))
-    expect(jobs.values.map { |job| job.dig("authorization", "credentials") }).to all(include("METRICS_TOKEN"))
+                          "payhub-worker" => ["${env:WORKER_METRICS_TARGET}"],
+                          "otelcol" => ["localhost:8888"])
+    app_jobs = jobs.except("otelcol").values
+    expect(app_jobs).to all(include("metrics_path" => "/metrics"))
+    expect(app_jobs.map { |job| job.dig("authorization", "credentials") }).to all(include("METRICS_TOKEN"))
+  end
+
+  # payhub-archive-upload-failed reads otelcol_exporter_send_failed_log_records
+  # for awss3 from these: the S3 exporter has no retry, so a failure is a gap.
+  it "scrapes its own metrics, served on localhost only" do
+    expect(config.dig("service", "telemetry", "metrics")).to eq("level" => "normal", "address" => "localhost:8888")
   end
 
   it "uses the dev config's job names, so ServiceName is the same in every environment" do
