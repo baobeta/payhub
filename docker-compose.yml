@@ -58,8 +58,8 @@ services:
       OTEL_SERVICE_NAME: payhub-web
       # Every process writes its metrics here and /metrics adds them up. One
       # directory per service: web and worker share the bind mount, and their
-      # PIDs overlap (each container counts from 1). Each will be scraped on
-      # its own once the worker serves /metrics (plan Tasks 5 and 6).
+      # PIDs overlap (each container counts from 1). Each is scraped on its
+      # own: web on :3000/metrics, worker on :9394/metrics.
       PROMETHEUS_MULTIPROC_DIR: /rails/tmp/prometheus/web
     depends_on:
       db:
@@ -96,6 +96,11 @@ services:
       CHAOS_API_URL: ${CHAOS_API_URL:-http://web:3000}
       OTEL_SERVICE_NAME: payhub-worker
       PROMETHEUS_MULTIPROC_DIR: /rails/tmp/prometheus/worker
+    # Sidekiq serves its own /metrics here (MetricsExporter), same token rule
+    # as web. Not published to the host; from your machine:
+    #   docker compose exec worker curl -s localhost:9394/metrics
+    expose:
+      - "9394"
     depends_on:
       db:
         condition: service_healthy
