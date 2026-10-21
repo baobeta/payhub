@@ -243,6 +243,13 @@ docker run --env-file production.env payhub bundle exec sidekiq         # worker
 
 `production.env` holds `SECRET_KEY_BASE`, `DATABASE_URL`, `REDIS_URL` and every variable in the production table below. The entrypoint (`bin/docker-entrypoint`) wipes `PROMETHEUS_MULTIPROC_DIR` (`/rails/tmp/prometheus` in the image, on the container's own disk) on every start, then runs `bin/rails db:prepare` only when `RUN_MIGRATIONS=true` (the alternative to the first line above, for platforms with no release step), then the command. In production `db:prepare` seeds nothing: `db/seeds.rb` skips there unless `DEMO_ENABLED=true`.
 
+A fresh production database therefore has **no FX rates**. Same-currency payments work, but a payment whose currency differs from the merchant's default currency answers `503 currency_unavailable` (`FxRate.latest!` raises `FxRate::Missing`) until a rate for that pair exists. Nothing in the app fetches rates (no job, no rake task); an operator inserts them, one row per direction, and the newest `captured_at` wins:
+
+```bash
+docker run --rm --env-file production.env payhub bin/rails runner \
+  'FxRate.create!(base: "USD", quote: "EUR", rate: "0.92", captured_at: Time.current)'
+```
+
 Rails serves `public/`, the Vite bundles included, with a one-year `cache-control` (they are fingerprinted), so no CDN or NGINX is required; one in front of the app may cache them. TLS is terminated at the load balancer; the app still redirects to HTTPS and sends HSTS unless `RAILS_FORCE_SSL=false`. CI's `image` job builds this target and boots web and worker from it.
 
 ## Configuration and troubleshooting
