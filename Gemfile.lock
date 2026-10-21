@@ -642,7 +642,7 @@ DEPENDENCIES
   pg_query (~> 6.0)
   prometheus-client (~> 5.0)
   prosopite (~> 2.2)
-  puma (>= 5.0)
+  puma (>= 6.0, < 9)
   rack-attack (~> 6.7)
   rails (~> 8.1.4)
   redis (~> 5.4)

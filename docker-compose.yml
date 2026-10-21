@@ -98,7 +98,8 @@ services:
       PROMETHEUS_MULTIPROC_DIR: /rails/tmp/prometheus/worker
     # Sidekiq serves its own /metrics here (MetricsExporter), same token rule
     # as web. Not published to the host; from your machine:
-    #   docker compose exec worker curl -s localhost:9394/metrics
+    #   docker compose exec worker sh -c 'curl -s -H "Authorization: Bearer $METRICS_TOKEN" localhost:9394/metrics'
+    # (the header is only needed once METRICS_TOKEN is set).
     expose:
       - "9394"
     depends_on:

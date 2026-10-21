@@ -4,7 +4,7 @@ ruby "3.3.12"
 
 gem "rails", "~> 8.1.4"
 gem "pg", "~> 1.1"
-gem "puma", ">= 5.0"
+gem "puma", ">= 6.0", "< 9" # MetricsExporter needs Puma::LogWriter (6+)
 gem "bootsnap", require: false
 gem "tzinfo-data", platforms: %i[ windows jruby ]
 

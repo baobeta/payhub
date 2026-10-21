@@ -17,6 +17,8 @@ Sidekiq.configure_server do |config|
   # WORKER_METRICS_PORT (9394), with the same token rule as the web endpoint.
   metrics_server = nil
   config.on(:startup) { metrics_server = MetricsExporter.start! }
+  # :shutdown fires as Sidekiq starts draining, so a scrape during the drain
+  # misses; increments made after it are lost with the process anyway.
   config.on(:shutdown) { metrics_server&.stop(true) }
 end
 

@@ -38,7 +38,9 @@ RSpec.describe MetricsExporter do
 
   it "PR-5: start! binds the port and answers over HTTP" do
     Metrics.increment(:late_success, psp: "nordpay")
-    WebMock.disable_net_connect!(allow_localhost: true) # a real socket this time
+    webmock = WebMock::Config.instance
+    saved = [webmock.allow_localhost, webmock.allow]
+    webmock.allow_localhost = true # a real socket this time
     port = TCPServer.open("127.0.0.1", 0) { |s| s.addr[1] }
     server = described_class.start!(host: "127.0.0.1", port: port, token: "s3cret")
 
@@ -48,7 +50,7 @@ RSpec.describe MetricsExporter do
     expect(response.body).to include('payhub_late_success_total{psp="nordpay"}')
   ensure
     server&.stop(true)
-    WebMock.disable_net_connect! # back to the suite-wide setting from webmock/rspec
+    webmock.allow_localhost, webmock.allow = saved if saved
   end
 
   it "PR-5: start! logs and returns nil when the port is taken, instead of raising" do
@@ -56,8 +58,22 @@ RSpec.describe MetricsExporter do
     allow(Rails.logger).to receive(:error)
 
     expect(described_class.start!(host: "127.0.0.1", port: blocker.addr[1])).to be_nil
-    expect(Rails.logger).to have_received(:error).with(/could not listen/)
+    expect(Rails.logger).to have_received(:error).with(/Worker metrics disabled \(127\.0\.0\.1:\d+\): Errno::EADDRINUSE/)
   ensure
     blocker&.close
+  end
+
+  it "PR-5: start! logs and returns nil for a port that is not a number" do
+    allow(Rails.logger).to receive(:error)
+
+    expect(described_class.start!(host: "127.0.0.1", port: "abc")).to be_nil
+    expect(Rails.logger).to have_received(:error).with(/Worker metrics disabled \(127\.0\.0\.1:abc\): ArgumentError/)
+  end
+
+  it "PR-5: start! logs and returns nil for a host that does not resolve" do
+    allow(Rails.logger).to receive(:error)
+
+    expect(described_class.start!(host: "no-such-host.invalid", port: "0")).to be_nil
+    expect(Rails.logger).to have_received(:error).with(/Worker metrics disabled \(no-such-host\.invalid:0\)/)
   end
 end
