@@ -239,15 +239,17 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
     end
 
     # Grafana colours a value by the highest step at or below it. An "above T"
-    # rule turns red at the next whole number (its values are counts, or ms for
-    # p95), so a quiet 0 stays green; a "below T" rule is red until T.
+    # count turns red at T + 1, so a quiet 0 stays green; p95 (ms, continuous)
+    # at T, which differs from "above" only at exactly T. A "below T" rule is
+    # red until T.
     it "turns each panel red where its alert's condition starts, and states the alert's for" do
       slo_panels.each do |uid, panel|
         rule = rules.fetch(uid)
         evaluator = query(rule, "C").dig("model", "conditions").sole["evaluator"]
         threshold = evaluator["params"].sole
+        red_from = panel.dig("fieldConfig", "defaults", "unit") == "ms" ? threshold : threshold + 1
         steps = panel.dig("fieldConfig", "defaults", "thresholds", "steps").map { |step| step.values_at("color", "value") }
-        expect(steps).to eq(evaluator["type"] == "gt" ? [["green", nil], ["red", threshold + 1]] : [["red", nil], ["green", threshold]]), uid
+        expect(steps).to eq(evaluator["type"] == "gt" ? [["green", nil], ["red", red_from]] : [["red", nil], ["green", threshold]]), uid
         expect(panel["description"]).to include("`for: #{rule['for']}`"), uid
       end
     end

@@ -12,7 +12,7 @@ What PayHub promises, how each promise is measured, and which alert tells on-cal
 
 The alerts are **burn signals**, not the SLO figure: each fires when the SLO is being spent fast right now. Each alert below gives its severity and its `for` (how long the condition must hold before it fires; `0s` fires at the first evaluation that sees it). Nothing computes the 28-day (or weekly) figure automatically yet. To report it, run the queries below by hand at the end of each period and keep the numbers. ClickHouse keeps 90 days in production and 72 hours locally.
 
-The *PayHub tracing* dashboard's **SLOs** row shows each alert's query as it runs now: the number the alert compares with its threshold. A stat turns red where its alert's condition starts: from the next whole number above the threshold for an "above" alert (the values are counts, and milliseconds for p95), and below the threshold for a "below" alert. The alert itself may still be waiting out its `for`. Each stat's header has a link to its RUNBOOK section.
+The *PayHub tracing* dashboard's **SLOs** row shows each alert's query as it runs now: the number the alert compares with its threshold. A stat turns red where its alert's condition starts: for an "above" alert, from the next whole number above the threshold (those values are counts; p95 is the exception and turns red at 300 ms), and for a "below" alert, below the threshold. The alert itself may still be waiting out its `for`. Each stat's header has a link to its RUNBOOK section.
 
 How to run the queries:
 
