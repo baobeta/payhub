@@ -1,0 +1,24 @@
+{
+  "$comment": "dbml-erd manual positions. Edited by dragging in `npm run erd`; safe to commit.",
+  "version": 1,
+  "tables": {
+    "api_keys": {
+      "x": -207,
+      "y": 1234
+    },
+    "fx_rates": {
+      "x": -619,
+      "y": 1263
+    },
+    "merchants": {
+      "x": -619,
+      "y": 937
+    }
+  },
+  "notes": {
+    "label_merchants_and_keys": {
+      "x": -648,
+      "y": 808
+    }
+  }
+}

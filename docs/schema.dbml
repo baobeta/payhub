@@ -27,7 +27,7 @@ Project payhub {
 // Merchants and their keys
 // ───────────────────────────────────────────────────────────────────────────
 
-Table merchants {
+Table merchants [headercolor: #1F6FEB] {
   id                                 uuid         [pk, default: `uuid_generate_v7()`]
   name                               varchar      [not null]
   livemode                           boolean      [not null, default: true]
@@ -53,7 +53,7 @@ Table merchants {
   '''
 }
 
-Table api_keys {
+Table api_keys [headercolor: #1F6FEB] {
   id            uuid      [pk, default: `uuid_generate_v7()`]
   merchant_id   uuid      [not null, ref: > merchants.id, note: 'Always the LIVE merchant; livemode picks which twin a request acts on.']
   livemode      boolean   [not null]
@@ -80,7 +80,7 @@ Table api_keys {
   '''
 }
 
-Table fx_rates {
+Table fx_rates [headercolor: #1F6FEB] {
   id          uuid          [pk, default: `uuid_generate_v7()`]
   base        varchar(3)    [not null]
   quote       varchar(3)    [not null]
@@ -99,7 +99,7 @@ Table fx_rates {
 // The spine
 // ───────────────────────────────────────────────────────────────────────────
 
-Table payments {
+Table payments [headercolor: #2DA44E] {
   id                   uuid          [pk, default: `uuid_generate_v7()`]
   merchant_id          uuid          [not null, ref: > merchants.id]
   state                varchar       [not null, default: 'pending', note: 'CHECK IN (pending, requires_action, authorized, unknown, captured, canceled, failed, part_refunded, refunded)']
@@ -134,7 +134,7 @@ Table payments {
   '''
 }
 
-Table payment_transitions {
+Table payment_transitions [headercolor: #2DA44E] {
   id          uuid      [pk, default: `uuid_generate_v7()`]
   payment_id  uuid      [not null, ref: > payments.id]
   from_state  varchar   [note: 'Null for the initial pending row.']
@@ -153,7 +153,7 @@ Table payment_transitions {
   Note: 'Append-only. A stale event (sort_key older than the current row) is still inserted with most_recent = false for audit, but does not move state.'
 }
 
-Table captures {
+Table captures [headercolor: #2DA44E] {
   id                  uuid      [pk, default: `uuid_generate_v7()`]
   payment_id          uuid      [not null, ref: > payments.id]
   amount_minor        bigint    [not null, note: 'CHECK > 0']
@@ -171,7 +171,7 @@ Table captures {
   Note: 'One merchant capture request (DECISIONS #20). The job reads the PSP before it sends, so a retried capture is never sent twice.'
 }
 
-Table refunds {
+Table refunds [headercolor: #2DA44E] {
   id            uuid       [pk, default: `uuid_generate_v7()`]
   payment_id    uuid       [not null, ref: > payments.id]
   state         varchar    [not null, default: 'pending', note: 'CHECK IN (pending, succeeded, failed)']
@@ -201,7 +201,7 @@ Table refunds {
 // API guard
 // ───────────────────────────────────────────────────────────────────────────
 
-Table idempotency_keys {
+Table idempotency_keys [headercolor: #2DA44E] {
   id                  uuid      [pk, default: `uuid_generate_v7()`]
   merchant_id         uuid      [not null, ref: > merchants.id]
   key                 varchar   [not null, note: 'The Idempotency-Key header value.']
@@ -223,7 +223,7 @@ Table idempotency_keys {
 // The books
 // ───────────────────────────────────────────────────────────────────────────
 
-Table ledger_accounts {
+Table ledger_accounts [headercolor: #BF8700] {
   id          uuid       [pk, default: `uuid_generate_v7()`]
   merchant_id uuid       [not null, ref: > merchants.id]
   kind        varchar    [not null, note: 'CHECK IN (psp_receivable, merchant_payable, refunds_reserved, refunds_paid, psp_payouts, psp_fees)']
@@ -242,7 +242,7 @@ Table ledger_accounts {
   '''
 }
 
-Table ledger_entries {
+Table ledger_entries [headercolor: #BF8700] {
   id           uuid       [pk, default: `uuid_generate_v7()`]
   transfer_id  uuid       [not null, note: 'Groups the legs of one movement. Legs per transfer_id MUST sum to zero per currency.']
   account_id   uuid       [not null, ref: > ledger_accounts.id]
@@ -267,7 +267,7 @@ Table ledger_entries {
   '''
 }
 
-Table settlement_lines {
+Table settlement_lines [headercolor: #BF8700] {
   id               uuid       [pk, default: `uuid_generate_v7()`]
   psp_name         varchar    [not null]
   external_id      varchar    [not null, note: 'The PSP\'s line id. With psp_name, makes ingestion idempotent.']
@@ -303,7 +303,7 @@ Table settlement_lines {
 // Events in and out
 // ───────────────────────────────────────────────────────────────────────────
 
-Table inbound_events {
+Table inbound_events [headercolor: #8250DF] {
   id              uuid      [pk, default: `uuid_generate_v7()`]
   psp_name        varchar   [not null]
   external_id     varchar   [not null, note: 'The PSP\'s own event id.']
@@ -324,7 +324,7 @@ Table inbound_events {
   }
 }
 
-Table outbound_events {
+Table outbound_events [headercolor: #8250DF] {
   id              uuid      [pk, default: `uuid_generate_v7()`]
   merchant_id     uuid      [not null, ref: > merchants.id]
   payment_id      uuid      [ref: > payments.id]
@@ -349,7 +349,7 @@ Table outbound_events {
   Note: 'Written in the same transaction as the state change that caused it (transactional outbox). Delivered by a Sidekiq sweeper with backoff; dead after N attempts; POST /v1/events/:id/redeliver resets to pending.'
 }
 
-Table outbound_delivery_attempts {
+Table outbound_delivery_attempts [headercolor: #8250DF] {
   id                uuid      [pk, default: `uuid_generate_v7()`]
   outbound_event_id uuid      [not null, ref: > outbound_events.id]
   attempt_number    integer   [not null]
@@ -365,7 +365,7 @@ Table outbound_delivery_attempts {
   Note: 'One row per delivery try, so GET /v1/events can show the history.'
 }
 
-Table psp_calls {
+Table psp_calls [headercolor: #8250DF] {
   id                uuid      [pk, default: `uuid_generate_v7()`]
   psp_name          varchar   [not null]
   operation         varchar   [not null, note: 'HTTP method + path with ids masked, e.g. "POST /charges/:ref".']
@@ -393,7 +393,7 @@ Table psp_calls {
 // People and sessions
 // ───────────────────────────────────────────────────────────────────────────
 
-Table merchant_users {
+Table merchant_users [headercolor: #CF222E] {
   id                    uuid      [pk, default: `uuid_generate_v7()`]
   merchant_id           uuid      [not null, ref: > merchants.id, note: 'Always the LIVE merchant; the session\'s mode picks live or the test twin.']
   email                 varchar   [not null]
@@ -421,7 +421,7 @@ Table merchant_users {
   }
 }
 
-Table operators {
+Table operators [headercolor: #CF222E] {
   id                    uuid      [pk, default: `uuid_generate_v7()`]
   email                 varchar   [not null]
   name                  varchar
@@ -448,7 +448,7 @@ Table operators {
   Note: 'PayHub staff. Separate from merchant_users: different cookie, different permissions, nothing a merchant can grant.'
 }
 
-Table sessions {
+Table sessions [headercolor: #CF222E] {
   id                        uuid      [pk, default: `uuid_generate_v7()`]
   principal_type            varchar   [not null, note: 'CHECK IN (MerchantUser, Operator). Polymorphic: no FK.']
   principal_id              uuid      [not null]
@@ -471,7 +471,7 @@ Table sessions {
   Note: 'One signed-in browser. The cookie holds only the signed id; revoking the row signs that browser out everywhere.'
 }
 
-Table recovery_codes {
+Table recovery_codes [headercolor: #CF222E] {
   id             uuid      [pk, default: `uuid_generate_v7()`]
   principal_type varchar   [not null, note: 'MerchantUser | Operator. Polymorphic: no FK.']
   principal_id   uuid      [not null]
@@ -491,7 +491,7 @@ Table recovery_codes {
 // Operations and audit
 // ───────────────────────────────────────────────────────────────────────────
 
-Table operator_proposals {
+Table operator_proposals [headercolor: #E16F24] {
   id                  uuid      [pk, default: `uuid_generate_v7()`]
   kind                varchar   [not null, note: 'CHECK IN (payment_transition, ledger_correction)']
   payment_id          uuid      [not null, ref: > payments.id]
@@ -529,7 +529,7 @@ Table operator_proposals {
   '''
 }
 
-Table audit_events {
+Table audit_events [headercolor: #E16F24] {
   id                       uuid      [pk, default: `uuid_generate_v7()`]
   actor_type               varchar   [note: 'Class name of the actor (MerchantUser, Operator, ...); null for the system. Polymorphic: no FK.']
   actor_id                 uuid
@@ -566,7 +566,7 @@ Table audit_events {
 // Public demo (use cases D-01..D-06)
 // ───────────────────────────────────────────────────────────────────────────
 
-Table demo_epochs {
+Table demo_epochs [headercolor: #6E7781] {
   id            uuid      [pk, default: `uuid_generate_v7()`]
   started_at    timestamp [not null]
   started_by_ip varchar
@@ -582,7 +582,7 @@ Table demo_epochs {
   '''
 }
 
-Table demo_chaos_runs {
+Table demo_chaos_runs [headercolor: #6E7781] {
   id            uuid      [pk, default: `uuid_generate_v7()`]
   state         varchar   [not null, default: 'queued', note: 'CHECK IN (queued, running, passed, failed, errored)']
   payments      integer   [not null, note: 'CHECK BETWEEN 1 AND 20']
@@ -601,16 +601,48 @@ Table demo_chaos_runs {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
+// Group labels (sticky notes; free-plan stand-in for TableGroup borders)
+// ───────────────────────────────────────────────────────────────────────────
+
+Note label_merchants_and_keys {
+  'MERCHANTS & KEYS — who is paid, how they authenticate'
+}
+
+Note label_payment_spine {
+  'PAYMENT SPINE — payments and what happens to them'
+}
+
+Note label_books {
+  'BOOKS — double-entry ledger and PSP settlement'
+}
+
+Note label_people {
+  'PEOPLE — merchant users, operators, sessions'
+}
+
+Note label_operations {
+  'OPERATIONS — four-eyes proposals and audit trail'
+}
+
+Note label_events {
+  'EVENTS — PSP calls, inbound and outbound webhooks'
+}
+
+Note label_demo {
+  'DEMO — reset epochs and chaos runs'
+}
+
+// ───────────────────────────────────────────────────────────────────────────
 // Groups (dbdiagram.io colours them)
 // ───────────────────────────────────────────────────────────────────────────
 
-TableGroup merchants_and_keys {
+TableGroup merchants_and_keys [color: #1F6FEB] {
   merchants
   api_keys
   fx_rates
 }
 
-TableGroup payment_spine {
+TableGroup payment_spine [color: #2DA44E] {
   payments
   payment_transitions
   captures
@@ -618,32 +650,32 @@ TableGroup payment_spine {
   idempotency_keys
 }
 
-TableGroup books {
+TableGroup books [color: #BF8700] {
   ledger_accounts
   ledger_entries
   settlement_lines
 }
 
-TableGroup events {
+TableGroup events [color: #8250DF] {
   inbound_events
   outbound_events
   outbound_delivery_attempts
   psp_calls
 }
 
-TableGroup people {
+TableGroup people [color: #CF222E] {
   merchant_users
   operators
   sessions
   recovery_codes
 }
 
-TableGroup operations {
+TableGroup operations [color: #E16F24] {
   operator_proposals
   audit_events
 }
 
-TableGroup demo {
+TableGroup demo [color: #6E7781] {
   demo_epochs
   demo_chaos_runs
 }
