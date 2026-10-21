@@ -220,7 +220,9 @@ Then run each of these in its own terminal:
 
 **Versions:** Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22. Postgres is exposed on host port **5434**, because 5432 is often taken. The simulators are standalone apps with their own specs: `cd simulators/nordpay && bundle exec rspec`.
 
-**Migrations:** [strong_migrations](https://github.com/ankane/strong_migrations) refuses a migration that would lock a busy table (an index built without `CONCURRENTLY`, a column type change, a `NOT NULL` added in one step, …) and prints the safe version. It checks every migration newer than `StrongMigrations.start_after` (`config/initializers/strong_migrations.rb`); the ones up to it had already run when it arrived. Build indexes with `disable_ddl_transaction!` and `algorithm: :concurrently`. Wrap an operation in `safety_assured { … }` only with a comment in the migration saying why it is safe (the table is new or small, nothing writes to it yet). See [RUNBOOK](RUNBOOK.md#safe-migrations).
+### Migrations
+
+[strong_migrations](https://github.com/ankane/strong_migrations) refuses a migration that would lock a busy table (an index built without `CONCURRENTLY`, a column type change, a `NOT NULL` added in one step, …) and prints the safe version. It checks every migration newer than `StrongMigrations.start_after` (`config/initializers/strong_migrations.rb`); the ones up to it had already run when it arrived. Build indexes with `disable_ddl_transaction!` and `algorithm: :concurrently`. Wrap an operation in `safety_assured { … }` only with a comment in the migration saying why it is safe (the table is new or small, nothing writes to it yet). See [RUNBOOK](RUNBOOK.md#safe-migrations).
 
 ## Production image
 

@@ -61,7 +61,7 @@ Rails.application.configure do
 
   # One cache for every Puma and Sidekiq process, so Rack::Attack's counters
   # are shared: per-process memory stores would multiply each limit by the
-  # process count (TC-L6-5; RUNBOOK "Rate limits"). The Redis Sidekiq already
+  # process count (TC-L6-5; RUNBOOK "A merchant reports 429s"). The Redis Sidekiq already
   # uses, under its own namespace. A Redis outage is logged, and the cache
   # then reads as empty: throttles fail open rather than failing requests.
   config.cache_store = :redis_cache_store, {
