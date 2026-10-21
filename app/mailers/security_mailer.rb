@@ -63,16 +63,24 @@ class SecurityMailer < ApplicationMailer
     mail(to: principal.email, subject: "Your PayHub account is locked")
   end
 
-  sig { params(user: MerchantUser).void }
-  def otp_reset(user)
+  # DECISIONS #25: the link carries the single-use reset token (Stripe).
+  sig { params(user: MerchantUser, token: String).void }
+  def otp_reset(user, token)
+    @url = app_url("/dashboard/reset-authenticator?token=#{token}")
+    @hours = (MerchantUser::OTP_RESET_TTL / 1.hour).to_i
     mail(to: user.email, subject: "Your PayHub authenticator was reset")
   end
 
   # To the owner. `actor` is an email: the record may be gone by delivery.
-  sig { params(owner: MerchantUser, event: String, actor: String, detail: T.nilable(String)).void }
-  def account_changed(owner, event:, actor:, detail: nil)
+  # `at` is when the change happened; the job may run much later (TC-M12-6).
+  sig do
+    params(owner: MerchantUser, event: String, actor: String, at: T.any(Time, ActiveSupport::TimeWithZone),
+           detail: T.nilable(String)).void
+  end
+  def account_changed(owner, event:, actor:, at:, detail: nil)
     subject, @did = ACCOUNT_CHANGES.fetch(event)
     @actor = actor
+    @at = at
     @detail = detail
     mail(to: owner.email, subject: "PayHub: #{subject}")
   end

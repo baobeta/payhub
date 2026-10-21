@@ -128,7 +128,7 @@ module Dashboard
         owner = live_merchant.merchant_users.active.find_by(role: "owner") # authz-allow-role-check
         return unless owner
 
-        SecurityMailer.account_changed(owner, event:, actor: current_user.email, detail:).deliver_later
+        SecurityMailer.account_changed(owner, event:, actor: current_user.email, at: Time.current, detail:).deliver_later
       end
 
       # Every error answer passes here, so a refused write is audited once.

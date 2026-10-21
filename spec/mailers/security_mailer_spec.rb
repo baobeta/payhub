@@ -18,14 +18,19 @@ RSpec.describe SecurityMailer do
   {
     password_changed: "password",
     recovery_codes_regenerated: "recovery codes",
-    recovery_code_used: "recovery code",
-    otp_reset: "authenticator"
+    recovery_code_used: "recovery code"
   }.each do |method, phrase|
     it "TC-M12-1 #{method} goes to the user and says what happened" do
       described_class.public_send(method, user).deliver_now
       expect(last_mail.to).to eq([user.email])
       expect(last_mail.body.to_s).to include(phrase)
     end
+  end
+
+  it "TC-M12-5 otp_reset carries the single-use reset link and says it expires in 72 hours" do
+    described_class.otp_reset(user, "tok-123").deliver_now
+    expect(last_mail.to).to eq([user.email])
+    expect(last_mail.body.to_s).to include("authenticator", "/dashboard/reset-authenticator?token=tok-123", "72 hours")
   end
 
   it "TC-M12-1 account_locked says until when" do
@@ -40,9 +45,19 @@ RSpec.describe SecurityMailer do
   end
 
   it "TC-M12-2 account_changed tells the owner what changed and who did it" do
-    described_class.account_changed(user, event: "api_key.revoked", actor: "dev@example.com", detail: "Checkout").deliver_now
+    described_class.account_changed(user, event: "api_key.revoked", actor: "dev@example.com", detail: "Checkout",
+                                    at: Time.current).deliver_now
     expect(last_mail.to).to eq([user.email])
     expect(last_mail.subject).to include("API key revoked")
     expect(last_mail.body.to_s).to include("dev@example.com", "revoked an API key", "Checkout")
+  end
+
+  it "TC-M12-6 account_changed states when the change happened, not when the email went out" do
+    at = Time.utc(2026, 10, 20, 9, 15)
+    travel_to(Time.utc(2026, 10, 21, 18, 0)) do
+      described_class.account_changed(user, event: "api_key.revoked", actor: "dev@example.com", at:).deliver_now
+    end
+    expect(last_mail.body.to_s).to include("2026-10-20T09:15:00Z")
+    expect(last_mail.body.to_s).not_to include("2026-10-21T18:00:00Z")
   end
 end

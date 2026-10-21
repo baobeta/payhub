@@ -1358,6 +1358,96 @@ class MerchantUser
     def otp_last_used_step_will_change!; end
 
     sig { returns(T.nilable(::String)) }
+    def otp_reset_digest; end
+
+    sig { params(value: T.nilable(::String)).returns(T.nilable(::String)) }
+    def otp_reset_digest=(value); end
+
+    sig { returns(T::Boolean) }
+    def otp_reset_digest?; end
+
+    sig { returns(T.nilable(::String)) }
+    def otp_reset_digest_before_last_save; end
+
+    sig { returns(T.untyped) }
+    def otp_reset_digest_before_type_cast; end
+
+    sig { returns(T::Boolean) }
+    def otp_reset_digest_came_from_user?; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def otp_reset_digest_change; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def otp_reset_digest_change_to_be_saved; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def otp_reset_digest_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::String)) }
+    def otp_reset_digest_in_database; end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def otp_reset_digest_previous_change; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def otp_reset_digest_previously_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::String)) }
+    def otp_reset_digest_previously_was; end
+
+    sig { returns(T.nilable(::String)) }
+    def otp_reset_digest_was; end
+
+    sig { void }
+    def otp_reset_digest_will_change!; end
+
+    sig { returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def otp_reset_expires_at; end
+
+    sig { params(value: T.nilable(::ActiveSupport::TimeWithZone)).returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def otp_reset_expires_at=(value); end
+
+    sig { returns(T::Boolean) }
+    def otp_reset_expires_at?; end
+
+    sig { returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def otp_reset_expires_at_before_last_save; end
+
+    sig { returns(T.untyped) }
+    def otp_reset_expires_at_before_type_cast; end
+
+    sig { returns(T::Boolean) }
+    def otp_reset_expires_at_came_from_user?; end
+
+    sig { returns(T.nilable([T.nilable(::ActiveSupport::TimeWithZone), T.nilable(::ActiveSupport::TimeWithZone)])) }
+    def otp_reset_expires_at_change; end
+
+    sig { returns(T.nilable([T.nilable(::ActiveSupport::TimeWithZone), T.nilable(::ActiveSupport::TimeWithZone)])) }
+    def otp_reset_expires_at_change_to_be_saved; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def otp_reset_expires_at_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def otp_reset_expires_at_in_database; end
+
+    sig { returns(T.nilable([T.nilable(::ActiveSupport::TimeWithZone), T.nilable(::ActiveSupport::TimeWithZone)])) }
+    def otp_reset_expires_at_previous_change; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def otp_reset_expires_at_previously_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def otp_reset_expires_at_previously_was; end
+
+    sig { returns(T.nilable(::ActiveSupport::TimeWithZone)) }
+    def otp_reset_expires_at_was; end
+
+    sig { void }
+    def otp_reset_expires_at_will_change!; end
+
+    sig { returns(T.nilable(::String)) }
     def otp_secret; end
 
     sig { params(value: T.nilable(::String)).returns(T.nilable(::String)) }
@@ -1491,6 +1581,12 @@ class MerchantUser
 
     sig { void }
     def restore_otp_last_used_step!; end
+
+    sig { void }
+    def restore_otp_reset_digest!; end
+
+    sig { void }
+    def restore_otp_reset_expires_at!; end
 
     sig { void }
     def restore_otp_secret!; end
@@ -1640,6 +1736,18 @@ class MerchantUser
     def saved_change_to_otp_last_used_step?(from: T.unsafe(nil), to: T.unsafe(nil)); end
 
     sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
+    def saved_change_to_otp_reset_digest; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def saved_change_to_otp_reset_digest?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable([T.nilable(::ActiveSupport::TimeWithZone), T.nilable(::ActiveSupport::TimeWithZone)])) }
+    def saved_change_to_otp_reset_expires_at; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def saved_change_to_otp_reset_expires_at?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable([T.nilable(::String), T.nilable(::String)])) }
     def saved_change_to_otp_secret; end
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
@@ -1752,6 +1860,12 @@ class MerchantUser
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def will_save_change_to_otp_last_used_step?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def will_save_change_to_otp_reset_digest?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def will_save_change_to_otp_reset_expires_at?(from: T.unsafe(nil), to: T.unsafe(nil)); end
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def will_save_change_to_otp_secret?(from: T.unsafe(nil), to: T.unsafe(nil)); end
