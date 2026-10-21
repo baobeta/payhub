@@ -88,8 +88,11 @@ receivers:
         to: body
       # Docker splits a line over 16KB into chunks and only the last ends in
       # "\n"; join them per file (keeping the first chunk's timestamp and
-      # attributes). Up to 1MiB; past that, what has arrived is flushed and the
-      # rest of the line starts a new record.
+      # attributes). Up to 1MiB: a longer line is truncated. The first ~1MiB is
+      # kept as one unparsed record (truncated JSON, so the parsers below fail
+      # on it) and the rest is dropped (it lacks the prefix the filter wants).
+      # stdout and stderr share one file, so a stderr line arriving between two
+      # stdout chunks would be glued in; production logs only to STDOUT.
       - type: recombine
         combine_field: body
         combine_with: ""

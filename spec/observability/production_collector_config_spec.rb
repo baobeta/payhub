@@ -52,6 +52,8 @@ RSpec.describe "OpenTelemetry production collector config" do # rubocop:disable 
                                             "max_log_size" => "1MiB", "overwrite_with" => "oldest")
     expect(recombine).to eq(operators.index { |op| op["type"] == "move" && op["from"] == "attributes.log" } + 1)
     expect(recombine).to be < operators.index { |op| op["field"] == 'attributes["log.file.path"]' }
+    # A filter before it would judge a chunk, not the line.
+    expect(recombine).to be < operators.index { |op| op["type"] == "filter" }
   end
 
   it "archives no redundant attributes: the raw time string or the file path" do
