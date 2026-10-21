@@ -238,4 +238,96 @@ RSpec.describe "Ops proposals", type: :request do
     # The payment must be unchanged
     expect(payment.reload.state).to eq("authorized")
   end
+
+  describe "TC-N4-1 a ledger correction through the API" do
+    let(:payment) { create(:payment, state: "captured") }
+
+    def propose_correction(legs, client_token: SecureRandom.uuid)
+      post "/ops/api/proposals",
+           params: { kind: "ledger_correction", payment_id: payment.id,
+                     payload: { currency: "EUR", legs: },
+                     reason_code: "ledger_error", reason_text: "Booked twice by the import",
+                     case_reference: "OPS-42", client_token: }.to_json, headers: ui_headers
+    end
+
+    def leg(kind, direction, amount) = { account_kind: kind, direction:, amount_minor: amount }
+
+    it "TC-N4-1 creates a proposal with balanced legs (201)" do
+      sign_in_operator(maker, stepped_up: true)
+      propose_correction([leg("merchant_payable", "debit", 300), leg("psp_receivable", "credit", 300)])
+
+      expect(response).to have_http_status(:created)
+      expect(OperatorProposal.find(json_body["id"])).to have_attributes(
+        kind: "ledger_correction", state: "pending", case_reference: "OPS-42", reason_code: "ledger_error"
+      )
+    end
+
+    it "TC-N4-1 refuses unbalanced legs with 422 and creates nothing" do
+      sign_in_operator(maker, stepped_up: true)
+      expect do
+        propose_correction([leg("merchant_payable", "debit", 300), leg("psp_receivable", "credit", 200)])
+      end.not_to change(OperatorProposal, :count)
+
+      expect(response).to have_http_status(:unprocessable_content)
+    end
+
+    it "TC-N4-1 applies the approved correction as one balanced transfer" do
+      sign_in_operator(maker, stepped_up: true)
+      propose_correction([leg("merchant_payable", "debit", 300), leg("psp_receivable", "credit", 300)])
+      id = json_body["id"]
+
+      sign_in_operator(create(:operator, role: "approver"), stepped_up: true)
+      post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+
+      expect(json_body["state"]).to eq("applied")
+      transfer_id = OperatorProposal.find(id).applied_transfer_id
+      entries = LedgerEntry.where(transfer_id:)
+      expect(entries.map { |e| [e.direction, e.amount_minor, e.currency, e.payment_id] })
+        .to contain_exactly(["debit", 300, "EUR", payment.id], ["credit", 300, "EUR", payment.id])
+      expect(Ledger.unbalanced_transfer_ids).to be_empty
+    end
+  end
+
+  describe "TC-N6-1 withdrawing a pending proposal" do
+    it "TC-N6-1 the proposer withdraws it: 200, withdrawn, audited" do
+      sign_in_operator(maker, stepped_up: true)
+      create_proposal(create(:payment, state: "unknown"))
+      id = json_body["id"]
+
+      post "/ops/api/proposals/#{id}/withdraw", headers: ui_headers
+
+      expect(response).to have_http_status(:ok)
+      expect(json_body["state"]).to eq("withdrawn")
+      expect(OperatorProposal.find(id).state).to eq("withdrawn")
+      expect(AuditEvent.where(action: "proposal.withdrawn", target_id: id).sole.actor_id).to eq(maker.id)
+    end
+
+    it "TC-N6-1 the proposer can propose again with a new client_token (201)" do
+      sign_in_operator(maker, stepped_up: true)
+      payment = create(:payment, state: "unknown")
+      create_proposal(payment)
+      first = json_body["id"]
+      post "/ops/api/proposals/#{first}/withdraw", headers: ui_headers
+
+      create_proposal(payment)
+
+      expect(response).to have_http_status(:created)
+      expect(json_body["id"]).not_to eq(first)
+      expect(OperatorProposal.where(payment:).pluck(:state)).to contain_exactly("withdrawn", "pending")
+    end
+
+    it "TC-N6-1 a withdrawn proposal can no longer be approved" do
+      sign_in_operator(maker, stepped_up: true)
+      payment = create(:payment, state: "unknown")
+      create_proposal(payment)
+      id = json_body["id"]
+      post "/ops/api/proposals/#{id}/withdraw", headers: ui_headers
+
+      sign_in_operator(create(:operator, role: "approver"), stepped_up: true)
+      post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+
+      expect(response).to have_http_status(:conflict)
+      expect(payment.reload.state).to eq("unknown")
+    end
+  end
 end
