@@ -1,5 +1,7 @@
 # Production readiness: implementation plan
 
+> **Note:** README.md and RUNBOOK.md describe what was actually built. Where this plan's sketches differ (e.g. `RAILS_SERVE_STATIC_FILES`, the roles SQL without `FOR ROLE`, the `puma.rb` `workers` lines), they are superseded.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task by task.
 
 **Goal:** Close every production-readiness gap found in the 2026-10-21 review. Code that can be fixed inside this repo gets test-first tasks. Choices that depend on outside parties get decision tasks with clear exit criteria.
