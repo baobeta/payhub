@@ -502,6 +502,7 @@ CREATE TABLE public.outbound_events (
     updated_at timestamp(6) without time zone NOT NULL,
     traceparent character varying,
     attempt_budget integer DEFAULT 8 NOT NULL,
+    sequence integer,
     CONSTRAINT chk_outbound_events_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'delivered'::character varying, 'dead'::character varying])::text[])))
 );
 
@@ -1008,6 +1009,13 @@ CREATE UNIQUE INDEX idx_operators_email ON public.operators USING btree (lower((
 --
 
 CREATE INDEX idx_outbound_events_list ON public.outbound_events USING btree (merchant_id, created_at DESC);
+
+
+--
+-- Name: idx_outbound_events_payment_sequence; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_outbound_events_payment_sequence ON public.outbound_events USING btree (payment_id, sequence) WHERE (payment_id IS NOT NULL);
 
 
 --
@@ -1562,6 +1570,7 @@ SET search_path TO "$user", public;
 INSERT INTO "schema_migrations" (version) VALUES
 ('20261021500002'),
 ('20261021500001'),
+('20261021000001'),
 ('20261020100002'),
 ('20261020100001'),
 ('20261020000302'),

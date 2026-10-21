@@ -1215,6 +1215,9 @@ class OutboundEvent
     def restore_payment_id!; end
 
     sig { void }
+    def restore_sequence!; end
+
+    sig { void }
     def restore_state!; end
 
     sig { void }
@@ -1295,6 +1298,12 @@ class OutboundEvent
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def saved_change_to_payment_id?(from: T.unsafe(nil), to: T.unsafe(nil)); end
 
+    sig { returns(T.nilable([T.nilable(::Integer), T.nilable(::Integer)])) }
+    def saved_change_to_sequence; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def saved_change_to_sequence?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
     sig { returns(T.nilable([::String, ::String])) }
     def saved_change_to_state; end
 
@@ -1312,6 +1321,51 @@ class OutboundEvent
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def saved_change_to_updated_at?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::Integer)) }
+    def sequence; end
+
+    sig { params(value: T.nilable(::Integer)).returns(T.nilable(::Integer)) }
+    def sequence=(value); end
+
+    sig { returns(T::Boolean) }
+    def sequence?; end
+
+    sig { returns(T.nilable(::Integer)) }
+    def sequence_before_last_save; end
+
+    sig { returns(T.untyped) }
+    def sequence_before_type_cast; end
+
+    sig { returns(T::Boolean) }
+    def sequence_came_from_user?; end
+
+    sig { returns(T.nilable([T.nilable(::Integer), T.nilable(::Integer)])) }
+    def sequence_change; end
+
+    sig { returns(T.nilable([T.nilable(::Integer), T.nilable(::Integer)])) }
+    def sequence_change_to_be_saved; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def sequence_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::Integer)) }
+    def sequence_in_database; end
+
+    sig { returns(T.nilable([T.nilable(::Integer), T.nilable(::Integer)])) }
+    def sequence_previous_change; end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def sequence_previously_changed?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { returns(T.nilable(::Integer)) }
+    def sequence_previously_was; end
+
+    sig { returns(T.nilable(::Integer)) }
+    def sequence_was; end
+
+    sig { void }
+    def sequence_will_change!; end
 
     sig { returns(::String) }
     def state; end
@@ -1483,6 +1537,9 @@ class OutboundEvent
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def will_save_change_to_payment_id?(from: T.unsafe(nil), to: T.unsafe(nil)); end
+
+    sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
+    def will_save_change_to_sequence?(from: T.unsafe(nil), to: T.unsafe(nil)); end
 
     sig { params(from: T.untyped, to: T.untyped).returns(T::Boolean) }
     def will_save_change_to_state?(from: T.unsafe(nil), to: T.unsafe(nil)); end

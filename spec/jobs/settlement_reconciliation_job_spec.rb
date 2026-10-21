@@ -188,4 +188,22 @@ RSpec.describe SettlementReconciliationJob do
     expect { described_class.perform_now(day.iso8601) }.not_to raise_error
     expect(Rails.logger).to have_received(:error).with(a_string_including("settlement.report_unavailable"))
   end
+
+  # Stripe reconciles from transaction history when there is no report
+  # (https://docs.stripe.com/payouts/reconciliation): no report is no excuse
+  # to stop watching the receivable.
+  it "TC-J5-1: for Kiripay, with no report, logs settlement.no_report and still flags an aged capture" do
+    wallet = create(:payment, :vnd)
+    Ledger.record_capture!(wallet, wallet.amount_minor)
+    allow(Rails.logger).to receive(:info).and_call_original
+    allow(Rails.logger).to receive(:warn).and_call_original
+
+    travel 4.days do
+      run
+    end
+
+    expect(Rails.logger).to have_received(:info).with(a_string_including("settlement.no_report", '"psp":"kiripay"'))
+    expect(Rails.logger).to have_received(:warn)
+      .with(a_string_including("settlement.unsettled_capture", '"psp":"kiripay"', wallet.id)).once
+  end
 end

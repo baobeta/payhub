@@ -194,20 +194,20 @@ class NordpayAdapter < PspAdapter
     # The request MAY have landed. Caller moves to `unknown` and fetches.
     Metrics.increment(:psp_calls, psp: "nordpay", operation: operation, outcome: "timeout")
     PspCallLog.record(psp: "nordpay", method:, path:, headers:, request_body: body, status: nil, response_body: nil,
-                      outcome: "timeout", started_at: T.must(started_at))
+                      outcome: "timeout", started_at: T.must(started_at), error: "#{e.class}: #{e.message}")
     raise TimedOut, "nordpay #{method.upcase} #{path}: #{e.message}"
   rescue Faraday::ConnectionFailed => e
     # Never reached the PSP. Safe to retry with the same reference.
     Metrics.increment(:psp_calls, psp: "nordpay", operation: operation, outcome: "unreachable")
     PspCallLog.record(psp: "nordpay", method:, path:, headers:, request_body: body, status: nil, response_body: nil,
-                      outcome: "unreachable", started_at: T.must(started_at))
+                      outcome: "unreachable", started_at: T.must(started_at), error: "#{e.class}: #{e.message}")
     raise Unavailable, "nordpay unreachable: #{e.message}"
-  rescue Faraday::Error
+  rescue Faraday::Error => e
     # Any other transport failure (TLS, malformed response). Record it so the
     # operator's PSP-calls table has a row, then let it surface unchanged.
     Metrics.increment(:psp_calls, psp: "nordpay", operation: operation, outcome: "unreachable")
     PspCallLog.record(psp: "nordpay", method:, path:, headers:, request_body: body, status: nil, response_body: nil,
-                      outcome: "unreachable", started_at: T.must(started_at))
+                      outcome: "unreachable", started_at: T.must(started_at), error: "#{e.class}: #{e.message}")
     raise
   end
 
