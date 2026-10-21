@@ -15,7 +15,7 @@ fi
 if [ -n "${PROMETHEUS_MULTIPROC_DIR}" ]; then
   metrics_dir="${PROMETHEUS_MULTIPROC_DIR%%+(/)}"
   case "${metrics_dir}" in
-    */../* | */.. | ../* | ..) safe=no ;;
+    */../* | */.. | ../* | .. | */./* | */.) safe=no ;;
     */tmp/?*) safe=yes ;;
     *) safe=no ;;
   esac
