@@ -61,6 +61,10 @@ services:
       # PIDs overlap (each container counts from 1). Each is scraped on its
       # own: web on :3000/metrics, worker on :9394/metrics.
       PROMETHEUS_MULTIPROC_DIR: /rails/tmp/prometheus/web
+      # Bearer token for /metrics; the collector sends the same one. Empty by
+      # default, which leaves /metrics open outside production. Set it in .env
+      # to try the production behaviour locally.
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy
@@ -177,6 +181,8 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.111.0
     command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:-} # sent on every /metrics scrape
     volumes:
       - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
       - ./log:/var/log/payhub:ro # the JSON request/job lines, shipped as logs

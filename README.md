@@ -419,11 +419,11 @@ Docker Compose also runs a telemetry stack ([observability/](observability/)):
 flowchart LR
     W["web"] & K["worker"] -- "OTLP spans" --> OC["otel-collector"]
     L["log/development.log<br/>JSON request + job lines"] -- tailed --> OC
-    M["/metrics"] -- "scraped every 15s" --> OC
+    M["web :3000/metrics<br/>worker :9394/metrics"] -- "scraped every 15s" --> OC
     OC --> CH[("ClickHouse<br/>otel db · 72h TTL")] --> GF["Grafana · :3300<br/>PayHub tracing"]
 ```
 
-The collector's scrape sends no token yet, so it relies on `METRICS_TOKEN` being unset in development, which leaves `/metrics` open there.
+The collector scrapes web and worker as two jobs, `payhub-web` and `payhub-worker`, and sends `METRICS_TOKEN` as the bearer token on both. Compose passes the same `METRICS_TOKEN` to web, worker and collector; unset (the default), the header goes out empty and `/metrics` stays open. To try the production behaviour, put `METRICS_TOKEN=<token>` in `.env` and recreate them: `docker compose up -d --force-recreate otel-collector web worker`. In ClickHouse the job name is the `ServiceName` column (`ResourceAttributes['service.name']`), not a metric attribute: `SELECT ServiceName, MetricName, max(TimeUnix) FROM otel.otel_metrics_gauge WHERE MetricName LIKE 'payhub_%' GROUP BY 1, 2`. A failed scrape still writes `up = 0` for that `ServiceName`.
 
 In Grafana (<http://localhost:3300>, no login locally), the *PayHub tracing* dashboard lets you filter by `payment_id`. Clicking a `trace_id` shows its waterfall with that trace's log lines underneath.
 

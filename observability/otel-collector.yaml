@@ -2,9 +2,10 @@
 #   traces  <- OTLP from web and worker (opentelemetry-ruby, already instrumented)
 #   logs    <- the JSON request/job lines in log/development.log (they carry
 #              trace_id/span_id, so Grafana links a log line to its trace)
-#   metrics <- Prometheus scrape of web:3000/metrics
-#              (no bearer token yet: works only while METRICS_TOKEN is unset,
-#              as in development)
+#   metrics <- Prometheus scrape of web:3000/metrics and worker:9394/metrics,
+#              each its own job (ClickHouse ServiceName = the job name), sending
+#              METRICS_TOKEN as the bearer token. Unset in development, the
+#              header goes out empty and /metrics stays open.
 # Tables are created by the exporter (create_schema) in the `otel` database.
 
 receivers:
@@ -18,11 +19,20 @@ receivers:
   prometheus:
     config:
       scrape_configs:
-        - job_name: payhub
+        - job_name: payhub-web
           scrape_interval: 15s
           metrics_path: /metrics
+          authorization:
+            credentials: "${env:METRICS_TOKEN}"
           static_configs:
             - targets: ["web:3000"]
+        - job_name: payhub-worker
+          scrape_interval: 15s
+          metrics_path: /metrics
+          authorization:
+            credentials: "${env:METRICS_TOKEN}"
+          static_configs:
+            - targets: ["worker:9394"]
 
   filelog:
     include: [/var/log/payhub/development.log]
