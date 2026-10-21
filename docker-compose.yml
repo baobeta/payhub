@@ -28,8 +28,9 @@ services:
   web:
     build: .
     # rm the pid file first: the bind mount preserves it across container
-    # restarts, and Puma refuses to boot if it sees one.
-    command: sh -c "rm -f tmp/pids/server.pid && bin/rails server -b 0.0.0.0 -p 3000"
+    # restarts, and Puma refuses to boot if it sees one. The metrics files
+    # (PROMETHEUS_MULTIPROC_DIR) go too, or a restart keeps the old values.
+    command: sh -c "rm -f tmp/pids/server.pid && rm -rf $$PROMETHEUS_MULTIPROC_DIR && bin/rails server -b 0.0.0.0 -p 3000"
     ports:
       - "${WEB_PORT:-3000}:3000" # host port; set WEB_PORT in .env if 3000 is taken
     environment: &app_env
@@ -55,6 +56,10 @@ services:
       # stores them in ClickHouse; view them in Grafana on :3300.
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_SERVICE_NAME: payhub-web
+      # Every process writes its metrics here and /metrics adds them up. One
+      # directory per service: web and worker share the bind mount, their PIDs
+      # overlap (each container counts from 1), and each is scraped on its own.
+      PROMETHEUS_MULTIPROC_DIR: /rails/tmp/prometheus/web
     depends_on:
       db:
         condition: service_healthy
@@ -79,7 +84,9 @@ services:
 
   worker:
     build: .
-    command: bundle exec sidekiq
+    # Wipe the metrics files at start, as web does. exec keeps Sidekiq as PID 1
+    # so it still gets the stop signal and shuts down cleanly.
+    command: sh -c "rm -rf $$PROMETHEUS_MULTIPROC_DIR && exec bundle exec sidekiq"
     # App env (see &app_env above) plus a key of its own: ChaosRun drives the
     # real HTTP API from a job (D-04), so the demo's chaos button needs to
     # reach the web process, not localhost.
@@ -87,6 +94,7 @@ services:
       <<: *app_env
       CHAOS_API_URL: ${CHAOS_API_URL:-http://web:3000}
       OTEL_SERVICE_NAME: payhub-worker
+      PROMETHEUS_MULTIPROC_DIR: /rails/tmp/prometheus/worker
     depends_on:
       db:
         condition: service_healthy

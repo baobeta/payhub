@@ -37,7 +37,10 @@ module Metrics
     T::Hash[Symbol, T::Array[Symbol]]
   )
 
-  # Gauges: a current value, not a rate. Set on every sweep.
+  # Gauges: a current value, not a rate. Set on every sweep and scrape. With the
+  # file store (config/initializers/prometheus.rb) a scrape reports the value
+  # set most recently by any process: a sum would multiply it, and a max would
+  # keep a stale high value from a process that has not set it since.
   GAUGES = T.let(
     { unknown_state_payments: [], outbound_events_pending: [], outbound_events_dead: [] }.freeze,
     T::Hash[Symbol, T::Array[Symbol]]
@@ -55,7 +58,8 @@ module Metrics
     def gauge(name, value, **labels)
       label_names = GAUGES.fetch(name) { raise ArgumentError, "unknown gauge #{name.inspect}" }
       g = REGISTRY.get(:"payhub_#{name}") ||
-          REGISTRY.gauge(:"payhub_#{name}", docstring: name.to_s.tr("_", " "), labels: label_names)
+          REGISTRY.gauge(:"payhub_#{name}", docstring: name.to_s.tr("_", " "), labels: label_names,
+                                            store_settings: { aggregation: :most_recent })
       g.set(value, labels: labels)
     end
 

@@ -25,7 +25,8 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
     get "/metrics"
     expect(response).to have_http_status(:ok)
     expect(response.content_type).to start_with("text/plain")
-    expect(response.body).to include('payhub_payments_created_total{psp="nordpay",currency="EUR"}')
+    # Label order is not significant in the exposition format (the file store sorts them).
+    expect(response.body).to match(/^payhub_payments_created_total\{(?=[^}]*psp="nordpay")(?=[^}]*currency="EUR")/)
     expect(response.body).to include("payhub_unknown_state_payments 0")
     expect(response.body).to match(/payhub_outbound_events_pending \d+/)
   end

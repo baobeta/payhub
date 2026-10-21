@@ -29,7 +29,9 @@ RSpec.describe "Production boot", :shells_out do # rubocop:disable RSpec/Describ
       # Unset (Open3 drops nil keys) so the developer's shell cannot change the result.
       "NORDPAY_WEBHOOK_SECRETS" => nil,
       "KIRIPAY_WEBHOOK_SECRETS" => nil,
-      "DEMO_ENABLED" => nil
+      "DEMO_ENABLED" => nil,
+      # rails_helper sets it for the suite; production must also boot without it.
+      "PROMETHEUS_MULTIPROC_DIR" => nil
     }
   end
 

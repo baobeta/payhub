@@ -1,5 +1,9 @@
 require "spec_helper"
 ENV["RAILS_ENV"] ||= "test"
+# Metrics go to the file store, as in Docker Compose. Set before boot (the
+# initializer reads it) and wiped first so no earlier run's values remain.
+ENV["PROMETHEUS_MULTIPROC_DIR"] ||= File.expand_path("../tmp/prometheus-test", __dir__)
+FileUtils.rm_rf(ENV.fetch("PROMETHEUS_MULTIPROC_DIR"))
 require_relative "../config/environment"
 abort("The Rails environment is running in production mode!") if Rails.env.production?
 require "rspec/rails"
