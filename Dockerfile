@@ -15,7 +15,8 @@ FROM docker.io/library/ruby:$RUBY_VERSION-slim AS base
 WORKDIR /rails
 
 # libpq5 for pg; psql because db:prepare loads db/structure.sql with it;
-# jemalloc for memory (bin/docker-entrypoint preloads it); curl for health checks.
+# jemalloc for memory (bin/docker-entrypoint preloads it); curl for orchestrator
+# probes and debugging (no HEALTHCHECK: the worker runs from the same image).
 RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y curl libjemalloc2 libpq5 postgresql-client && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
@@ -85,13 +86,16 @@ ENV RAILS_ENV=production \
     BUNDLE_WITHOUT="development:test" \
     PROMETHEUS_MULTIPROC_DIR=/rails/tmp/prometheus
 
-COPY --from=build "$BUNDLE_PATH" "$BUNDLE_PATH"
-COPY --from=build /rails /rails
-
-# The code stays root-owned and read-only to the app; only tmp and log are its own.
 RUN groupadd --system --gid 1000 rails && \
-    useradd rails --uid 1000 --gid 1000 --create-home --shell /bin/bash && \
-    mkdir -p tmp log && chown -R rails:rails tmp log
+    useradd rails --uid 1000 --gid 1000 --create-home --shell /bin/bash
+
+# The code stays root-owned and read-only to the app; only tmp (bootsnap cache,
+# metrics files) and log are its own. tmp is copied once, with its owner set:
+# a chown afterwards would store the bootsnap cache in a second layer.
+COPY --from=build "$BUNDLE_PATH" "$BUNDLE_PATH"
+COPY --from=build --exclude=tmp /rails /rails
+COPY --from=build --chown=1000:1000 /rails/tmp /rails/tmp
+RUN mkdir -p log && chown rails:rails log
 USER 1000:1000
 
 ENTRYPOINT ["/rails/bin/docker-entrypoint"]
