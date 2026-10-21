@@ -190,7 +190,7 @@ CREATE TABLE public.api_keys (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     CONSTRAINT chk_api_keys_mode_matches_prefix CHECK (((livemode AND ((prefix)::text = 'sk_live_'::text)) OR ((NOT livemode) AND ((prefix)::text = 'sk_test_'::text)))),
-    CONSTRAINT chk_api_keys_prefix CHECK (((prefix)::text = ANY ((ARRAY['sk_live_'::character varying, 'sk_test_'::character varying])::text[])))
+    CONSTRAINT chk_api_keys_prefix CHECK (((prefix)::text = ANY (ARRAY[('sk_live_'::character varying)::text, ('sk_test_'::character varying)::text])))
 );
 
 
@@ -226,7 +226,7 @@ CREATE TABLE public.audit_events (
     request_id character varying,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_audit_events_result CHECK (((result)::text = ANY ((ARRAY['success'::character varying, 'denied'::character varying, 'failure'::character varying])::text[])))
+    CONSTRAINT chk_audit_events_result CHECK (((result)::text = ANY (ARRAY[('success'::character varying)::text, ('denied'::character varying)::text, ('failure'::character varying)::text])))
 );
 
 
@@ -245,7 +245,7 @@ CREATE TABLE public.captures (
     updated_at timestamp(6) without time zone NOT NULL,
     final boolean DEFAULT true NOT NULL,
     CONSTRAINT chk_captures_amount_positive CHECK ((amount_minor > 0)),
-    CONSTRAINT chk_captures_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying])::text[])))
+    CONSTRAINT chk_captures_state CHECK (((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('succeeded'::character varying)::text, ('failed'::character varying)::text])))
 );
 
 
@@ -264,7 +264,7 @@ CREATE TABLE public.demo_chaos_runs (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     CONSTRAINT chk_demo_chaos_runs_size CHECK (((payments >= 1) AND (payments <= 20))),
-    CONSTRAINT chk_demo_chaos_runs_state CHECK (((state)::text = ANY ((ARRAY['queued'::character varying, 'running'::character varying, 'passed'::character varying, 'failed'::character varying, 'errored'::character varying])::text[])))
+    CONSTRAINT chk_demo_chaos_runs_state CHECK (((state)::text = ANY (ARRAY[('queued'::character varying)::text, ('running'::character varying)::text, ('passed'::character varying)::text, ('failed'::character varying)::text, ('errored'::character varying)::text])))
 );
 
 
@@ -341,7 +341,7 @@ CREATE TABLE public.ledger_accounts (
     kind character varying NOT NULL,
     currency character varying(3) NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_ledger_accounts_kind CHECK (((kind)::text = ANY ((ARRAY['psp_receivable'::character varying, 'merchant_payable'::character varying, 'refunds_reserved'::character varying, 'refunds_paid'::character varying, 'psp_payouts'::character varying, 'psp_fees'::character varying])::text[])))
+    CONSTRAINT chk_ledger_accounts_kind CHECK (((kind)::text = ANY (ARRAY[('psp_receivable'::character varying)::text, ('merchant_payable'::character varying)::text, ('refunds_reserved'::character varying)::text, ('refunds_paid'::character varying)::text, ('psp_payouts'::character varying)::text, ('psp_fees'::character varying)::text])))
 );
 
 
@@ -360,7 +360,7 @@ CREATE TABLE public.ledger_entries (
     currency character varying(3) NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
     CONSTRAINT chk_ledger_entries_amount_positive CHECK ((amount_minor > 0)),
-    CONSTRAINT chk_ledger_entries_direction CHECK (((direction)::text = ANY ((ARRAY['debit'::character varying, 'credit'::character varying])::text[])))
+    CONSTRAINT chk_ledger_entries_direction CHECK (((direction)::text = ANY (ARRAY[('debit'::character varying)::text, ('credit'::character varying)::text])))
 );
 
 
@@ -389,7 +389,7 @@ CREATE TABLE public.merchant_users (
     updated_at timestamp(6) without time zone NOT NULL,
     otp_reset_digest character varying,
     otp_reset_expires_at timestamp(6) without time zone,
-    CONSTRAINT chk_merchant_users_role CHECK (((role)::text = ANY ((ARRAY['owner'::character varying, 'admin'::character varying, 'developer'::character varying, 'support'::character varying, 'viewer'::character varying])::text[])))
+    CONSTRAINT chk_merchant_users_role CHECK (((role)::text = ANY (ARRAY[('owner'::character varying)::text, ('admin'::character varying)::text, ('developer'::character varying)::text, ('support'::character varying)::text, ('viewer'::character varying)::text])))
 );
 
 
@@ -437,10 +437,10 @@ CREATE TABLE public.operator_proposals (
     error character varying,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_operator_proposals_decided_shape CHECK (((((state)::text = 'pending'::text) = (decided_at IS NULL)) OR ((state)::text = ANY ((ARRAY['withdrawn'::character varying, 'expired'::character varying])::text[])))),
-    CONSTRAINT chk_operator_proposals_kind CHECK (((kind)::text = ANY ((ARRAY['payment_transition'::character varying, 'ledger_correction'::character varying])::text[]))),
+    CONSTRAINT chk_operator_proposals_decided_shape CHECK (((((state)::text = 'pending'::text) = (decided_at IS NULL)) OR ((state)::text = ANY (ARRAY[('withdrawn'::character varying)::text, ('expired'::character varying)::text])))),
+    CONSTRAINT chk_operator_proposals_kind CHECK (((kind)::text = ANY (ARRAY[('payment_transition'::character varying)::text, ('ledger_correction'::character varying)::text]))),
     CONSTRAINT chk_operator_proposals_not_self CHECK (((decided_by_id IS NULL) OR (decided_by_id <> proposed_by_id))),
-    CONSTRAINT chk_operator_proposals_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'withdrawn'::character varying, 'rejected'::character varying, 'applied'::character varying, 'failed'::character varying, 'expired'::character varying])::text[])))
+    CONSTRAINT chk_operator_proposals_state CHECK (((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('withdrawn'::character varying)::text, ('rejected'::character varying)::text, ('applied'::character varying)::text, ('failed'::character varying)::text, ('expired'::character varying)::text])))
 );
 
 
@@ -466,7 +466,7 @@ CREATE TABLE public.operators (
     disabled_at timestamp(6) without time zone,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_operators_role CHECK (((role)::text = ANY ((ARRAY['support'::character varying, 'ops'::character varying, 'approver'::character varying, 'admin'::character varying])::text[])))
+    CONSTRAINT chk_operators_role CHECK (((role)::text = ANY (ARRAY[('support'::character varying)::text, ('ops'::character varying)::text, ('approver'::character varying)::text, ('admin'::character varying)::text])))
 );
 
 
@@ -505,7 +505,7 @@ CREATE TABLE public.outbound_events (
     traceparent character varying,
     attempt_budget integer DEFAULT 8 NOT NULL,
     sequence integer,
-    CONSTRAINT chk_outbound_events_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'delivered'::character varying, 'dead'::character varying])::text[])))
+    CONSTRAINT chk_outbound_events_state CHECK (((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('delivered'::character varying)::text, ('dead'::character varying)::text])))
 );
 
 
@@ -553,7 +553,7 @@ CREATE TABLE public.payments (
     captures_closed_at timestamp(6) without time zone,
     CONSTRAINT chk_payments_amount_positive CHECK ((amount_minor > 0)),
     CONSTRAINT chk_payments_captured_non_negative CHECK ((captured_minor >= 0)),
-    CONSTRAINT chk_payments_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'requires_action'::character varying, 'authorized'::character varying, 'unknown'::character varying, 'captured'::character varying, 'canceled'::character varying, 'failed'::character varying, 'part_refunded'::character varying, 'refunded'::character varying])::text[])))
+    CONSTRAINT chk_payments_state CHECK (((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('requires_action'::character varying)::text, ('authorized'::character varying)::text, ('unknown'::character varying)::text, ('captured'::character varying)::text, ('canceled'::character varying)::text, ('failed'::character varying)::text, ('part_refunded'::character varying)::text, ('refunded'::character varying)::text])))
 );
 
 
@@ -573,7 +573,7 @@ CREATE TABLE public.psp_calls (
     duration_ms integer NOT NULL,
     sent_at timestamp(6) without time zone NOT NULL,
     created_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_psp_calls_outcome CHECK (((outcome)::text = ANY ((ARRAY['ok'::character varying, 'http_error'::character varying, 'timeout'::character varying, 'unreachable'::character varying])::text[])))
+    CONSTRAINT chk_psp_calls_outcome CHECK (((outcome)::text = ANY (ARRAY[('ok'::character varying)::text, ('http_error'::character varying)::text, ('timeout'::character varying)::text, ('unreachable'::character varying)::text])))
 );
 
 
@@ -607,7 +607,7 @@ CREATE TABLE public.refunds (
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
     CONSTRAINT chk_refunds_amount_positive CHECK ((amount_minor > 0)),
-    CONSTRAINT chk_refunds_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'succeeded'::character varying, 'failed'::character varying])::text[])))
+    CONSTRAINT chk_refunds_state CHECK (((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('succeeded'::character varying)::text, ('failed'::character varying)::text])))
 );
 
 
@@ -639,7 +639,7 @@ CREATE TABLE public.sessions (
     impersonating_merchant_id uuid,
     impersonation_case_ref character varying,
     impersonation_expires_at timestamp(6) without time zone,
-    CONSTRAINT chk_sessions_principal_type CHECK (((principal_type)::text = ANY ((ARRAY['MerchantUser'::character varying, 'Operator'::character varying])::text[])))
+    CONSTRAINT chk_sessions_principal_type CHECK (((principal_type)::text = ANY (ARRAY[('MerchantUser'::character varying)::text, ('Operator'::character varying)::text])))
 );
 
 
@@ -668,8 +668,8 @@ CREATE TABLE public.settlement_lines (
     reviewed_at timestamp(6) without time zone,
     reviewed_by_id uuid,
     review_note text,
-    CONSTRAINT chk_settlement_lines_kind CHECK (((kind)::text = ANY ((ARRAY['capture'::character varying, 'refund'::character varying])::text[]))),
-    CONSTRAINT chk_settlement_lines_status CHECK (((status)::text = ANY ((ARRAY['matched'::character varying, 'unmatched'::character varying, 'mismatch'::character varying])::text[])))
+    CONSTRAINT chk_settlement_lines_kind CHECK (((kind)::text = ANY (ARRAY[('capture'::character varying)::text, ('refund'::character varying)::text]))),
+    CONSTRAINT chk_settlement_lines_status CHECK (((status)::text = ANY (ARRAY[('matched'::character varying)::text, ('unmatched'::character varying)::text, ('mismatch'::character varying)::text])))
 );
 
 
@@ -891,7 +891,7 @@ CREATE UNIQUE INDEX idx_delivery_attempts_unique ON public.outbound_delivery_att
 -- Name: idx_demo_chaos_runs_one_active; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX idx_demo_chaos_runs_one_active ON public.demo_chaos_runs USING btree (state) WHERE ((state)::text = ANY ((ARRAY['queued'::character varying, 'running'::character varying])::text[]));
+CREATE UNIQUE INDEX idx_demo_chaos_runs_one_active ON public.demo_chaos_runs USING btree (state) WHERE ((state)::text = ANY (ARRAY[('queued'::character varying)::text, ('running'::character varying)::text]));
 
 
 --
@@ -1220,7 +1220,7 @@ CREATE INDEX index_outbound_events_on_payment_id ON public.outbound_events USING
 -- Name: index_payments_on_sweeper_due_at; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX index_payments_on_sweeper_due_at ON public.payments USING btree (COALESCE(next_check_at, (updated_at + '00:02:00'::interval))) WHERE ((state)::text = ANY ((ARRAY['pending'::character varying, 'unknown'::character varying])::text[]));
+CREATE INDEX index_payments_on_sweeper_due_at ON public.payments USING btree (COALESCE(next_check_at, (updated_at + '00:02:00'::interval))) WHERE ((state)::text = ANY (ARRAY[('pending'::character varying)::text, ('unknown'::character varying)::text]));
 
 
 --
