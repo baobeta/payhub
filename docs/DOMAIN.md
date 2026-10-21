@@ -265,7 +265,7 @@ erDiagram
 **Example:** `support@demo.shop`, role *support*, authenticator set up, invited by the owner.
 **Roles:** owner, admin, developer, support, viewer (see the [role table](../README.md#merchant-dashboard)).
 **Rules that protect it:**
-- Each email belongs to one person in one shop, and capital letters don't count as a difference.
+- Each email belongs to one active person in one shop, and capital letters don't count as a difference. A removed member can be invited again: that is a new row, and the old one keeps its history.
 - Exactly **one active owner** per shop.
 - Passwords and the authenticator secret are stored scrambled or encrypted, never readable.
 - Ten wrong tries lock the account for a while. An authenticator code can't be used twice.

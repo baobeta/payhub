@@ -414,7 +414,7 @@ Table merchant_users [headercolor: #CF222E] {
   updated_at            timestamp [not null]
 
   Indexes {
-    `lower(email)`    [unique, name: 'idx_merchant_users_email', note: 'Case-insensitive, and global: one email, one merchant.']
+    `lower(email)`    [unique, name: 'idx_merchant_users_email', note: 'PARTIAL: WHERE disabled_at IS NULL. Case-insensitive, and global across ACTIVE rows: one email, one merchant. A removed member can be invited again as a new row (M11).']
     merchant_id       [unique, name: 'idx_merchant_users_one_owner', note: 'PARTIAL: WHERE role = owner AND disabled_at IS NULL. Exactly one active owner.']
     invitation_digest [unique, name: 'index_merchant_users_on_invitation_digest', note: 'PARTIAL: WHERE invitation_digest IS NOT NULL']
     merchant_id       [name: 'index_merchant_users_on_merchant_id']
