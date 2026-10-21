@@ -161,6 +161,13 @@ async function withdraw() {
     >
       Rejected by {{ proposal.decided_by }}<span v-if="proposal.decision_note"> — {{ proposal.decision_note }}</span>
     </section>
+    <section
+      v-else-if="proposal.state === 'expired'"
+      data-testid="proposal-outcome"
+      class="rounded border border-slate-200 bg-slate-50 p-3 text-sm"
+    >
+      Expired: nobody decided it within 14 days. Submit a new proposal if it is still needed.
+    </section>
 
     <ErrorBanner :message="error" />
 

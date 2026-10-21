@@ -31,6 +31,12 @@ settlement_reconciliation:
   queue: sweepers
   description: "Ingest yesterday's PSP settlement reports; match every line to the ledger, book matched ones, flag the rest and unsettled captures"
 
+expire_proposals:
+  cron: "0 5 * * *"
+  class: ExpireProposalsJob
+  queue: sweepers
+  description: "Expire operator proposals still pending after 14 days (Stripe Approvals); audited as proposal.expired"
+
 audit_retention:
   cron: "30 4 * * *"
   class: AuditRetentionJob

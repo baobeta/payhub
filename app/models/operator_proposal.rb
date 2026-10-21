@@ -8,7 +8,8 @@ class OperatorProposal < ApplicationRecord
   extend T::Sig
 
   KINDS = %w[payment_transition ledger_correction].freeze
-  STATES = %w[pending withdrawn rejected applied failed].freeze
+  # `expired`: pending for 14 days, set by ExpireProposalsJob (DECISIONS #23).
+  STATES = %w[pending withdrawn rejected applied failed expired].freeze
   REASON_CODES = %w[psp_confirmed_outcome psp_unreachable_timeout duplicate_booking ledger_error other].freeze
   # Operators move payments only out of `unknown` (DECISIONS #10). The other
   # stuck state, `pending`, is left to the worker and the sweeper.

@@ -105,8 +105,10 @@ CREATE FUNCTION public.operator_proposal_payload_immutable() RETURNS trigger
     AS $$
 BEGIN
   IF NEW.payload IS DISTINCT FROM OLD.payload OR NEW.kind IS DISTINCT FROM OLD.kind
-     OR NEW.payment_id IS DISTINCT FROM OLD.payment_id OR NEW.proposed_by_id IS DISTINCT FROM OLD.proposed_by_id THEN
-    RAISE EXCEPTION 'operator_proposals payload is immutable; withdraw and resubmit';
+     OR NEW.payment_id IS DISTINCT FROM OLD.payment_id OR NEW.proposed_by_id IS DISTINCT FROM OLD.proposed_by_id
+     OR NEW.reason_code IS DISTINCT FROM OLD.reason_code OR NEW.reason_text IS DISTINCT FROM OLD.reason_text
+     OR NEW.case_reference IS DISTINCT FROM OLD.case_reference THEN
+    RAISE EXCEPTION 'operator_proposals payload and reason are immutable; withdraw and resubmit';
   END IF;
   RETURN NEW;
 END
@@ -433,10 +435,10 @@ CREATE TABLE public.operator_proposals (
     error character varying,
     created_at timestamp(6) without time zone NOT NULL,
     updated_at timestamp(6) without time zone NOT NULL,
-    CONSTRAINT chk_operator_proposals_decided_shape CHECK (((((state)::text = 'pending'::text) = (decided_at IS NULL)) OR ((state)::text = 'withdrawn'::text))),
+    CONSTRAINT chk_operator_proposals_decided_shape CHECK (((((state)::text = 'pending'::text) = (decided_at IS NULL)) OR ((state)::text = ANY ((ARRAY['withdrawn'::character varying, 'expired'::character varying])::text[])))),
     CONSTRAINT chk_operator_proposals_kind CHECK (((kind)::text = ANY ((ARRAY['payment_transition'::character varying, 'ledger_correction'::character varying])::text[]))),
     CONSTRAINT chk_operator_proposals_not_self CHECK (((decided_by_id IS NULL) OR (decided_by_id <> proposed_by_id))),
-    CONSTRAINT chk_operator_proposals_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'withdrawn'::character varying, 'rejected'::character varying, 'applied'::character varying, 'failed'::character varying])::text[])))
+    CONSTRAINT chk_operator_proposals_state CHECK (((state)::text = ANY ((ARRAY['pending'::character varying, 'withdrawn'::character varying, 'rejected'::character varying, 'applied'::character varying, 'failed'::character varying, 'expired'::character varying])::text[])))
 );
 
 
@@ -1558,6 +1560,7 @@ ALTER TABLE ONLY public.api_keys
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261021500002'),
 ('20261021500001'),
 ('20261020100002'),
 ('20261020100001'),

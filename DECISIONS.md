@@ -340,6 +340,8 @@ The "proposer ≠ approver" rule is enforced in three places: `OperatorProposal#
 
 **Trade-off:** Manual fixes are slower and need two operators available, which is hard at 3am or in a small team. We accept the delay because a single person moving money is the larger risk.
 
+**Frozen and expiring (N6):** as in [Stripe Approvals](https://docs.stripe.com/account/approvals), a request is approved exactly as captured and expires after 14 days. The immutability trigger covers the reason (`reason_code`, `reason_text`, `case_reference`) as well as the payload. `ExpireProposalsJob` runs daily, moves proposals still `pending` after 14 days to `expired` under the same row lock `DecideProposal` takes, and audits each as `proposal.expired` with the system as actor. Approving, rejecting or withdrawing an expired proposal answers `409`; the maker resubmits if the change is still needed.
+
 ## 24. Permissions are a catalogue in code, checked per action, verified in CI
 
 **In plain words:** A fixed list of named keys for named doors, kept in code. Every door says which key it needs, and automatic checks catch any door that forgot.
