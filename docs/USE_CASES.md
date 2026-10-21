@@ -19,7 +19,7 @@
 - Every ⚪/🟡 test gap in TEST_CASES §3 now has a spec, including the DOMAIN.md walkthrough as a test.
 
 **Verification:**
-- 884 examples, 0 failures, 0 pending
+- 885 examples, 0 failures, 0 pending
 - Sorbet clean, rubocop clean, frontend 26/26
 - simulation seeds 1–20 green
 

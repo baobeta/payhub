@@ -9,7 +9,7 @@
 >
 > IDs map to USE_CASES.md: `TC-B7-1` tests use case B7. `TC-BUG3-…` tests bug #3 in USE_CASES §1.
 >
-> **Status (2026-10-20):** every case below has a passing spec. That is 108 TC ids: the 98 listed here, 9 added by the code review, and TC-A4-2 (§4). The full suite is 884 examples, 0 failures, 0 pending. Find a case with `grep -rn "TC-E3-2" spec`.
+> **Status (2026-10-20):** every case below has a passing spec. That is 108 TC ids: the 98 listed here, 9 added by the code review, and TC-A4-2 (§4). The full suite is 885 examples, 0 failures, 0 pending. Find a case with `grep -rn "TC-E3-2" spec`.
 
 ---
 
