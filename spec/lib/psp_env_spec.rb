@@ -64,6 +64,11 @@ RSpec.describe PspEnv do
       expect { described_class.verify_production! }.to raise_error(PspEnv::Missing, /NORDPAY_WEBHOOK_SECRETS/)
     end
 
+    it "PR-2: fails when a webhook secret list holds the simulator's secret, naming it" do
+      stub_const("ENV", base_env.merge("NORDPAY_WEBHOOK_SECRETS" => "np_whsec_test"))
+      expect { described_class.verify_production! }.to raise_error(PspEnv::Missing, /NORDPAY_WEBHOOK_SECRETS/)
+    end
+
     it "PR-2: does nothing outside production" do
       allow(Rails.env).to receive(:production?).and_return(false)
       stub_const("ENV", base_env.except("KIRIPAY_API_KEY"))

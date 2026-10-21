@@ -59,4 +59,11 @@ RSpec.describe WebhookSignature do
     stub_const("ENV", ENV.to_h.except("X_SECRET").merge("X_SECRETS" => "new, old"))
     expect(described_class.secrets_from_env("X_SECRETS", "X_SECRET", "d")).to eq(%w[new old])
   end
+
+  it "PR-2: in production a secret list holding the simulator default is refused" do
+    allow(Rails.env).to receive(:production?).and_return(true)
+    stub_const("ENV", ENV.to_h.except("X_SECRET").merge("X_SECRETS" => "new, d"))
+    expect { described_class.secrets_from_env("X_SECRETS", "X_SECRET", "d") }
+      .to raise_error(PspEnv::Missing, /X_SECRETS holds the simulator's test value/)
+  end
 end
