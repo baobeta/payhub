@@ -25,6 +25,7 @@ dashboard/api/fallback#show: public
 dashboard/api/home#show: payments.read
 dashboard/api/invitations#accept: public
 dashboard/api/invitations#create: team.manage
+dashboard/api/invitations#resend: team.manage
 dashboard/api/invitations#show: public
 dashboard/api/me#password: public
 dashboard/api/me#recovery_codes: public

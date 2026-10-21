@@ -38,6 +38,7 @@ Rails.application.routes.draw do
       resources :invitations, only: %i[create show], param: :token do
         post :accept, on: :member
       end
+      post "invitations/:id/resend", to: "invitations#resend", as: :resend_invitation
       get "otp/setup", to: "otp#setup"
       post "otp/confirm", to: "otp#confirm"
       resource :me, only: [], controller: "me" do

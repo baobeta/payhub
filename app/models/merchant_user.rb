@@ -28,6 +28,15 @@ class MerchantUser < ApplicationRecord
     [user, token]
   end
 
+  # M11 resend: a new token kills the old link, and the 10 days start again
+  # (Stripe's expiry; Slack's resend reactivates an invite).
+  sig { returns(String) }
+  def rotate_invitation!
+    token = SecureRandom.urlsafe_base64(32)
+    update!(invitation_digest: Digest::SHA256.hexdigest(token), invitation_expires_at: INVITATION_TTL.from_now)
+    token
+  end
+
   # The only other way an owner is created (invite! refuses owners): the very
   # first one, from `merchants:invite_owner` or the seed.
   sig { params(merchant: Merchant, email: String).returns([MerchantUser, String]) }
