@@ -6,6 +6,14 @@
 # Creates a demo merchant (prints its API key ONCE — it is stored only as a
 # digest) and a full FX table across every supported currency, so any
 # currency pair can be priced. Rates are illustrative, not market data.
+#
+# Production skips it unless DEMO_ENABLED=true (a demo-only host): db:prepare,
+# which bin/docker-entrypoint runs, seeds every database it creates, and a real
+# deploy must not get a demo merchant with live keys printed to its logs.
+if Rails.env.production? && ENV["DEMO_ENABLED"] != "true"
+  puts "seeds: skipped in production (set DEMO_ENABLED=true on a demo-only host)"
+  return
+end
 
 # ── FX rates: every pair among the supported currencies ─────────────────────
 # Approximate mid-market rates to EUR; cross rates are derived from these.

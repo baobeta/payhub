@@ -49,4 +49,14 @@ RSpec.describe "Production boot", :shells_out do # rubocop:disable RSpec/Describ
     expect(status.success?).to be(false)
     expect(stderr).to include("NORDPAY_URL")
   end
+
+  # db:prepare seeds every database it creates, and the image's entrypoint runs
+  # it (RUN_MIGRATIONS=true): a fresh production database must not get the demo merchant.
+  it "PR-10: db:seed creates nothing in production" do
+    stdout, stderr, status = Open3.capture3(env, "bin/rails", "db:seed", chdir: Rails.root.to_s)
+
+    expect(status.success?).to be(true), "exit #{status.exitstatus}\n#{stderr}"
+    expect(stdout).to include("seeds: skipped in production")
+    expect(stdout).not_to include("merchant:")
+  end
 end
