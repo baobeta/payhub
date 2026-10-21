@@ -18,6 +18,11 @@ require "action_view/railtie"
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
+# Production skips sorbet-runtime's per-call sig checks (`srb tc` in CI has
+# proven the types). Sorbet only accepts this before any sig is evaluated, and
+# payhub_config.rb below has one, so it cannot wait for an initializer.
+T::Configuration.default_checked_level = :never if Rails.env.production?
+
 # Plain Ruby, needed while this file runs, so it is required here rather than
 # autoloaded (and ignored by Zeitwerk below).
 require_relative "../lib/payhub_config"
