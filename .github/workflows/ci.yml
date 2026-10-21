@@ -145,7 +145,34 @@ jobs:
           docker logs web > "$RUNNER_TEMP/web.log" 2>&1
           grep -E "Puma starting|Workers:|Preloading" "$RUNNER_TEMP/web.log" || true
           grep -q "Puma starting in cluster mode" "$RUNNER_TEMP/web.log"
-          grep -q "Workers: 2" "$RUNNER_TEMP/web.log"
+          grep -qE '^\[[0-9]+\] \*\s+Workers: 2$' "$RUNNER_TEMP/web.log"
+
+      # docker stop lets a request in flight finish, and Puma then exits 0 (not
+      # 1, see raise_exception_on_sigterm in config/puma.rb). A rackup that
+      # takes 5 s, served with the app's config/puma.rb and two workers.
+      - name: docker stop drains a request in flight and exits 0
+        run: |
+          mkdir -p "$RUNNER_TEMP/drain"
+          cat > "$RUNNER_TEMP/drain/slow.ru" <<'RU'
+          run ->(_env) { sleep 5; [200, { "content-type" => "text/plain" }, ["drained\n"]] }
+          RU
+          docker run -d --name drain -p 3002:3000 -e WEB_CONCURRENCY=2 \
+            -v "$RUNNER_TEMP/drain:/drain:ro" payhub:ci bundle exec puma -C config/puma.rb /drain/slow.ru
+          for _ in $(seq 30); do
+            [ "$(docker logs drain 2>&1 | grep -c ' booted in ')" = 2 ] && break
+            sleep 1
+          done
+          curl -s -o /dev/null -w '%{http_code}' --max-time 20 localhost:3002/ > "$RUNNER_TEMP/drain/code" &
+          curl_pid=$!
+          sleep 1
+          docker stop drain
+          wait "$curl_pid" || true
+          code="$(cat "$RUNNER_TEMP/drain/code")"
+          exit_code="$(docker inspect -f '{{.State.ExitCode}}' drain)"
+          echo "in-flight request: $code, puma exit code: $exit_code"
+          docker logs drain 2>&1 | tail -5
+          docker rm drain
+          test "$code" = 200 && test "$exit_code" = 0
 
       - name: /metrics wants the token
         run: |

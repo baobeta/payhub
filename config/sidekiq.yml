@@ -1,4 +1,9 @@
 :concurrency: 5
+# Seconds to finish running jobs after SIGTERM before pushing them back to
+# Redis (Sidekiq's default, stated). The platform's stop grace period must be
+# at least this + 5 s, or SIGKILL lands first and the running jobs, already
+# popped from Redis, are lost. RUNBOOK quick reference, "Stop grace periods".
+:timeout: 25
 :queues:
   - payments   # PSP calls: authorize, capture, refund
   - webhooks   # inbound event processing (Phase 6)

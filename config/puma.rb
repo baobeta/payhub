@@ -45,9 +45,16 @@ pidfile ENV["PIDFILE"] if ENV["PIDFILE"]
 # 5). The pool (database.yml) also reads RAILS_MAX_THREADS but defaults to 5,
 # so the worker, which leaves it unset, gets a pool that covers its
 # concurrency. Size Postgres or PgBouncer for web containers x WEB_CONCURRENCY
-# x threads + worker containers x Sidekiq concurrency (README "Configuration").
+# x threads + worker containers x Sidekiq concurrency + headroom for one-off
+# tasks (migrations, consoles) (README "Configuration").
 
-# On SIGTERM (docker stop) Puma drains first, then by default re-raises the
-# signal so the process dies of it. As PID 1 in a container the kernel ignores
-# that, and Ruby exits 1, which looks like a crash. Exit 0 after the drain.
+# On SIGTERM (docker stop) Puma closes its listeners and drains. In cluster
+# mode the master kills a worker still busy after this long; it is below the
+# platform's stop grace period (ECS and Kubernetes: 30 s) so the master can
+# exit on its own first. RUNBOOK quick reference, "Stop grace periods".
+worker_shutdown_timeout 25
+
+# After the drain Puma by default raises SignalException so Ruby re-sends
+# itself SIGTERM with the default action. As PID 1 in a container the kernel
+# drops that signal, so Ruby exits 1 instead, which looks like a crash. Exit 0.
 raise_exception_on_sigterm false
