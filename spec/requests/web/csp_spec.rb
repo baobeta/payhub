@@ -40,8 +40,6 @@ RSpec.describe "Content security policy", type: :request do
       end
 
       it "TC-M16-1 #{shell} blocks plugins with object-src 'none'" do
-        pending("BUG: config/initializers/content_security_policy.rb sets no object-src; " \
-                "it falls back to default-src 'self', while the OWASP CSP baseline asks for object-src 'none'")
         expect(directives(shell)["object-src"]).to eq(["'none'"])
       end
     end

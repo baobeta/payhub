@@ -12,6 +12,7 @@ Rails.application.configure do
     policy.frame_ancestors :none
     policy.base_uri :self
     policy.form_action :self
+    policy.object_src :none # no plugins at all (OWASP CSP cheat sheet baseline)
 
     if Rails.env.development?
       # The dev server as Rails sees it (vite:3036 under compose) and as the
