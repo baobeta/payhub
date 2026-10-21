@@ -29,10 +29,11 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
 CREATE FUNCTION public.append_only_guard() RETURNS trigger
     LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
     AS $$
 BEGIN
   IF TG_OP = 'DELETE' AND TG_NARGS > 0
-     AND OLD.created_at < now() - TG_ARGV[0]::interval THEN
+     AND OLD.created_at < (now() AT TIME ZONE 'UTC') - TG_ARGV[0]::interval THEN
     RETURN OLD;
   END IF;
   RAISE EXCEPTION '% is append-only (attempted %)', TG_TABLE_NAME, TG_OP;
@@ -46,6 +47,7 @@ $$;
 
 CREATE FUNCTION public.ledger_entries_immutable() RETURNS trigger
     LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
     AS $$
 BEGIN
   RAISE EXCEPTION 'ledger_entries is append-only (attempted %)', TG_OP;
@@ -59,6 +61,7 @@ $$;
 
 CREATE FUNCTION public.merchant_users_keep_one_owner() RETURNS trigger
     LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
   mid uuid;
@@ -82,6 +85,7 @@ $$;
 
 CREATE FUNCTION public.merchants_twin_parent_is_live() RETURNS trigger
     LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
     AS $$
 BEGIN
   IF NEW.live_merchant_id IS NOT NULL
@@ -102,6 +106,7 @@ $$;
 
 CREATE FUNCTION public.operator_proposal_payload_immutable() RETURNS trigger
     LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
     AS $$
 BEGIN
   IF NEW.payload IS DISTINCT FROM OLD.payload OR NEW.kind IS DISTINCT FROM OLD.kind
@@ -121,6 +126,7 @@ $$;
 
 CREATE FUNCTION public.payment_transitions_append_only() RETURNS trigger
     LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
     AS $$
 BEGIN
   IF TG_OP = 'UPDATE' AND OLD.most_recent AND NOT NEW.most_recent
@@ -138,9 +144,10 @@ $$;
 
 CREATE FUNCTION public.stamp_created_at() RETURNS trigger
     LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
     AS $$
 BEGIN
-  NEW.created_at := now();
+  NEW.created_at := now() AT TIME ZONE 'UTC';
   RETURN NEW;
 END
 $$;
@@ -152,6 +159,7 @@ $$;
 
 CREATE FUNCTION public.uuid_generate_v7() RETURNS uuid
     LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
   unix_ts_ms bytea;
@@ -1577,6 +1585,7 @@ ALTER TABLE ONLY public.api_keys
 SET search_path TO "$user", public;
 
 INSERT INTO "schema_migrations" (version) VALUES
+('20261021700001'),
 ('20261021600001'),
 ('20261021500002'),
 ('20261021500001'),
