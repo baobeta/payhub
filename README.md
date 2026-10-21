@@ -215,7 +215,7 @@ Then run each of these in its own terminal:
 | `bin/rails s` | Web server |
 | `bin/vite dev` | UI bundles with hot reload |
 | `bundle exec sidekiq -C config/sidekiq.yml` | Background worker |
-| `bin/check` | The full gate, exactly as CI runs it: zeitwerk → generated files → rubocop → sorbet → frontend → rspec → brakeman |
+| `bin/check` | The full gate: zeitwerk → generated files → rubocop → sorbet → frontend → rspec → brakeman. CI runs the same gates, with rspec split into 3 shards |
 | `npm run e2e` | Playwright end-to-end tests (uses its own database, `payhub_e2e`) |
 
 **Versions:** Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22. Postgres is exposed on host port **5434**, because 5432 is often taken. The simulators are standalone apps with their own specs: `cd simulators/nordpay && bundle exec rspec`.
@@ -406,7 +406,11 @@ Behaviour, signatures, failure modes and admin endpoints are documented in **[do
 
 ## Testing and verification
 
-`bin/check` runs the whole gate, and CI runs exactly the same thing.
+`bin/check` runs the whole gate. CI runs the same gates, with rspec split into 3 parallel shards:
+
+- `bin/check --skip-rspec` runs every gate but rspec (CI's static job).
+- `bin/rspec-shard SHARD TOTAL` prints the spec files of one shard (`bin/rspec-shard 0 3`), packed by the per-file times in `spec/timings.json`.
+- After adding or moving a slow spec file, or when the shards' CI times drift apart, re-record the timings: `bundle exec rspec -f json -o tmp/rspec.json && bin/rspec-shard --record tmp/rspec.json`. A run of some files updates only theirs.
 
 | Layer | What it proves |
 | --- | --- |
