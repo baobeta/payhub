@@ -30,6 +30,44 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
     expect(response.body).to match(/payhub_outbound_events_pending \d+/)
   end
 
+  describe "PR-3 /metrics protection" do
+    def with_metrics_token(token)
+      stub_const("ENV", token ? ENV.to_h.merge("METRICS_TOKEN" => token) : ENV.to_h.except("METRICS_TOKEN"))
+    end
+
+    it "PR-3: with METRICS_TOKEN set, a scrape without the token is 401" do
+      with_metrics_token("s3cret")
+      get "/metrics"
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it "PR-3: with METRICS_TOKEN set, a scrape with the wrong token is 401" do
+      with_metrics_token("s3cret")
+      get "/metrics", headers: { "Authorization" => "Bearer wrong" }
+      expect(response).to have_http_status(:unauthorized)
+    end
+
+    it "PR-3: with the right bearer token the scrape works" do
+      with_metrics_token("s3cret")
+      get "/metrics", headers: { "Authorization" => "Bearer s3cret" }
+      expect(response).to have_http_status(:ok)
+      expect(response.body).to include("payhub_")
+    end
+
+    it "PR-3: outside production, an unset METRICS_TOKEN leaves the scrape open" do
+      with_metrics_token(nil)
+      get "/metrics"
+      expect(response).to have_http_status(:ok)
+    end
+
+    it "PR-3: in production, an unset METRICS_TOKEN refuses every scrape" do
+      with_metrics_token(nil)
+      allow(Rails.env).to receive(:production?).and_return(true)
+      get "/metrics", headers: { "Authorization" => "Bearer " }
+      expect(response).to have_http_status(:unauthorized)
+    end
+  end
+
   it "traces the synchronous payment creation boundary" do
     allow(Tracing).to receive(:in_span).and_call_original
 

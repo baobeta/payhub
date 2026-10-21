@@ -3,6 +3,8 @@
 #   logs    <- the JSON request/job lines in log/development.log (they carry
 #              trace_id/span_id, so Grafana links a log line to its trace)
 #   metrics <- Prometheus scrape of web:3000/metrics
+#              (no bearer token yet: works only while METRICS_TOKEN is unset,
+#              as in development)
 # Tables are created by the exporter (create_schema) in the `otel` database.
 
 receivers:

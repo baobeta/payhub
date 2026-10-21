@@ -229,6 +229,7 @@ Then run each of these in its own terminal:
 | `AR_ENCRYPTION_*` (three keys) | Active Record encryption for TOTP secrets. Generate with `bin/rails db:encryption:init`. |
 | `NORDPAY_URL`, `NORDPAY_API_KEY`, `NORDPAY_WEBHOOK_SECRET` | Nordpay endpoint, API key and inbound webhook secret. During a rotation, set `NORDPAY_WEBHOOK_SECRETS=<new>,<old>` instead of the single secret. Without them, or with a simulator default such as `np_test_key`, every Nordpay call and webhook raises `PspEnv::Missing` instead of using the simulator. |
 | `KIRIPAY_URL`, `KIRIPAY_API_KEY`, `KIRIPAY_WEBHOOK_SECRET` | The same for Kiripay (`KIRIPAY_WEBHOOK_SECRETS` while rotating; simulator defaults such as `kp_test_key` are refused). |
+| `METRICS_TOKEN` | Bearer token for `GET /metrics`; scrapers send `Authorization: Bearer <token>`. Without it, production answers every scrape with `401`; the app still boots. Outside production an unset token leaves `/metrics` open. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional. Enables trace export outside Docker Compose. |
 | `DEMO_ENABLED` | Optional. The public demo (`/demo`, no login) is off in production and answers `404`. Set `true` only on a demo-only host. That host still runs in production, so it needs non-default PSP keys and webhook secrets, set to the same values on PayHub and on the simulators. Other environments default to on; `false` turns it off. Only the exact value `true` enables it. |
 
@@ -405,7 +406,7 @@ It exits non-zero on any violation and restores the simulator's configuration af
 | Signal | Details |
 | --- | --- |
 | **Logs** | One JSON line per request (lograge) and per job, carrying `request_id`, `merchant_id`, `payment_id`, `psp_name` and `duration_ms`. Jobs inherit the enqueuing request's id, so `grep '"payment_id":"…"' log/*.log` reconstructs a payment's whole life. Request bodies are never logged. Every PSP call also writes one redacted `psp_call` line (PSP, method, path template, status, outcome, duration, reference, error), which survives when the transaction holding its `psp_calls` row rolls back. |
-| **Metrics** | `GET /metrics` (Prometheus): `payhub_payments_created_total`, `payhub_psp_calls_total`, `payhub_webhook_deliveries_total`, `payhub_webhook_duplicates_total`, `payhub_webhook_signature_failures_total`, `payhub_stuck_payment_alerts_total`, `payhub_ledger_imbalance_detected_total`, `payhub_psp_call_in_transaction_total` (a PSP call made inside a database transaction, which [#13](DECISIONS.md#13-the-sweeper-schedules-each-payment-instead-of-re-scanning-the-oldest) forbids; should stay 0); gauges `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead` |
+| **Metrics** | `GET /metrics` (Prometheus): `payhub_payments_created_total`, `payhub_psp_calls_total`, `payhub_webhook_deliveries_total`, `payhub_webhook_duplicates_total`, `payhub_webhook_signature_failures_total`, `payhub_stuck_payment_alerts_total`, `payhub_ledger_imbalance_detected_total`, `payhub_psp_call_in_transaction_total` (a PSP call made inside a database transaction, which [#13](DECISIONS.md#13-the-sweeper-schedules-each-payment-instead-of-re-scanning-the-oldest) forbids; should stay 0); gauges `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead`. Scrapes need `Authorization: Bearer $METRICS_TOKEN` whenever `METRICS_TOKEN` is set, and production refuses all scrapes without it (`401`). |
 | **Traces** | OpenTelemetry across web, Sidekiq and every PSP call, with each SQL statement as a span |
 | **Alert** | `event=alert.stuck_payment` at ERROR, for any payment in `pending` or `unknown` past 15 minutes. This is the only signal that pages; everything else is a dashboard. |
 | **Health** | `GET /healthz` checks the database only. A liveness probe that fails on a slow dependency causes restarts, not fixes. |
@@ -419,6 +420,8 @@ flowchart LR
     M["/metrics"] -- "scraped every 15s" --> OC
     OC --> CH[("ClickHouse<br/>otel db · 72h TTL")] --> GF["Grafana · :3300<br/>PayHub tracing"]
 ```
+
+The collector's scrape sends no token yet, so it relies on `METRICS_TOKEN` being unset in development, which leaves `/metrics` open there.
 
 In Grafana (<http://localhost:3300>, no login locally), the *PayHub tracing* dashboard lets you filter by `payment_id`. Clicking a `trace_id` shows its waterfall with that trace's log lines underneath.
 
