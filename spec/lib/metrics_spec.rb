@@ -66,6 +66,12 @@ RSpec.describe Metrics do
       expect(Rails.logger).not_to have_received(:warn)
     end
 
+    it "PR-4: a blank or non-numeric WEB_CONCURRENCY neither raises nor warns" do
+      expect { warn_with(concurrency: "", dir: nil) }.not_to raise_error
+      expect { warn_with(concurrency: "abc", dir: nil) }.not_to raise_error
+      expect(Rails.logger).not_to have_received(:warn)
+    end
+
     it "PR-4: outside production nothing is logged" do
       warn_with(concurrency: "2", dir: nil, production: false)
       expect(Rails.logger).not_to have_received(:warn)

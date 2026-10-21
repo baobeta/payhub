@@ -68,7 +68,7 @@ module Metrics
     sig { params(web_concurrency: T.nilable(String), multiproc_dir: T.nilable(String)).void }
     def warn_if_per_process_in_production(web_concurrency: ENV.fetch("WEB_CONCURRENCY", nil),
                                           multiproc_dir: ENV.fetch("PROMETHEUS_MULTIPROC_DIR", nil))
-      return unless Rails.env.production? && Integer(web_concurrency || "0").positive? && multiproc_dir.blank?
+      return unless Rails.env.production? && web_concurrency.to_i.positive? && multiproc_dir.blank?
 
       Rails.logger.warn("PROMETHEUS_MULTIPROC_DIR is not set but WEB_CONCURRENCY is: metrics are per-process, " \
                         "so each scrape sees only the Puma worker that answered it")
