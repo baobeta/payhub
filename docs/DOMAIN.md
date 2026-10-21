@@ -117,7 +117,7 @@ erDiagram
 **What it is:** one customer paying one shop.
 **Everyday version:** an order slip.
 **Example:** €25.00 from Anna to Demo Shop, sent to Nordpay with our reference `PH-7Q2K`, status *Approved*.
-**What it holds:** the amount and currency; which card company handles it (chosen by currency: EUR, GBP and USD go to Nordpay, VND, THB and IDR to Kiripay); **our reference number, saved before we call the card company**; the current status; a card *token* (never the card number itself); and the night watch's notes (when we first sent it, when to check it next, how many checks so far).
+**What it holds:** the amount and currency; which card company handles it (chosen by currency: EUR, GBP and USD go to Nordpay, VND, THB and IDR to Kiripay); **our reference number, saved before we call the card company**; the current status; when collecting was closed (after the last collection); a card *token* (never the card number itself); and the night watch's notes (when we first sent it, when to check it next, how many checks so far).
 **Rules that protect it:**
 - The status is always one of the stops in the [payment's journey](OVERVIEW.md#a-payments-journey).
 - The same card company can't produce two payments for the same reference.
@@ -136,8 +136,12 @@ erDiagram
 ### Collections · `captures`
 **What it is:** one request from the shop to take held money, in full or in part.
 **Everyday version:** a till receipt for "take €10 of the €25 deposit now".
-**Example:** €10.00 on PH-7Q2K. When requested, €0.00 had been collected. Status *succeeded*.
+**Example:** €10.00 on PH-7Q2K, *not the last one*. When requested, €0.00 had been collected. Status *succeeded*. €15.00 can still be collected.
 **Rules that protect it:**
+- A shop may collect in several parts, like a hotel taking the deposit in stages. Each collection is the **last one** unless the shop says otherwise. After the last one, nothing more can be collected. A collection of €0.00 marked "last" just closes collecting.
+- What isn't collected is not handed back to the customer's bank by PayHub: the bank lets the hold lapse. If a partly collected payment sits untouched for 6 days, PayHub closes collecting itself.
+- Collections can never add up to more than was approved, and at most 50 can be "not the last one". Wallets (Kiripay) collect everything at once.
+- Refunds may come between collections. A payment counts as fully refunded only once collecting is closed and everything collected was given back.
 - Only **one** collection per payment can be in progress at a time. A second request is asked to retry.
 - Each collection remembers how much had been collected *before* it. Before sending, PayHub asks the card company for its total, so it can tell whether this collection already happened. This is what stops a customer being charged twice.
 
@@ -229,7 +233,7 @@ erDiagram
 **What it is:** every notification PayHub owes a shop, such as "payment approved" or "refund succeeded".
 **Everyday version:** the outgoing post tray.
 **Example:** *payment.captured* for PH-7Q2K, delivered on the 1st attempt.
-**Status values:** *pending* (waiting to go), *delivered*, *dead* (gave up after many tries; staff or the shop can resend).
+**Status values:** *pending* (waiting to go), *delivered*, *dead* (gave up after many tries; staff or the shop can resend, which gives it a fresh set of tries).
 **Rules that protect it:** the letter is written **at the same moment** as the status change it describes. Either both are saved or neither is, so a letter can never be lost or sent for something that didn't happen.
 
 ### Delivery attempts · `outbound_delivery_attempts`
@@ -307,6 +311,7 @@ erDiagram
 - Written in pen. Rows can't be edited, and can't be deleted until they are 12 months old.
 - The person's email is copied in at the time, so the log still reads correctly after they leave.
 - Request contents, passwords and session details are never stored here.
+- A signed-in person's refused change is logged too (result *failure*, or *denied* for a missing confirmation code), with only the error code. Reads and anonymous requests are not.
 
 ---
 
@@ -351,10 +356,10 @@ sequenceDiagram
 | 3 | Nordpay approves | **Payment history** +1 (Waiting → Approved) · **Payments** status updated · **Letters to send** +1 (*payment.authorized*) |
 | 4 | Night watch delivers the letter | **Delivery attempts** +1 (200 OK) · the letter becomes *delivered* |
 | 5 | Shop asks to collect €25.00 | **Request tickets** +1 · **Collections** +1 (*pending*, €0.00 collected before) |
-| 6 | PayHub checks, then collects | **Call log** +2 (the "how much so far?" read, then the collect) · **Ledger lines** +2 (card company owes us €25.00 / we owe the shop €25.00) · **Collections** → *succeeded* · **Payment history** +1 (→ Collected) · **Letters to send** +1 |
+| 6 | PayHub checks, then collects | **Call log** +2 (the "how much so far?" read, then the collect) · **Ledger lines** +2 (card company owes us €25.00 / we owe the shop €25.00) · **Collections** → *succeeded*, and collecting closes (it was the last one) · **Payment history** +1 (→ Collected) · **Letters to send** +2 (*payment.captured* and *capture.succeeded*) |
 | 7 | Nordpay's letter "charge captured" arrives | **Letters received** +1. It's already applied, so the status doesn't change. If it arrives five times, it's still stored once. |
 | 8 | Shop refunds €10.00 | **Refunds** +1 (*pending*) · **Ledger lines** +2 (€10.00 moved from "we owe the shop" to "set aside for refunds"), saved together |
-| 9 | Nordpay confirms the refund | **Call log** +1 · **Ledger lines** +2 (€10.00 moved from "set aside" to "refunds paid") · **Refunds** → *succeeded* · **Payment history** +1 (→ Partly refunded) · **Letters to send** +1 (*refund.succeeded*) |
+| 9 | Nordpay confirms the refund | **Call log** +1 · **Ledger lines** +2 (€10.00 moved from "set aside" to "refunds paid") · **Refunds** → *succeeded* · **Payment history** +1 (→ Partly refunded) · **Letters to send** +2 (*payment.part_refunded* and *refund.succeeded*) |
 | 10 | Next day, the payout report | **Payout report lines** +1 (*matched*) · **Ledger lines** (the receivable clears into "paid out" €24.55 and "fees" €0.45) |
 | — | Throughout | **Audit log**: the dashboard refund in step 8 was recorded with the person who did it |
 

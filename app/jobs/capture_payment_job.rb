@@ -30,9 +30,12 @@ class CapturePaymentJob < ApplicationJob
     return if capture.nil? || capture.state != "pending"
 
     payment = T.must(capture.payment)
-    unless %w[authorized captured].include?(payment.state)
+    unless Payment::CAPTURABLE_STATES.include?(payment.state)
       return finish(capture, "failed", failure_code: "payment_#{payment.state}")
     end
+    # Closed while this capture sat in the queue: the merchant was told no more
+    # would be taken, so taking it now would contradict that (DECISIONS #20).
+    return finish(capture, "failed", failure_code: "captures_closed") if payment.captures_closed_at
 
     adapter = PspRouter.adapter(payment.psp_name)
     # Read first. Unavailable or TimedOut here raise: retry later, never send blind.
@@ -65,11 +68,23 @@ class CapturePaymentJob < ApplicationJob
   sig { params(result: PspAdapter::Result).returns(Integer) }
   def psp_captured(result) = result.raw.fetch("captured_minor", 0).to_i
 
+  # Settles the capture once, and tells the merchant about THIS capture:
+  # `capture.succeeded` / `capture.failed`, one per capture, beside the
+  # once-per-payment `payment.captured` (DECISIONS #20). A final capture that
+  # succeeded closes capturing; a failed one leaves it open for a retry.
   sig { params(capture: Capture, state: String, failure_code: T.nilable(String)).void }
   def finish(capture, state, failure_code: nil)
-    T.must(capture.payment).with_lock do
+    payment = T.must(capture.payment)
+    payment.with_lock do
       capture.reload
-      capture.update!(state: state, failure_code: failure_code) if capture.state == "pending"
+      next unless capture.state == "pending"
+
+      capture.update!(state: state, failure_code: failure_code)
+      payment.close_captures!(reason: "final_capture", source: "worker") if state == "succeeded" && capture.final
+      OutboundEvent.emit!(payment, "capture.#{state}",
+                          { "capture" => capture.as_json(only: %w[id amount_minor final state failure_code]),
+                            "capturable_minor" => payment.capturable_minor(Ledger.captured_minor(payment)),
+                            "failure_code" => failure_code }.compact)
     end
   end
 

@@ -57,6 +57,17 @@ RSpec.describe "Ops payments", type: :request do
       expect(StuckPaymentSweeperJob).to have_received(:poll_now).with(payment)
     end
 
+    it "refuses to poll a payment whose outcome is already known, so it can never re-send a charge" do
+      payment = create(:payment, state: "captured")
+      allow(StuckPaymentSweeperJob).to receive(:poll_now)
+
+      post "/ops/api/payments/#{payment.id}/poll", headers: ui_headers
+
+      expect(response).to have_http_status(:conflict)
+      expect(json_body["error"]["code"]).to eq("invalid_state")
+      expect(StuckPaymentSweeperJob).not_to have_received(:poll_now)
+    end
+
     it "forbids an approver, who cannot poll" do
       sign_in_operator(create(:operator, role: "approver"))
       post "/ops/api/payments/#{create(:payment).id}/poll", headers: ui_headers

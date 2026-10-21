@@ -67,5 +67,26 @@ RSpec.describe "Demo ledger and reset", type: :request do
       get "/demo/api/payments/#{payment.id}"
       expect(response).to have_http_status(:not_found)
     end
+
+    it "TC-O1-1: a demo reset deletes nothing — Payment and LedgerEntry counts are unchanged" do
+      # Create some payments and ledger entries before the reset
+      payment = create(:payment, merchant: twin)
+      Ledger.record!(
+        merchant: twin, currency: "EUR",
+        legs: [
+          Ledger::Leg.new(account_kind: "psp_receivable", direction: "debit", amount_minor: 1000),
+          Ledger::Leg.new(account_kind: "merchant_payable", direction: "credit", amount_minor: 1000)
+        ]
+      )
+
+      payment_count_before = Payment.count
+      ledger_entry_count_before = LedgerEntry.count
+
+      post "/demo/api/reset"
+      expect(response).to have_http_status(:created)
+
+      expect(Payment.count).to eq(payment_count_before)
+      expect(LedgerEntry.count).to eq(ledger_entry_count_before)
+    end
   end
 end

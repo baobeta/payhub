@@ -38,6 +38,73 @@ RSpec.describe "Ops proposals", type: :request do
     expect(json_body["id"]).to eq(first)
   end
 
+  it "TC-N7-1: refuses another operator's client_token with 409, not a 500" do
+    payment = create(:payment, state: "unknown")
+    token = SecureRandom.uuid
+    sign_in_operator(maker, stepped_up: true)
+    create_proposal(payment, client_token: token)
+
+    sign_in_operator(create(:operator, role: "ops"), stepped_up: true)
+    expect { create_proposal(payment, client_token: token) }.not_to change(OperatorProposal, :count)
+
+    expect(response).to have_http_status(:conflict)
+    expect(json_body.dig("error", "code")).to eq("client_token_in_use")
+    expect(response.body).not_to include("PSP confirmed") # nothing of A's proposal leaks
+  end
+
+  it "TC-N7-2: two submits of one token at the same moment make one row and both get it back" do
+    sign_in_operator(maker, stepped_up: true)
+    payment = create(:payment, state: "unknown")
+    token = SecureRandom.uuid
+    create_proposal(payment, client_token: token)
+    expect(response).to have_http_status(:created)
+    first = json_body["id"]
+
+    # The second submit looked before the first committed: its lookup saw
+    # nothing, so its insert hits the unique index.
+    allow(OperatorProposal).to receive(:find_by).and_call_original
+    allow(OperatorProposal).to receive(:find_by).with(client_token: token).and_return(nil)
+    expect { create_proposal(payment, client_token: token) }.not_to change(OperatorProposal, :count)
+
+    expect(response).to have_http_status(:ok)
+    expect(json_body["id"]).to eq(first)
+  end
+
+  # No role both proposes and decides, so a self-approval can't reach the
+  # service; a double approval hits the same refusal.
+  it "TC-N17-1: a refused double approval is audited as a failure with its code" do
+    sign_in_operator(maker, stepped_up: true)
+    create_proposal(create(:payment, state: "unknown"))
+    id = json_body["id"]
+    sign_in_operator(create(:operator, role: "approver"), stepped_up: true)
+    post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+
+    expect { post "/ops/api/proposals/#{id}/approve", headers: ui_headers }.to change(AuditEvent, :count).by(1)
+
+    expect(response).to have_http_status(:conflict)
+    expect(AuditEvent.last).to have_attributes(action: "ops.proposals.decide", result: "failure")
+    expect(AuditEvent.last.metadata).to include("code" => "refused", "http_status" => 409)
+  end
+
+  it "TC-M14-5: a failing audit write never turns the operator's 409 into a 500" do
+    sign_in_operator(maker, stepped_up: true)
+    create_proposal(create(:payment, state: "unknown"))
+    id = json_body["id"]
+    sign_in_operator(create(:operator, role: "approver"), stepped_up: true)
+    post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+    allow(AuditEvent).to receive(:record!).and_raise(ActiveRecord::ConnectionTimeoutError, "pool exhausted")
+
+    post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+
+    expect(AuditEvent).to have_received(:record!)
+    expect(response).to have_http_status(:conflict)
+  end
+
+  it "TC-M14-2: an anonymous ops POST writes no audit row" do
+    expect { create_proposal(create(:payment, state: "unknown")) }.not_to change(AuditEvent, :count)
+    expect(response).to have_http_status(:unauthorized)
+  end
+
   it "forbids support from proposing" do
     sign_in_operator(create(:operator, role: "support"))
     create_proposal(create(:payment, state: "unknown"))
@@ -122,5 +189,53 @@ RSpec.describe "Ops proposals", type: :request do
     sign_in_operator(create(:operator, role: "admin"), stepped_up: true)
     post "/ops/api/proposals/#{id}/approve", headers: ui_headers
     expect(response).to have_http_status(:forbidden)
+  end
+
+  it "TC-N8-1: reject sets state to rejected, persists decision_note, and writes an audit row" do # rubocop:disable RSpec/MultipleExpectations
+    approver = create(:operator, role: "approver")
+    sign_in_operator(maker, stepped_up: true)
+    payment = create(:payment, state: "unknown")
+    create_proposal(payment)
+    id = json_body["id"]
+
+    sign_in_operator(approver, stepped_up: true)
+    expect do
+      post "/ops/api/proposals/#{id}/reject",
+           params: { note: "PSP confirmed the charge never settled" }.to_json,
+           headers: ui_headers
+    end.to change(AuditEvent, :count).by(1)
+
+    expect(response).to have_http_status(:ok)
+    proposal = OperatorProposal.find(id)
+    expect(proposal.state).to eq("rejected")
+    expect(proposal.decision_note).to eq("PSP confirmed the charge never settled")
+    expect(proposal.decided_by).to eq(approver)
+    expect(proposal.decided_at).to be_present
+    expect(json_body["state"]).to eq("rejected")
+    expect(AuditEvent.last).to have_attributes(action: "proposal.rejected", result: "success")
+  end
+
+  it "TC-N9-1: approve where apply fails → state failed, error persisted, decided_by and decided_at set" do # rubocop:disable RSpec/MultipleExpectations
+    approver = create(:operator, role: "approver")
+    sign_in_operator(maker, stepped_up: true)
+    payment = create(:payment, state: "unknown")
+    create_proposal(payment)
+    id = json_body["id"]
+
+    # Move the payment before approval so ApplyProposal raises Stale
+    payment.transition!("authorized", sort_key: Time.current, source: "webhook")
+
+    sign_in_operator(approver, stepped_up: true)
+    post "/ops/api/proposals/#{id}/approve", headers: ui_headers
+
+    expect(response).to have_http_status(:ok)
+    proposal = OperatorProposal.find(id)
+    expect(proposal.state).to eq("failed")
+    expect(proposal.error).to be_present
+    expect(proposal.decided_by).to eq(approver)
+    expect(proposal.decided_at).to be_present
+    expect(json_body["state"]).to eq("failed")
+    # The payment must be unchanged
+    expect(payment.reload.state).to eq("authorized")
   end
 end

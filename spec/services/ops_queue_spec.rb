@@ -26,4 +26,17 @@ RSpec.describe OpsQueue do
     expect(result["reconciliation_breaks"]).to eq(1)
     expect(result["open_proposals"]).to eq(1)
   end
+
+  it "TC-B3-3: lists a failed payment the PSP charged anyway, and only that one" do
+    charged = create(:payment, merchant:, state: "failed")
+    declined = create(:payment, merchant:, state: "failed") # an ordinary decline: not a queue item
+    [[charged, "#{ProcessInboundEventJob::LATE_SUCCESS}: PSP reports captured on a failed payment"],
+     [declined, nil]].each do |payment, error|
+      InboundEvent.create!(psp_name: payment.psp_name, external_id: SecureRandom.hex(4), event_type: "charge.captured",
+                           psp_reference: payment.psp_reference, signature_valid: true, received_at: Time.current,
+                           processed_at: Time.current, error: error, payload: { "data" => {} })
+    end
+
+    expect(described_class.call["late_successes"].map { |p| p["id"] }).to eq([charged.id])
+  end
 end

@@ -66,16 +66,27 @@ class IdempotencyGuard
   sig { params(record: IdempotencyKey, action: T.proc.returns([Integer, T::Hash[String, T.untyped]])).returns(Outcome) }
   def run(record, &action)
     status, body = action.call
-    if status >= 500
-      # Our failure. Do not memoise it for 24h — let the merchant retry.
+    if status >= 500 || validation_failure?(body)
+      # 5xx: our failure — do not memoise it for 24h, let the merchant retry.
+      # validation_failed: the request never started; nothing happened that a
+      # replay must reproduce. Keeping it would turn the merchant's corrected
+      # retry into "key reused with a different body". Stripe saves no result
+      # for a request whose parameters fail validation; Checkout.com caches only 2xx.
       record.release!
     else
-      # 2xx and 4xx are both legitimate, repeatable answers to THIS request.
+      # 2xx and other 4xx (invalid_state, capture_closed…) answer THIS request
+      # after it ran: legitimate, repeatable answers.
       record.complete!(status, body)
     end
     Outcome.new(status: status, body: body, replayed: false)
   rescue StandardError
     record.release!
     raise
+  end
+
+  sig { params(body: T::Hash[String, T.untyped]).returns(T::Boolean) }
+  def validation_failure?(body)
+    error = body["error"]
+    error.is_a?(Hash) && error["code"] == "validation_failed"
   end
 end

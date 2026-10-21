@@ -18,4 +18,22 @@ RSpec.describe PaymentSimulation do
       expect(outcome).to be_ok, outcome.report
     end
   end
+
+  # TC-E3-19: multicapture is exercised, not swallowed. Every run above
+  # already fails on a capture refused with an unexpected code. Here, a run on
+  # a fixed seed (so it cannot flake) must also land later captures: a random
+  # 150-step run makes only a handful of captures and may honestly land none.
+  it "TC-E3-19: lands second captures, and refuses only with expected codes" do
+    simulation = described_class.new(seed: 1, merchant: create(:merchant), travel_to: method(:travel_to),
+                                     jobs: ActiveJob::Base.queue_adapter)
+    allow(PspRouter).to receive(:adapter).and_return(simulation.psp)
+    allow(Rails.logger).to receive(:error)
+
+    outcome = simulation.run(steps: 150)
+
+    expect(outcome).to be_ok, outcome.report
+    expect(outcome.captures.keys - %i[accepted accepted_again closed later_succeeded])
+      .to all(be_in(described_class::EXPECTED_CAPTURE_REFUSALS))
+    expect(outcome.captures[:later_succeeded]).to be_positive, outcome.captures.to_s
+  end
 end

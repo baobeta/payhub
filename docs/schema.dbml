@@ -332,6 +332,7 @@ Table outbound_events [headercolor: #8250DF] {
   payload         jsonb     [not null]
   state           varchar   [not null, default: 'pending', note: 'CHECK IN (pending, delivered, dead)']
   attempts        integer   [not null, default: 0]
+  attempt_budget  integer   [not null, default: 8, note: 'Dead once attempts reaches it; each redelivery sets it to attempts + 8.']
   next_attempt_at timestamp [not null]
   last_error      varchar
   delivered_at    timestamp

@@ -29,6 +29,13 @@ module Dashboard
       sig { void }
       def roll
         key = keys_in_mode.find(params[:id])
+        # An expired or revoked key stays dead (PCI 8.3), and a key already
+        # expiring from an earlier roll is rolled via its replacement (Stripe).
+        unless key.rollable?
+          raise ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "invalid_state", param: "id",
+                             message: "Only active keys can be rolled (status: #{key.status})")
+        end
+
         expires_in = params.require(:expires_in).to_s
         overlap = ApiKey::ROLL_OVERLAPS.fetch(expires_in) do
           raise ApiError.validation("expires_in" => ["must be one of #{ApiKey::ROLL_OVERLAPS.keys.join(', ')}"])

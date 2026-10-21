@@ -13,12 +13,12 @@ module PaymentActions
   def self.call(payment, granted:)
     authorized = payment.state == "authorized"
     captured = Ledger.captured_minor(payment)
-    capturable = authorized ? payment.amount_minor - captured : 0
+    capturable = payment.capturable_minor(captured) # open after a non-final capture too (DECISIONS #20)
     refundable = refundable_minor(payment, captured)
 
     {
       "capture" => granted.call("payments.capture") && capturable.positive? && !payment.captures.pending.exists?,
-      "cancel" => granted.call("payments.cancel") && authorized,
+      "cancel" => granted.call("payments.cancel") && authorized && PspRouter.adapter(payment.psp_name).supports_void?,
       "refund" => granted.call("payments.refund") && refundable.positive?,
       "capturable_minor" => capturable,
       "refundable_minor" => refundable

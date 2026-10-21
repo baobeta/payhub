@@ -1,0 +1,95 @@
+# TC-M9-1: route→permission fixture.
+# Every dashboard, ops, and demo controller#action is mapped to the exact
+# permission it requires, or "public" for allow_unauthorized actions.
+# Built from the current code via Authorization#authorization_rules.
+# Sanity-checked against docs/permissions.md.
+#
+# Suspicious mappings noted in the test report:
+#   ops/api/proposals#index  guarded by ops.payments.read  (a list of proposals
+#     uses the read permission for payments; probably intentional since
+#     approvers and ops both need to view proposals, but the permission name
+#     does not describe the resource)
+
+dashboard/api/api_keys#create: api_keys.manage
+dashboard/api/api_keys#index: api_keys.read
+dashboard/api/api_keys#revoke: api_keys.manage
+dashboard/api/api_keys#roll: api_keys.manage
+dashboard/api/balances#show: balance.read
+dashboard/api/events#index: webhooks.read
+dashboard/api/events#redeliver: events.redeliver
+dashboard/api/events#show: webhooks.read
+dashboard/api/fallback#show: public
+dashboard/api/home#show: payments.read
+dashboard/api/invitations#accept: public
+dashboard/api/invitations#create: team.manage
+dashboard/api/invitations#show: public
+dashboard/api/me#password: public
+dashboard/api/me#recovery_codes: public
+dashboard/api/me#show: public
+dashboard/api/members#destroy: team.manage
+dashboard/api/members#index: team.read
+dashboard/api/members#update: team.manage
+dashboard/api/modes#update: public
+dashboard/api/otp#confirm: public
+dashboard/api/otp#setup: public
+dashboard/api/ownership_transfers#create: ownership.transfer
+dashboard/api/payments#cancel: payments.cancel
+dashboard/api/payments#capture: payments.capture
+dashboard/api/payments#export: payments.export
+dashboard/api/payments#index: payments.read
+dashboard/api/payments#show: payments.read
+dashboard/api/refunds#create: payments.refund
+dashboard/api/security_history#export: security_history.read
+dashboard/api/security_history#index: security_history.read
+dashboard/api/sessions#create: public
+dashboard/api/sessions#destroy: public
+dashboard/api/sessions#otp: public
+dashboard/api/sessions#recovery: public
+dashboard/api/sessions#step_up: public
+dashboard/api/settlements#index: settlements.read
+dashboard/api/webhook_endpoints#reveal_secret: webhooks.manage
+dashboard/api/webhook_endpoints#roll_secret: webhooks.manage
+dashboard/api/webhook_endpoints#show: webhooks.read
+dashboard/api/webhook_endpoints#update: webhooks.manage
+dashboard/shell#show: public
+demo/api/chaos_runs#create: public
+demo/api/chaos_runs#show: public
+demo/api/ledger#show: public
+demo/api/payments#approve_wallet: public
+demo/api/payments#create: public
+demo/api/payments#show: public
+demo/api/resets#create: public
+demo/shell#show: public
+ops/api/audit_events#index: ops.audit.read
+ops/api/circuits#index: ops.circuits.read
+ops/api/events#redeliver: ops.events.redeliver
+ops/api/impersonations#create: ops.impersonation.start
+ops/api/impersonations#destroy: public
+ops/api/invitations#accept: public
+ops/api/invitations#create: ops.operators.manage
+ops/api/invitations#show: public
+ops/api/me#show: public
+ops/api/operators#access_review: ops.access_review.export
+ops/api/operators#create: ops.operators.manage
+ops/api/operators#destroy: ops.operators.manage
+ops/api/operators#index: ops.operators.manage
+ops/api/operators#update: ops.operators.manage
+ops/api/otp#confirm: public
+ops/api/otp#setup: public
+ops/api/payments#index: ops.payments.read
+ops/api/payments#poll: ops.payments.poll
+ops/api/payments#show: ops.payments.read
+ops/api/proposals#approve: ops.proposals.decide
+ops/api/proposals#create: ops.proposals.create
+ops/api/proposals#index: ops.payments.read
+ops/api/proposals#reject: ops.proposals.decide
+ops/api/proposals#withdraw: ops.proposals.create
+ops/api/queue#show: ops.queue.read
+ops/api/reconciliation_breaks#index: ops.reconciliation.read
+ops/api/reconciliation_breaks#review: ops.reconciliation.review
+ops/api/sessions#create: public
+ops/api/sessions#destroy: public
+ops/api/sessions#otp: public
+ops/api/sessions#recovery: public
+ops/api/sessions#step_up: public
+ops/shell#show: public

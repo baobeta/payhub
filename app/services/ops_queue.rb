@@ -15,6 +15,12 @@ module OpsQueue
           "psp_reference" => p.psp_reference, "amount_minor" => p.amount_minor, "currency" => p.currency,
           "stuck_since" => p.updated_at.utc.iso8601, "check_attempts" => p.check_attempts }
       end,
+      # The PSP took the money after we failed the payment (TC-B3-3): a human refunds it.
+      "late_successes" => late_successes.map do |p|
+        { "id" => p.id, "merchant" => T.must(p.merchant).name, "psp_name" => p.psp_name,
+          "psp_reference" => p.psp_reference, "amount_minor" => p.amount_minor, "currency" => p.currency,
+          "failed_at" => p.updated_at.utc.iso8601 }
+      end,
       "dead_events" => OutboundEvent.where(state: "dead").order(:updated_at).limit(LIMIT).includes(:merchant).map do |e|
         { "id" => e.id, "merchant" => T.must(e.merchant).name, "type" => e.event_type, "payment_id" => e.payment_id,
           "last_error" => e.last_error, "dead_since" => e.updated_at.utc.iso8601 }
@@ -22,5 +28,18 @@ module OpsQueue
       "reconciliation_breaks" => SettlementLine.where(status: %w[unmatched mismatch], reviewed_at: nil).count,
       "open_proposals" => OperatorProposal.open.count
     }
+  end
+
+  # Failed payments with a success webhook kept as an error: the customer was
+  # charged after we failed the payment. Starts from those few events (partial
+  # index idx_inbound_events_late_success), never from every failed payment.
+  # They stay listed until someone refunds the customer at the PSP; PayHub has
+  # no in-product path for that yet (USE_CASES §9, M-4), nor a "resolved" flag.
+  sig { returns(T::Array[Payment]) }
+  def self.late_successes
+    flagged = InboundEvent.where("error LIKE ?", "#{ProcessInboundEventJob::LATE_SUCCESS}%")
+                          .select(:psp_name, :psp_reference)
+    Payment.where(state: "failed").where("(payments.psp_name, payments.psp_reference) IN (#{flagged.to_sql})")
+           .order(:updated_at).limit(LIMIT).includes(:merchant).to_a
   end
 end

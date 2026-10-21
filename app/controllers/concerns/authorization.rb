@@ -91,6 +91,7 @@ module Authorization
   sig { params(permission: String).void }
   def authorize!(permission)
     @authorization_checked = true
+    @authorized_permission = permission
     raise ApiError.unauthenticated if authorization_role.nil?
 
     unless permission_granted?(permission)
@@ -112,6 +113,7 @@ module Authorization
 
   sig { params(permission: String).void }
   def record_denial(permission)
+    @refusal_audited = true
     Metrics.increment(:authz_denied, area: authorization_area.to_s, permission:)
     AuditEvent.record!(
       action: "authorization.denied", result: "denied",
@@ -121,6 +123,32 @@ module Authorization
       metadata: { "permission" => permission, "role" => authorization_role,
                   "route" => "#{controller_path}##{action_name}" }
     )
+  end
+
+  # PCI DSS 10.2.1: a signed-in person's refused write is evidence too (a
+  # support user trying to over-refund, a missing step-up). Called by the
+  # area base controllers as the error is rendered. One row per request, as
+  # the permission the action needs (or its route), with the error code and
+  # status only: never the request body. Skipped for reads, for anonymous
+  # traffic (an append-only table must not fill with it), for plain 401s, and
+  # when the refusal was already audited (a 403, a wrong sign-in code).
+  sig { params(error: ApiError).void }
+  def audit_refusal(error)
+    return if @refusal_audited || request.get? || request.head? || authorization_actor.nil?
+
+    step_up = error.code == "step_up_required"
+    return if error.http_status == 401 && !step_up
+
+    @refusal_audited = true
+    audit!(@authorized_permission || "#{controller_path}##{action_name}",
+           result: step_up ? "denied" : "failure",
+           metadata: { "code" => error.code, "http_status" => error.http_status })
+  rescue StandardError => e
+    # The caller must still see the refusal it earned; a lost audit row is
+    # loud here, not a 500 that hides why the action was refused.
+    Metrics.increment(:audit_write_failed, area: authorization_area.to_s)
+    Rails.logger.error({ event: "audit_refusal_failed", route: "#{controller_path}##{action_name}",
+                         error: e.class.name, detail: e.message }.to_json)
   end
 
   sig { void }

@@ -29,16 +29,33 @@ class ExpireAuthorizationsJob < ApplicationJob
   sig { void }
   def perform
     now = Time.current
-    Payment.where(state: "authorized").where(updated_at: ..(now - HOLD_LIMIT))
-           .where.not(id: Capture.pending.select(:payment_id)) # a capture in flight wins
-           .where("next_check_at IS NULL OR next_check_at <= ?", now)
-           .order(:updated_at).limit(BATCH).each { |payment| expire(payment, now) }
+    idle = Payment.where(updated_at: ..(now - HOLD_LIMIT))
+                  .where.not(id: Capture.pending.select(:payment_id)) # a capture in flight wins
+                  .where("next_check_at IS NULL OR next_check_at <= ?", now)
+    idle.where(state: "authorized").order(:updated_at).limit(BATCH).each { |payment| expire(payment, now) }
+    # A partly captured payment still open for more captures (DECISIONS #20):
+    # its captured money stays, so it is not voided; capturing is closed, and
+    # the remainder lapses at the network (#14).
+    idle.where(state: %w[captured part_refunded], captures_closed_at: nil).where("captured_minor < amount_minor")
+        .order(:updated_at).limit(BATCH).each do |payment|
+      payment.close_captures!(reason: "authorization_expired", source: "sweeper", unless_capture_in_flight: true)
+      Rails.logger.info({ event: "authorization.remainder_closed", payment_id: payment.id, psp_name: payment.psp_name }.to_json)
+    end
   end
 
   private
 
   sig { params(payment: Payment, now: ActiveSupport::TimeWithZone).void }
   def expire(payment, now)
+    unless PspRouter.adapter(payment.psp_name).supports_void?
+      # Nothing we can do at this PSP: the hold lapses at the network. Say it
+      # once per hold period, not every hour.
+      payment.update_columns(next_check_at: now + HOLD_LIMIT)
+      Rails.logger.warn({ event: "authorization.expiry_unsupported", payment_id: payment.id,
+                          psp_name: payment.psp_name }.to_json)
+      return
+    end
+
     CancelPayment.call(payment, source: "sweeper", reason: "authorization_expired")
     Metrics.increment(:authorizations_expired, psp: payment.psp_name)
     Rails.logger.info({ event: "authorization.expired", payment_id: payment.id, psp_name: payment.psp_name,

@@ -19,19 +19,25 @@ module Ops
         render json: { "data" => scope.map { |p| ProposalSerializer.call(p, viewer: current_user) } }
       end
 
+      # client_token makes a double-submit safe: the proposer gets their
+      # proposal back. Another operator's token is never theirs to see.
       sig { void }
       def create
-        existing = OperatorProposal.find_by(client_token: params.require(:client_token))
-        if existing&.proposed_by_id == current_user.id
-          return render(json: ProposalSerializer.call(T.must(existing), viewer: current_user))
-        end
+        token = params.require(:client_token).to_s
+        existing = OperatorProposal.find_by(client_token: token)
+        return render_existing_proposal(existing) if existing
 
-        proposal = OperatorProposal.create!(
-          kind: params.require(:kind), payment: Payment.find(params.require(:payment_id)),
-          payload: payload_params, reason_code: params.require(:reason_code),
-          reason_text: params.require(:reason_text), case_reference: params.require(:case_reference),
-          client_token: params[:client_token], proposed_by: current_user
-        )
+        proposal = begin
+          OperatorProposal.create!(
+            kind: params.require(:kind), payment: Payment.find(params.require(:payment_id)),
+            payload: payload_params, reason_code: params.require(:reason_code),
+            reason_text: params.require(:reason_text), case_reference: params.require(:case_reference),
+            client_token: token, proposed_by: current_user
+          )
+        rescue ActiveRecord::RecordNotUnique
+          # The same token committed between our lookup and insert (two submits at once).
+          return render_existing_proposal(OperatorProposal.where(client_token: token).take!)
+        end
         audit!("proposal.created", target: proposal, merchant_id: T.must(proposal.payment).merchant_id,
                                    metadata: proposal.slice(:kind, :payload, :reason_code, :case_reference))
         notify_approvers(proposal)
@@ -58,6 +64,16 @@ module Ops
       def reject = decide(approve: false)
 
       private
+
+      sig { params(existing: OperatorProposal).void }
+      def render_existing_proposal(existing)
+        unless existing.proposed_by_id == current_user.id
+          raise ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "client_token_in_use",
+                             param: "client_token", message: "This client_token belongs to another proposal")
+        end
+
+        render json: ProposalSerializer.call(existing, viewer: current_user)
+      end
 
       sig { params(approve: T::Boolean).void }
       def decide(approve:)

@@ -41,13 +41,16 @@ module V1
       render json: PaymentSerializer.call(payment, include_transitions: true)
     end
 
-    # POST /v1/payments/:id/capture → 202. Partial allowed; defaults to the full authorized amount.
+    # POST /v1/payments/:id/capture → 202. Partial allowed; defaults to what is
+    # still capturable. `final` (default true) closes capturing; `final: false`
+    # leaves the rest capturable. `amount_minor: 0` with final closes capturing
+    # without moving money → 200 (DECISIONS #20).
     sig { void }
     def capture
       payment = current_merchant.payments.find(params[:id])
-      amount = optional_amount
-      CapturePayment.call(payment, amount_minor: amount)
-      render json: PaymentSerializer.call(payment.reload), status: :accepted
+      amount, final = capture_params
+      CapturePayment.call(payment, amount_minor: amount, final: final)
+      render json: PaymentSerializer.call(payment.reload), status: amount&.zero? ? :ok : :accepted
     end
 
     # POST /v1/payments/:id/cancel → 200. Synchronous; only valid from authorized.
@@ -60,14 +63,18 @@ module V1
 
     private
 
-    # amount_minor for capture/refund: absent means "all of it"; present must be a positive integer.
-    sig { returns(T.nilable(Integer)) }
-    def optional_amount
-      raw = params[:amount_minor]
-      return nil if raw.nil?
-      return raw if raw.is_a?(Integer) && raw.positive?
+    # amount_minor: absent means "all that is left"; present must be a
+    # non-negative integer (0 only closes capturing). final: a boolean, default true.
+    sig { returns([T.nilable(Integer), T::Boolean]) }
+    def capture_params
+      errors = {}
+      amount = params[:amount_minor]
+      errors["amount_minor"] = ["must be a non-negative integer when present"] unless amount.nil? || (amount.is_a?(Integer) && !amount.negative?)
+      final = params.fetch(:final, true)
+      errors["final"] = ["must be true or false"] unless [true, false].include?(final)
+      raise ApiError.validation(errors) if errors.any?
 
-      raise ApiError.validation("amount_minor" => ["must be a positive integer when present"])
+      [amount, final]
     end
 
     # Collects EVERY failing field before raising, as the contract requires.
@@ -86,7 +93,13 @@ module V1
         errors["currency"] << "is not supported (#{Currency::SUPPORTED.join(', ')})"
       end
 
-      errors["payment_method_token"] << "is required" if body["payment_method_token"].to_s.empty?
+      token = body["payment_method_token"].to_s
+      if token.empty?
+        errors["payment_method_token"] << "is required"
+      elsif PspCallRedactor.card_number?(token)
+        # PCI DSS 3.3/3.4: a raw PAN is never stored. The message never echoes it.
+        errors["payment_method_token"] << "looks like a card number; send a token"
+      end
 
       capture = body.fetch("capture", false)
       errors["capture"] << "must be true or false" unless [true, false].include?(capture)

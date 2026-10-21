@@ -35,6 +35,12 @@ module Dashboard
         render_api_error(ApiError.new(type: ApiError::Type::ApiErrorType, http_status: 503, code: "psp_unavailable",
                                       message: e.message, retriable: true))
       end
+      # Same mapping as /v1: a definitive PSP refusal is a 409, not a 500.
+      rescue_from PspAdapter::Rejected do |e|
+        T.bind(self, Dashboard::Api::BaseController)
+        render_api_error(ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "psp_rejected",
+                                      message: e.message, retriable: false))
+      end
 
       private
 
@@ -112,6 +118,13 @@ module Dashboard
           target:, ip: request.remote_ip, user_agent: request.user_agent, request_id: request.request_id,
           metadata: metadata.merge("livemode" => current_session.livemode)
         )
+      end
+
+      # Every error answer passes here, so a refused write is audited once.
+      sig { params(error: ApiError).void }
+      def render_api_error(error)
+        audit_refusal(error)
+        super
       end
 
       sig { params(session_row: Session).void }

@@ -156,6 +156,26 @@ RSpec.describe "Outbound events: outbox, delivery, GET /v1/events, redeliver", t
     end
   end
 
+  describe "TC-H3-1: delivery timeout records an attempt row with duration_ms and sets next_attempt_at" do
+    it "records duration_ms and exponential back-off on a merchant timeout" do
+      create(:payment, merchant: merchant)
+      event = merchant.outbound_events.first
+
+      stub_request(:post, "https://merchant.test/hooks").to_raise(Faraday::TimeoutError.new("timeout"))
+
+      before_deliver = Time.current
+      DeliverOutboundEventsJob.perform_now
+
+      event.reload
+      attempt = event.delivery_attempts.sole
+      expect(attempt.duration_ms).to be >= 0
+      expect(attempt.error).to match(/Timeout/i)
+      expect(event.next_attempt_at).to be_within(5.seconds).of(
+        before_deliver + OutboundEvent::BACKOFF.call(1)
+      )
+    end
+  end
+
   describe "POST /v1/events/:id/redeliver" do
     it "moves a dead event back to pending and enqueues delivery; refuses a non-dead one" do
       create(:payment, merchant: merchant)

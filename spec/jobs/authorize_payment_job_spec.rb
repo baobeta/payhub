@@ -88,7 +88,7 @@ RSpec.describe AuthorizePaymentJob do
   end
 
   context "when the PSP times out and the charge never landed" do
-    it "moves to unknown, polls, gets 404, re-sends the authorize with the SAME reference" do
+    it "TC-B7-2: Nordpay moves to unknown, polls, gets 404, re-sends the authorize with the SAME reference" do
       adapter.script(:authorize, PspAdapter::TimedOut, result_recorded_during_authorize(:authorized))
       adapter.script(:fetch, result(:not_found))
 
@@ -130,10 +130,73 @@ RSpec.describe AuthorizePaymentJob do
     expect(adapter.calls[:authorize]).to be_empty
   end
 
+  context "with a PSP that does not deduplicate authorizes (Kiripay, DECISIONS #12)" do
+    let(:payment) { create(:payment, :vnd) }
+    let(:adapter) { FakePspAdapter.new(name: "kiripay", currencies: %w[VND], idempotent_authorize: false) }
+
+    before { allow(PspRouter).to receive(:adapter).with("kiripay").and_return(adapter) }
+
+    it "TC-B7-3: a 5xx retry looks the charge up before sending, and finds it: one POST only" do
+      adapter.script(:authorize, PspAdapter::Unavailable) # Kiripay DID create the charge, then answered 503
+      expect { described_class.perform_now(payment.id) }.to have_enqueued_job(described_class).with(payment.id)
+
+      adapter.script(:fetch, -> { result(:requires_action, psp_timestamp: adapter.received_at(:authorize) + 0.005) })
+      described_class.perform_now(payment.id) # the retry
+
+      expect(adapter.calls[:authorize].size).to eq(1)
+      expect(adapter.calls[:fetch]).to eq([payment.psp_reference])
+      expect(payment.reload.state).to eq("requires_action")
+    end
+
+    it "TC-B8-1: a rerun after a crash between the POST and the state write looks up instead of sending" do
+      payment.mark_sent! # the crashed run: sent, then died before saving any state
+      adapter.script(:fetch, result(:requires_action))
+
+      described_class.perform_now(payment.id)
+
+      expect(adapter.calls[:authorize]).to be_empty
+      expect(payment.reload.state).to eq("requires_action")
+    end
+
+    it "sends a never-sent payment as normal" do
+      adapter.script(:authorize, result(:requires_action))
+
+      described_class.perform_now(payment.id)
+
+      expect(adapter.calls[:authorize].size).to eq(1)
+      expect(adapter.calls[:fetch]).to be_empty
+      expect(payment.reload.state).to eq("requires_action")
+    end
+  end
+
   it "lets Unavailable propagate so ActiveJob retries with backoff and the same reference" do
     adapter.script(:authorize, PspAdapter::Unavailable)
 
     expect { described_class.perform_now(payment.id) }.to have_enqueued_job(described_class).with(payment.id)
     expect(payment.reload.state).to eq("pending")
+  end
+
+  describe "TC-C8-1: circuit open → job leaves payment pending, no PSP call" do
+    it "TC-C8-1: when the real PspCircuit is open the job retries without calling the PSP" do
+      # Open the real circuit by writing its sentinel key into the MemoryStore.
+      # PspCircuit::Open (a subclass of Unavailable) is raised before the adapter
+      # method body executes — so authorize is never called on the FakePspAdapter.
+      # The job's retry_on PspAdapter::Unavailable fires and re-enqueues.
+      store = PspCircuit.store
+      store.set("psp_circuit:nordpay:open_until", (Time.current + 30.seconds).to_f.to_s, ttl: 60)
+
+      # Wrap the FakePspAdapter so that authorize goes through the real circuit.
+      wrapped = adapter
+      allow(PspRouter).to receive(:adapter).with("nordpay").and_return(wrapped)
+      allow(wrapped).to receive(:authorize) do |pmt|
+        PspCircuit.call("nordpay") { raise "should not reach PSP" }
+      end
+
+      expect { described_class.perform_now(payment.id) }.to have_enqueued_job(described_class).with(payment.id)
+
+      expect(payment.reload.state).to eq("pending")
+    ensure
+      PspCircuit.store.del(%w[psp_circuit:nordpay:open_until psp_circuit:nordpay:probe])
+    end
   end
 end

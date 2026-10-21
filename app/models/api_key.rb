@@ -68,6 +68,12 @@ class ApiKey < ApplicationRecord
     end
   end
 
+  # Only a key that is live and not already on its way out from a previous
+  # roll (expires_at nil). Rolling would otherwise revive an expired key or
+  # stack a second replacement on the first.
+  sig { returns(T::Boolean) }
+  def rollable? = status == "active"
+
   sig { returns(T::Boolean) }
   def revoke! = update!(revoked_at: Time.current)
 

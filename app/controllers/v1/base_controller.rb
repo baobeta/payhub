@@ -47,6 +47,14 @@ module V1
                                     message: e.message, retriable: true))
     end
 
+    # The PSP refused a synchronous call (a Nordpay 409 not_voidable). Its
+    # answer is definitive: retrying the same request will not change it.
+    rescue_from PspAdapter::Rejected do |e|
+      T.bind(self, V1::BaseController)
+      render_api_error(ApiError.new(type: ApiError::Type::InvalidRequest, http_status: 409, code: "psp_rejected",
+                                    message: e.message, retriable: false))
+    end
+
     private
 
     sig { returns(Merchant) }

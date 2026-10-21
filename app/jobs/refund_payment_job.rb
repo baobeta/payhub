@@ -13,7 +13,6 @@ class RefundPaymentJob < ApplicationJob
   queue_as :payments
 
   retry_on PspAdapter::Unavailable, wait: :polynomially_longer, attempts: 5
-  discard_on PspAdapter::Rejected
 
   sig { params(refund_id: String).void }
   def perform(refund_id)
@@ -30,12 +29,38 @@ class RefundPaymentJob < ApplicationJob
       # by OUR reference. NotFound here means it never landed; the sweeper
       # (Phase 6) re-drives pending refunds, so we just leave it pending.
       adapter.fetch_refund(refund.psp_reference)
+    rescue PspAdapter::Rejected => e
+      rejected(refund, adapter, e)
     end
 
-    apply(refund, payment, result)
+    apply(refund, payment, result) if result
   end
 
   private
+
+  # A refusal is final only once a read confirms the refund never landed. A
+  # re-run's POST is refused when an earlier POST already refunded (Kiripay has
+  # no idempotency key: 409 already_refunded); failing that would void the
+  # reservation while the customer holds the money — paid twice (DECISIONS #16).
+  # A 2xx we could not parse (Rejected 200) is not a refusal at all: the PSP
+  # took it. Leave it pending, reservation held, and shout.
+  sig do
+    params(refund: Refund, adapter: PspAdapter, error: PspAdapter::Rejected)
+      .returns(T.nilable(PspAdapter::RefundResult))
+  end
+  def rejected(refund, adapter, error)
+    unless error.http_status.between?(400, 499)
+      Rails.logger.error({ event: "refund.unreadable_response", refund_id: refund.id, detail: error.message }.to_json)
+      return nil
+    end
+
+    confirmed = adapter.fetch_refund(refund.psp_reference)
+    return confirmed if confirmed.status == PspAdapter::RefundResult::Status::Succeeded
+
+    PspAdapter::RefundResult.new(status: PspAdapter::RefundResult::Status::Failed, psp_reference: refund.psp_reference,
+                                 psp_refund_id: nil, failure_code: "psp_rejected_#{error.http_status}",
+                                 psp_timestamp: Time.current)
+  end
 
   sig { params(refund: Refund, payment: Payment, result: PspAdapter::RefundResult).void }
   def apply(refund, payment, result)
@@ -51,7 +76,12 @@ class RefundPaymentJob < ApplicationJob
         Refund.transaction do
           Ledger.post_refund!(refund)
           refund.update!(state: "succeeded")
-          to = Ledger.refunded_minor(payment) >= Ledger.captured_minor(payment) ? :refunded : :part_refunded
+          captured = Ledger.captured_minor(payment)
+          # Terminal only once nothing more can be captured either: while
+          # capturing is open, refunding all of it so far is still part_refunded
+          # (DECISIONS #20; Payment#close_captures! finishes the job).
+          closed = payment.capturable_minor(captured).zero?
+          to = closed && Ledger.refunded_minor(payment) >= captured ? :refunded : :part_refunded
           # captured → part_refunded → refunded, or captured → refunded. Both drawn.
           payment.transition!(to, sort_key: result.psp_timestamp, source: "worker", metadata: meta) if payment.state != to.to_s
           OutboundEvent.emit!(payment, "refund.succeeded", "refund" => RefundSerializer.call(refund))

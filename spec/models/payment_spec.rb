@@ -106,4 +106,37 @@ RSpec.describe Payment do
       expect(create(:payment, :vnd).display_amount).to eq("500000")
     end
   end
+
+  describe "TC-B9-1: partial unique index rejects a second most_recent transition" do
+    it "TC-B9-1: raw insert of a second most_recent: true row is rejected by the unique index" do
+      # The partial unique index idx_transitions_most_recent enforces that only
+      # one transition per payment can have most_recent = true.
+      payment.transition!(:authorized, sort_key: t0, source: "worker")
+      expect(payment.transitions.where(most_recent: true).count).to eq(1)
+
+      expect do
+        ActiveRecord::Base.transaction(requires_new: true) do
+          ActiveRecord::Base.connection.execute(
+            "INSERT INTO payment_transitions (id, payment_id, to_state, from_state, most_recent, sort_key, source, metadata, created_at) " \
+            "VALUES (gen_random_uuid(), '#{payment.id}', 'failed', 'authorized', true, NOW(), 'test', '{}', NOW())"
+          )
+        end
+      end.to raise_error(ActiveRecord::RecordNotUnique, /idx_transitions_most_recent/)
+    end
+  end
+
+  describe "multicapture migration (DECISIONS #20)" do
+    it "TC-E3-18: closes capturing on every payment that was captured before the deploy" do
+      require Rails.root.join("db/migrate/20261020100001_add_multicapture_to_payments_and_captures")
+      captured = create(:payment, state: "captured")
+      part_refunded = create(:payment, state: "part_refunded")
+      refunded = create(:payment, state: "refunded")
+      authorized = create(:payment, state: "authorized")
+
+      AddMulticaptureToPaymentsAndCaptures.backfill!
+
+      expect([captured, part_refunded, refunded].map { |p| p.reload.captures_closed_at }).to all(be_present)
+      expect(authorized.reload.captures_closed_at).to be_nil
+    end
+  end
 end

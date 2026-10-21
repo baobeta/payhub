@@ -33,6 +33,22 @@ RSpec.describe KiripayAdapter do
     end
   end
 
+  describe "#refund (no idempotency key: never POST a refund that already landed)" do
+    it "TC-BUG2-5: a charge already refunded returns Succeeded without POSTing again" do
+      payment = create(:payment, :vnd, psp_reference: "ph_vnd1")
+      refund = create(:refund, payment: payment, amount_minor: payment.amount_minor)
+      stub_request(:get, "http://kiripay.test/charges").with(query: { merchant_reference: "ph_vnd1" })
+        .to_return(status: 200, headers: { "Content-Type" => "application/json" },
+                   body: { data: [charge.merge("status" => "refunded", "captured_at" => "2026-01-01T10:01:00.000Z")] }.to_json)
+      post_refund = stub_request(:post, %r{http://kiripay.test/charges/kp_1/refunds})
+
+      result = adapter.refund(refund)
+
+      expect(result.status).to eq(PspAdapter::RefundResult::Status::Succeeded)
+      expect(post_refund).not_to have_been_requested
+    end
+  end
+
   describe "#fetch (dedupe by merchant_reference — Kiripay has no idempotency)" do
     def stub_lookup(charges)
       stub_request(:get, "http://kiripay.test/charges").with(query: { merchant_reference: "ph_vnd1" })
@@ -65,6 +81,7 @@ RSpec.describe KiripayAdapter do
     it "declares capture-only, full-refund-only, SEA currencies" do
       expect(adapter.separate_authorize_and_capture?).to be false
       expect(adapter.supports_partial_refund?).to be false
+      expect(adapter.idempotent_authorize?).to be false
       expect(adapter.currencies).to eq(%w[VND THB IDR])
       expect { adapter.capture(payment, 1) }.to raise_error(PspAdapter::Rejected)
       expect { adapter.cancel(payment) }.to raise_error(PspAdapter::Rejected)
@@ -119,5 +136,19 @@ RSpec.describe KiripayAdapter do
     stub_request(:post, "http://kiripay.test/charges").to_raise(Faraday::SSLError.new("tls handshake failed"))
     expect { adapter.authorize(payment) }.to raise_error(Faraday::SSLError)
     expect(PspCall.sole).to have_attributes(outcome: "unreachable", http_status: nil)
+  end
+
+  describe "TC-B6-1: error mapping" do
+    it "TC-B6-1a: 5xx response → PspAdapter::Unavailable" do
+      stub_request(:post, "http://kiripay.test/charges").to_return(status: 503, body: "Service Unavailable")
+
+      expect { adapter.authorize(payment) }.to raise_error(PspAdapter::Unavailable, /kiripay 503/)
+    end
+
+    it "TC-B6-1b: read timeout → PspAdapter::TimedOut" do
+      stub_request(:post, "http://kiripay.test/charges").to_raise(Faraday::TimeoutError.new("read timed out"))
+
+      expect { adapter.authorize(payment) }.to raise_error(PspAdapter::TimedOut, /kiripay POST/)
+    end
   end
 end

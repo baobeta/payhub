@@ -11,6 +11,8 @@ class Payment < ApplicationRecord
   has_many :ledger_entries, dependent: :restrict_with_exception
 
   PSPS = %w[nordpay kiripay].freeze
+  # States a capture may be taken from while capturing is open (DECISIONS #20).
+  CAPTURABLE_STATES = %w[authorized captured part_refunded].freeze
 
   validates :amount_minor, numericality: { only_integer: true, greater_than: 0 }
   validates :currency, inclusion: { in: Currency::SUPPORTED }
@@ -49,6 +51,18 @@ class Payment < ApplicationRecord
     self.first_sent_at = self.class.where(id: id).pick(:first_sent_at)
     clear_attribute_changes([:first_sent_at]) # already persisted; with_lock refuses dirty records
     first_sent_at
+  end
+
+  # For a PSP that does not deduplicate (DECISIONS #12): claims the right to
+  # send the ONE authorize this reference will ever get. True only for the
+  # caller whose single-statement write found first_sent_at still empty, so a
+  # job and a sweeper racing on a never-sent payment cannot both POST.
+  sig { params(at: ActiveSupport::TimeWithZone).returns(T::Boolean) }
+  def claim_first_send!(at = Time.current)
+    claimed = self.class.where(id: id, first_sent_at: nil).update_all(first_sent_at: at) == 1
+    self.first_sent_at = self.class.where(id: id).pick(:first_sent_at)
+    clear_attribute_changes([:first_sent_at])
+    claimed
   end
 
   # Every new payment starts life with a `pending` transition row so the
@@ -123,6 +137,47 @@ class Payment < ApplicationRecord
 
   sig { returns(T::Boolean) }
   def terminal? = PaymentStateMachine.terminal?(state)
+
+  # What may still be captured (DECISIONS #20): nothing once capturing is
+  # closed or the state forbids it, otherwise authorized minus captured.
+  # `captured` defaults to the display cache, which is enough for a read;
+  # anything that moves money passes the ledger's figure.
+  sig { params(captured: Integer).returns(Integer) }
+  def capturable_minor(captured = captured_minor)
+    return 0 unless CAPTURABLE_STATES.include?(state) && captures_closed_at.nil?
+
+    [amount_minor - captured, 0].max
+  end
+
+  # Ends capturing for good: after a final capture, a zero-amount final
+  # capture, or authorization expiry. The uncaptured remainder is not released
+  # at the PSP; it lapses at the network (DECISIONS #14). When money was left
+  # uncaptured the merchant hears `payment.captures_closed`. A payment whose
+  # captured money is already fully refunded has nothing left in it, so it
+  # becomes `refunded` here rather than waiting for a refund that never comes.
+  # `unless_capture_in_flight`: the idle-expiry sweep picks payments with no
+  # capture in flight, but one may be requested between its query and this
+  # lock. The merchant's capture is activity, so it wins; we stay open.
+  sig { params(reason: String, source: String, unless_capture_in_flight: T::Boolean).void }
+  def close_captures!(reason:, source:, unless_capture_in_flight: false)
+    with_lock do
+      next if captures_closed_at
+      next if unless_capture_in_flight && captures.pending.exists?
+
+      captured = Ledger.captured_minor(self)
+      released = capturable_minor(captured)
+      update!(captures_closed_at: Time.current)
+      if released.positive?
+        OutboundEvent.emit!(self, "payment.captures_closed", "reason" => reason, "released_minor" => released)
+      end
+      next unless state == "part_refunded" && Ledger.refunded_minor(self) >= captured
+
+      # Our own decision, not a PSP report: dated now, but never before the
+      # newest PSP timestamp, or it would be recorded as stale.
+      transition!(:refunded, sort_key: [Time.current, transitions.maximum(:sort_key)].compact.max, source: source,
+                             metadata: { "reason" => reason })
+    end
+  end
 
   sig { returns(String) }
   def display_amount = Currency.to_display(amount_minor, currency)

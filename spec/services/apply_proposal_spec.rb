@@ -36,4 +36,17 @@ RSpec.describe ApplyProposal do
     expect(proposal.reload.applied_transfer_id).to be_present
     expect(Ledger.unbalanced_transfer_ids).to be_empty
   end
+
+  it "TC-N10-1: applying a payment_transition proposal writes exactly one outbound event for the new state" do
+    payment = create(:payment, state: "unknown")
+    proposal = create(:operator_proposal, payment:, proposed_by: maker)
+
+    expect do
+      described_class.call(proposal, approver:)
+    end.to change(OutboundEvent, :count).by(1)
+
+    event = OutboundEvent.order(:created_at).last
+    expect(event.event_type).to eq("payment.failed")
+    expect(event.payment_id).to eq(payment.id)
+  end
 end

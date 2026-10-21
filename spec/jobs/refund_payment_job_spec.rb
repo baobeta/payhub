@@ -19,6 +19,45 @@ RSpec.describe RefundPaymentJob do
     )
   end
 
+  describe "TC-F1-1: one full refund with default amount → refunded" do
+    it "TC-F1-1: a refund with no explicit amount on a €25 captured payment ends the payment refunded" do
+      # Default amount = full captured amount (€25.00 = 2500 minor)
+      refund = create(:refund, payment: payment, amount_minor: 2500)
+      adapter.script(:refund, outcome(:succeeded, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("succeeded")
+      expect(payment.reload.state).to eq("refunded")
+      expect(Ledger.refunded_minor(payment)).to eq(2500)
+    end
+  end
+
+  describe "TC-F10-1: refund outbound events carry refund id, amount_minor, and failure_code" do
+    it "TC-F10-1a: refund.succeeded event has refund.id and amount_minor" do
+      refund = create(:refund, payment: payment, amount_minor: 1000)
+      adapter.script(:refund, outcome(:succeeded, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      event = OutboundEvent.find_by!(payment: payment, event_type: "refund.succeeded")
+      expect(event.payload["refund"]["id"]).to eq(refund.id)
+      expect(event.payload["refund"]["amount_minor"]).to eq(1000)
+    end
+
+    it "TC-F10-1b: refund.failed event has refund.id, amount_minor, and failure_code" do
+      refund = create(:refund, payment: payment, amount_minor: 500)
+      adapter.script(:refund, outcome(:failed, refund.psp_reference, code: "insufficient_funds"))
+
+      described_class.perform_now(refund.id)
+
+      event = OutboundEvent.find_by!(payment: payment, event_type: "refund.failed")
+      expect(event.payload["refund"]["id"]).to eq(refund.id)
+      expect(event.payload["refund"]["amount_minor"]).to eq(500)
+      expect(event.payload["failure_code"]).to be_present
+    end
+  end
+
   it "books a succeeded partial refund and moves captured → part_refunded" do
     refund = create(:refund, payment: payment, amount_minor: 500)
     adapter.script(:refund, outcome(:succeeded, refund.psp_reference))
@@ -55,6 +94,89 @@ RSpec.describe RefundPaymentJob do
     # the reservation is voided: the merchant's money is available again
     expect(Ledger.reserved_minor(payment)).to eq(0)
     expect(Ledger.balances(payment.merchant)).to eq("EUR" => 2500)
+  end
+
+  describe "a refund the PSP rejects (bug 2)" do
+    it "TC-BUG2-1: fails the refund, voids its reservation and tells the merchant" do
+      refund = create(:refund, payment: payment, amount_minor: 1000)
+      adapter.script(:refund, PspAdapter::Rejected.new(422, "nordpay 422: refund exceeds captured"))
+      adapter.script(:fetch_refund, outcome(:not_found, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("failed") # the code travels on the refund.failed event
+      expect(Ledger.reserved_minor(payment)).to eq(0)
+      expect(Ledger.balances(payment.merchant)).to eq("EUR" => 2500)
+      event = OutboundEvent.find_by!(payment: payment, event_type: "refund.failed")
+      expect(event.payload["failure_code"]).to eq("psp_rejected_422")
+      expect(payment.reload.state).to eq("captured")
+    end
+
+    it "TC-BUG2-2: a Kiripay refund whose charge cannot be found fails cleanly, and is not re-driven" do
+      refund = create(:refund, payment: payment, amount_minor: 2500)
+      adapter.script(:refund, PspAdapter::Rejected.new(404, "kiripay charge not found"))
+      adapter.script(:fetch_refund, outcome(:not_found, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("failed")
+      expect(OutboundEvent.find_by!(event_type: "refund.failed").payload["failure_code"]).to eq("psp_rejected_404")
+      expect(Ledger.reserved_minor(payment)).to eq(0)
+      expect(Refund.where(state: "pending")).to be_empty # nothing left for the sweeper
+      described_class.perform_now(refund.id) # a stray re-run: no scripted answer, so a PSP call would raise
+      expect(adapter.calls[:refund].size).to eq(1)
+    end
+
+    it "TC-BUG2-3: a refusal of a refund that already landed (Kiripay 409 already_refunded on a re-run) succeeds, never fails" do
+      # The first POST landed but its answer was lost (Unavailable → retry, or a
+      # sweeper re-drive). Kiripay has no idempotency key, so the re-run's POST
+      # is refused. Failing it would void the reservation: the customer has the
+      # money AND the merchant gets it back — paid twice.
+      refund = create(:refund, payment: payment, amount_minor: 2500)
+      adapter.script(:refund, PspAdapter::Rejected.new(409, "kiripay 409: charge already refunded"))
+      adapter.script(:fetch_refund, outcome(:succeeded, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("succeeded")
+      expect(Ledger.refunded_minor(payment)).to eq(2500)
+      expect(Ledger.reserved_minor(payment)).to eq(0)
+      expect(Ledger.balances(payment.merchant)).to eq("EUR" => 0)
+      expect(OutboundEvent.where(payment: payment, event_type: "refund.failed")).to be_empty
+    end
+
+    it "TC-BUG2-4: a 2xx the adapter could not read (Rejected 200) leaves the refund pending, reservation held" do
+      refund = create(:refund, payment: payment, amount_minor: 1000)
+      adapter.script(:refund, PspAdapter::Rejected.new(200, "nordpay refund status unreadable"))
+
+      described_class.perform_now(refund.id)
+
+      expect(refund.reload.state).to eq("pending")
+      expect(Ledger.reserved_minor(payment)).to eq(1000)
+      expect(OutboundEvent.where(payment: payment, event_type: "refund.failed")).to be_empty
+    end
+  end
+
+  describe "refunds between partial captures (DECISIONS #20)" do
+    it "TC-E3-9: refunding everything captured while capturing is open is not terminal, until capturing closes" do
+      open = create(:payment, merchant: payment.merchant) # €25 authorized, €10 captured non-final
+      open.transition!(:authorized, sort_key: open.created_at + 1.second, source: "worker")
+      Ledger.record_capture!(open, 1000)
+      open.update_column(:captured_minor, 1000)
+      open.transition!(:captured, sort_key: open.created_at + 2.seconds, source: "worker")
+      refund = create(:refund, payment: open, amount_minor: 1000)
+      adapter.script(:refund, outcome(:succeeded, refund.psp_reference))
+
+      described_class.perform_now(refund.id)
+
+      expect(open.reload.state).to eq("part_refunded")
+      expect(open.capturable_minor(Ledger.captured_minor(open))).to eq(1500)
+
+      CapturePayment.call(open, amount_minor: 0, final: true)
+
+      expect(open.reload.state).to eq("refunded")
+      expect(open.captures_closed_at).to be_present
+    end
   end
 
   describe "two-phase settlement (DECISIONS #16)" do
