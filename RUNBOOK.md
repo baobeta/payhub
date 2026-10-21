@@ -155,7 +155,7 @@ AuditEvent.record!(action: "user.unlocked_by_support", result: "success", mercha
                    target: u, metadata: { "ticket" => "<TICKET-ID>" })
 ```
 
-Lost phone: they sign in with a recovery code, then regenerate codes on their Profile page. Lost both: an admin or the owner removes them and invites them again (a new invitation means a new authenticator enrolment).
+Lost phone: they sign in with a recovery code, then regenerate codes on their Profile page. Lost both: an admin or the owner resets their authenticator on the Team page (DECISIONS #25). They get an email link, valid once for 72 hours, and set up a new authenticator by opening it and entering their password; the password alone is refused like a wrong one. Link expired or used: reset again. A lost owner authenticator cannot be reset by another member; that is a support-assisted flow.
 
 ## Deploy stopped: merchant without an owner (planned work, before the deploy)
 
