@@ -41,6 +41,19 @@ RSpec.describe "OpenTelemetry production collector config" do # rubocop:disable 
     expect(pairs(config).map(&:last).grep(String).join("\n")).not_to include("development.log")
   end
 
+  # Docker's json-file driver splits a line over 16KB into chunks; only the
+  # last ends in "\n". Join them per file before anything parses the line.
+  it "recombines lines Docker split, before the file path it keys on is removed" do
+    recombine = operators.index { |op| op["type"] == "recombine" }
+    expect(recombine).not_to be_nil
+    expect(operators[recombine]).to include("combine_field" => "body", "combine_with" => "",
+                                            "is_last_entry" => 'body matches "\n$"',
+                                            "source_identifier" => 'attributes["log.file.path"]',
+                                            "max_log_size" => "1MiB", "overwrite_with" => "oldest")
+    expect(recombine).to eq(operators.index { |op| op["type"] == "move" && op["from"] == "attributes.log" } + 1)
+    expect(recombine).to be < operators.index { |op| op["field"] == 'attributes["log.file.path"]' }
+  end
+
   it "archives no redundant attributes: the raw time string or the file path" do
     removed = operators.filter_map { |op| op["field"] if op["type"] == "remove" }
     expect(removed).to include("attributes.time", 'attributes["log.file.path"]')

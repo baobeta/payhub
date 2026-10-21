@@ -78,6 +78,17 @@ receivers:
       - type: move
         from: attributes.log
         to: body
+      # Docker splits a line over 16KB into chunks and only the last ends in
+      # "\n"; join them per file (keeping the first chunk's timestamp and
+      # attributes). Up to 1MiB; past that, what has arrived is flushed and the
+      # rest of the line starts a new record.
+      - type: recombine
+        combine_field: body
+        combine_with: ""
+        is_last_entry: 'body matches "\n$"'
+        source_identifier: attributes["log.file.path"]
+        max_log_size: 1MiB
+        overwrite_with: oldest
       - type: move
         from: attributes.stream
         to: attributes["log.iostream"]
