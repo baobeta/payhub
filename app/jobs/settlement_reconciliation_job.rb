@@ -17,6 +17,8 @@
 #      problem, logged at ERROR and counted, and never booked.
 #   4. Flag captures the PSP has not settled within SETTLE_WITHIN.
 #
+# A PSP with no report skips 1-3, logs settlement.no_report, and still gets 4.
+#
 # It never fixes money. It finds the disagreement and makes it loud.
 class SettlementReconciliationJob < ApplicationJob
   extend T::Sig
@@ -30,7 +32,13 @@ class SettlementReconciliationJob < ApplicationJob
     day = date ? Date.iso8601(date) : Date.current.yesterday
     Payment::PSPS.each do |psp_name|
       lines = PspRouter.adapter(psp_name).settlement_report(day)
-      next if lines.nil? # this PSP publishes no report
+      # A PSP that publishes no report (Kiripay) still owes us its captures:
+      # with nothing to match, the receivable check is the whole reconciliation
+      # (Stripe: reconcile from transaction history; DECISIONS #18, TEST_CASES J5).
+      if lines.nil?
+        Rails.logger.info({ event: "settlement.no_report", psp: psp_name, date: day.iso8601 }.to_json)
+        lines = []
+      end
 
       report = Hash.new(0)
       lines.each { |line| report[ingest(psp_name, day, line)] += 1 }

@@ -248,7 +248,7 @@ The failover rule comes from the orchestrators that do route across PSPs. Spreed
 
 **In plain words:** Like checking your bank statement against your receipts: every day we compare what the card company actually paid with what our books say.
 
-**Decision:** `SettlementReconciliationJob` runs daily after the API reconciliation. For every PSP that publishes a settlement report (Nordpay: a CSV per UTC day, one line per capture net of fee and per refund), it ingests each line exactly once, matches it to our books, and books the matched ones: a capture clears `psp_receivable` into `psp_payouts` and `psp_fees`; a refund clears `refunds_paid` against `psp_payouts`. Lines that don't add up (net ≠ gross − fee), match nothing, are in another currency, settle more than the ledger captured, pay a refund our books still call pending or for another amount, or settle a refund another line already settled are stored with the problem, logged at ERROR, counted, and never booked; a booking the ledger refuses is flagged the same way and the run carries on. Several capture lines for one payment are normal (one per capture). Captures not settled within 3 days are flagged. Kiripay publishes no report we can fetch and is skipped, explicitly.
+**Decision:** `SettlementReconciliationJob` runs daily after the API reconciliation. For every PSP that publishes a settlement report (Nordpay: a CSV per UTC day, one line per capture net of fee and per refund), it ingests each line exactly once, matches it to our books, and books the matched ones: a capture clears `psp_receivable` into `psp_payouts` and `psp_fees`; a refund clears `refunds_paid` against `psp_payouts`. Lines that don't add up (net ≠ gross − fee), match nothing, are in another currency, settle more than the ledger captured, pay a refund our books still call pending or for another amount, or settle a refund another line already settled are stored with the problem, logged at ERROR, counted, and never booked; a booking the ledger refuses is flagged the same way and the run carries on. Several capture lines for one payment are normal (one per capture). Captures not settled within 3 days are flagged. Kiripay publishes no report we can fetch: its run logs `settlement.no_report` and still flags its captures older than 3 days, the check Stripe falls back to without a report ([Stripe: payout reconciliation](https://docs.stripe.com/payouts/reconciliation)).
 
 **Rejected:** relying on the daily API check alone (#6's ReconciliationJob); booking discrepancies anyway "so the books balance"; matching payouts against the bank statement (the third leg of a three-way reconciliation) — out of scope, recorded here.
 
@@ -258,7 +258,7 @@ Clearing is the point of the accounts: `psp_receivable` rises at capture and fal
 
 **Not handled:** the bank leg (payout ↔ deposit), chargebacks, and fee disputes. The accounts are shaped for them — `psp_payouts` is exactly what a bank statement would be matched against — but the data isn't there.
 
-**Trade-off:** Discrepancies surface a day late, not in real time. Kiripay is not reconciled at all, and every unmatched line needs a person, which costs operations time.
+**Trade-off:** Discrepancies surface a day late, not in real time. Kiripay is checked only for captures that never settle, never line by line, and every unmatched line needs a person, which costs operations time.
 
 ## 19. A seeded, deterministic simulation holds the whole system to the PSP's truth
 
