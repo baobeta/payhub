@@ -281,8 +281,10 @@ The collector cannot refuse to start without a variable, so the deploy must set 
 |---|---|
 | `CLICKHOUSE_ENDPOINT`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` | ClickHouse, e.g. `tcp://clickhouse.internal:9000?dial_timeout=10s` |
 | `LOG_ARCHIVE_REGION`, `LOG_ARCHIVE_BUCKET` | The archive bucket. AWS credentials come from the default chain (instance role or `AWS_*`) |
-| `WEB_METRICS_TARGET`, `WORKER_METRICS_TARGET` | `host:port` of web's and the worker's `/metrics` (the worker serves on 9394) |
+| `WEB_METRICS_TARGET`, `WORKER_METRICS_TARGET` | `host:port` of web's and the worker's `/metrics` (the worker serves on 9394). One container each, never a load-balanced address (see below) |
 | `METRICS_TOKEN` | The same value web and worker have. Unset or different, every scrape gets 401: `up` is 0 and the metrics panels go empty |
+
+**One scrape target per container.** Each web and worker container keeps its own metrics, so a target behind a load balancer answers from a different container on each scrape; the counters then seem to drop and rise, and the counter-based alerts page for nothing. The shipped config has one target per service, so it assumes one web and one worker container per host, with a collector on each host. With more containers, list each one's `host:port` in that job's `targets` (`observability/otel-collector.production.yaml`), or use service discovery that returns every container (`docker_sd_configs`, `ecs`/`kubernetes_sd_configs`).
 
 In any production compose file, write `METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}` (for the collector, web and worker, as above) so a missing token stops the deploy instead of the scrape.
 

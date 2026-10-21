@@ -38,6 +38,15 @@ receivers:
 
   prometheus:
     config:
+      # One target per container, never a load-balanced address: each web and
+      # worker container has its own metrics store, so scrapes that alternate
+      # between containers see each counter jump back and forth, and the
+      # counter rules page on the drops. As shipped (one variable per job) this
+      # assumes one web and one worker container per host, each collector
+      # scraping its own host. With more, list every container's host:port
+      # under `targets`, or replace static_configs with service discovery
+      # (docker_sd_configs, ecs/kubernetes_sd_configs) that yields one target
+      # per container. RUNBOOK "Logs and retention".
       scrape_configs:
         - job_name: payhub-web
           scrape_interval: 15s
