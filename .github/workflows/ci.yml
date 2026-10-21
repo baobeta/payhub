@@ -107,22 +107,26 @@ jobs:
           echo "::endgroup::"
           bundle exec rspec "${files[@]}"
 
-  # The one required gate: green only when the static gates and every shard
-  # are. A skipped job would count as passing, so it runs unless the workflow
-  # was cancelled and checks both results itself.
+  # The one required gate: green only when the static gates, every shard and
+  # the production image are. A skipped job would count as passing, so it runs
+  # unless the workflow was cancelled and checks every result itself.
   check:
-    needs: [static, rspec]
+    needs: [static, rspec, image]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
-      - name: Static gates and all rspec shards passed
+      - name: Static gates, all rspec shards and the image passed
         run: |
-          echo "static: ${{ needs.static.result }}, rspec: ${{ needs.rspec.result }}"
-          test "${{ needs.static.result }}" = success && test "${{ needs.rspec.result }}" = success
+          echo "static: ${{ needs.static.result }}, rspec: ${{ needs.rspec.result }}, image: ${{ needs.image.result }}"
+          test "${{ needs.static.result }}" = success && test "${{ needs.rspec.result }}" = success \
+            && test "${{ needs.image.result }}" = success
 
   # The production image (Dockerfile, target production) builds, runs as
   # non-root and boots in production: web answers /healthz and guards /metrics,
-  # the worker boots from the same image. Real-looking config, no TLS.
+  # the worker boots from the same image. Real-looking config, no TLS. The
+  # database is set up as RUNBOOK "Database roles" says: db/roles.sql as the
+  # superuser, migrations as payhub_owner in a one-off container, web and
+  # worker as payhub_app.
   image:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -166,13 +170,21 @@ jobs:
 
       # Every variable production requires (README "Configuration"), with
       # throwaway values that are not the simulators' defaults. Host network:
-      # the services above listen on localhost.
+      # the services above listen on localhost. DATABASE_URL is payhub_app's;
+      # only the migration container gets the owner's URL.
       - name: Production environment
         run: |
+          app_pw="$(openssl rand -hex 16)"
+          owner_pw="$(openssl rand -hex 16)"
+          {
+            echo "APP_DB_PASSWORD=$app_pw"
+            echo "OWNER_DB_PASSWORD=$owner_pw"
+            echo "OWNER_DATABASE_URL=postgres://payhub_owner:$owner_pw@localhost:5432/payhub_production"
+          } >> "$GITHUB_ENV"
           {
             echo "SECRET_KEY_BASE=$(openssl rand -hex 64)"
             echo "APP_HOST=ci.payhub.invalid"
-            echo "DATABASE_URL=postgres://payhub:payhub@localhost:5432/payhub_production"
+            echo "DATABASE_URL=postgres://payhub_app:$app_pw@localhost:5432/payhub_production"
             echo "REDIS_URL=redis://localhost:6379/0"
             echo "AR_ENCRYPTION_PRIMARY_KEY=$(openssl rand -hex 16)"
             echo "AR_ENCRYPTION_DETERMINISTIC_KEY=$(openssl rand -hex 16)"
@@ -187,11 +199,48 @@ jobs:
             echo "RAILS_FORCE_SSL=false"
           } > "$RUNNER_TEMP/app.env"
 
+      # psql from the server's own image, as the superuser the service creates.
+      - name: Database roles (db/roles.sql as the superuser)
+        run: |
+          cat > "$RUNNER_TEMP/psql" <<'SH'
+          #!/bin/sh
+          exec docker run --rm -i --network host -e PGPASSWORD=payhub -v "$GITHUB_WORKSPACE/db:/db:ro" \
+            postgres:16-alpine psql -h localhost -U payhub -v ON_ERROR_STOP=1 "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/psql"
+          "$RUNNER_TEMP/psql" -d postgres -c "CREATE DATABASE payhub_production"
+          "$RUNNER_TEMP/psql" -d payhub_production -1 -f /db/roles.sql
+          "$RUNNER_TEMP/psql" -d payhub_production \
+            -c "ALTER ROLE payhub_owner PASSWORD '$OWNER_DB_PASSWORD'" -c "ALTER ROLE payhub_app PASSWORD '$APP_DB_PASSWORD'"
+
+      - name: The entrypoint refuses to migrate and then serve
+        run: |
+          set +e
+          docker run --rm --env-file "$RUNNER_TEMP/app.env" -e RUN_MIGRATIONS=true payhub:ci > "$RUNNER_TEMP/refuse.log" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/refuse.log"
+          test "$code" = 1
+          grep -q "refusing RUN_MIGRATIONS=true with a server command" "$RUNNER_TEMP/refuse.log"
+
+      # A one-off container whose command exits, as a release task or init
+      # container would run it; then roles.sql again, which makes the tables
+      # db:prepare created for itself (schema_migrations, ar_internal_metadata)
+      # read-only to payhub_app.
+      - name: Migrate as payhub_owner in a one-off container
+        run: |
+          docker run --rm --network host --env-file "$RUNNER_TEMP/app.env" \
+            -e RUN_MIGRATIONS=true -e DATABASE_URL="$OWNER_DATABASE_URL" payhub:ci true
+          "$RUNNER_TEMP/psql" -d payhub_production -1 -f /db/roles.sql
+          owner="$("$RUNNER_TEMP/psql" -d payhub_production -tAc "SELECT tableowner FROM pg_tables WHERE tablename = 'ledger_entries'")"
+          echo "ledger_entries owner: $owner"
+          test "$owner" = payhub_owner
+
       # Two Puma workers, as production runs: every later check (/metrics
       # included) is answered by whichever worker gets the request.
-      - name: Web boots (migrating a fresh database) and answers /healthz
+      - name: Web boots as payhub_app and answers /healthz
         run: |
-          docker run -d --name web --network host --env-file "$RUNNER_TEMP/app.env" -e RUN_MIGRATIONS=true -e WEB_CONCURRENCY=2 payhub:ci
+          docker run -d --name web --network host --env-file "$RUNNER_TEMP/app.env" -e OTEL_SERVICE_NAME=payhub-web -e WEB_CONCURRENCY=2 payhub:ci
           for _ in $(seq 60); do
             curl -sf localhost:3000/healthz && exit 0
             sleep 1
@@ -199,6 +248,12 @@ jobs:
           echo "web did not answer /healthz in 60s"
           docker logs web
           exit 1
+
+      - name: Web's database user is payhub_app
+        run: |
+          user="$(docker exec web bin/rails runner 'puts "db_user=#{ActiveRecord::Base.connection.select_value("SELECT current_user")}"' | grep '^db_user=')"
+          echo "$user"
+          test "$user" = db_user=payhub_app
 
       - name: WEB_CONCURRENCY runs Puma in cluster mode
         run: |
@@ -261,7 +316,7 @@ jobs:
       - name: With force_ssl on, /healthz is not redirected
         run: |
           grep -v '^RAILS_FORCE_SSL=' "$RUNNER_TEMP/app.env" > "$RUNNER_TEMP/app-ssl.env"
-          docker run -d --name web-ssl --network host --env-file "$RUNNER_TEMP/app-ssl.env" -e PORT=3001 payhub:ci
+          docker run -d --name web-ssl --network host --env-file "$RUNNER_TEMP/app-ssl.env" -e OTEL_SERVICE_NAME=payhub-web -e PORT=3001 payhub:ci
           for _ in $(seq 60); do
             curl -sf localhost:3001/healthz >/dev/null && break
             sleep 1
@@ -275,7 +330,7 @@ jobs:
 
       - name: Worker boots from the same image
         run: |
-          docker run -d --name worker --network host --env-file "$RUNNER_TEMP/app.env" payhub:ci bundle exec sidekiq
+          docker run -d --name worker --network host --env-file "$RUNNER_TEMP/app.env" -e OTEL_SERVICE_NAME=payhub-worker payhub:ci bundle exec sidekiq
           for _ in $(seq 60); do
             docker logs worker 2>&1 | grep -q "Worker metrics on" && exit 0
             sleep 1
