@@ -59,5 +59,12 @@ module Payhub
     config.active_record.schema_format = :sql
 
     config.active_job.queue_adapter = :sidekiq
+
+    # The public demo needs no login, so production keeps it off unless
+    # DEMO_ENABLED=true. Same rule as PayhubConfig.demo_enabled_default, which
+    # the autoloader cannot provide this early in boot.
+    config.x.demo_enabled = ENV["DEMO_ENABLED"].then do |flag|
+      flag.nil? ? !Rails.env.production? : flag == "true"
+    end
   end
 end

@@ -140,15 +140,19 @@ Rails.application.routes.draw do
   end
 
   # The public demo (use cases D-01..D-06): no login, one merchant, its test
-  # twin. Deliberately outside /dashboard and /ops.
-  namespace :demo do
-    namespace :api, defaults: { format: :json } do
-      resources :payments, only: %i[create show] do
-        post :approve_wallet, on: :member
+  # twin. Deliberately outside /dashboard and /ops. Off in production unless
+  # DEMO_ENABLED=true (config.x.demo_enabled), checked per request.
+  demo_enabled = ->(_request) { Rails.configuration.x.demo_enabled }
+  constraints(demo_enabled) do
+    namespace :demo do
+      namespace :api, defaults: { format: :json } do
+        resources :payments, only: %i[create show] do
+          post :approve_wallet, on: :member
+        end
+        resources :chaos_runs, only: %i[create show]
+        get "ledger_summary", to: "ledger#show"
+        post "reset", to: "resets#create"
       end
-      resources :chaos_runs, only: %i[create show]
-      get "ledger_summary", to: "ledger#show"
-      post "reset", to: "resets#create"
     end
   end
 
@@ -156,5 +160,7 @@ Rails.application.routes.draw do
   # Keep these LAST so /dashboard/api/* and /ops/api/* routes above them match first.
   get "dashboard(/*path)", to: "dashboard/shell#show", format: false
   get "ops(/*path)", to: "ops/shell#show", format: false
-  get "demo(/*path)", to: "demo/shell#show", format: false
+  constraints(demo_enabled) do
+    get "demo(/*path)", to: "demo/shell#show", format: false
+  end
 end
