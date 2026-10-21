@@ -11,7 +11,9 @@ module MetricsAuth
   def self.authorized?(authorization, token: ENV["METRICS_TOKEN"])
     return !Rails.env.production? if token.blank?
 
-    given = authorization.to_s.delete_prefix("Bearer ")
-    ActiveSupport::SecurityUtils.secure_compare(given, token)
+    header = authorization.to_s
+    return false unless header.start_with?("Bearer ")
+
+    ActiveSupport::SecurityUtils.secure_compare(header.delete_prefix("Bearer "), token)
   end
 end

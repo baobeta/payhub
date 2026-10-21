@@ -47,6 +47,12 @@ RSpec.describe "Observability: /metrics, /healthz, and one JSON line per request
       expect(response).to have_http_status(:unauthorized)
     end
 
+    it "PR-3: a token without the Bearer scheme is 401" do
+      with_metrics_token("s3cret")
+      get "/metrics", headers: { "Authorization" => "s3cret" }
+      expect(response).to have_http_status(:unauthorized)
+    end
+
     it "PR-3: with the right bearer token the scrape works" do
       with_metrics_token("s3cret")
       get "/metrics", headers: { "Authorization" => "Bearer s3cret" }
