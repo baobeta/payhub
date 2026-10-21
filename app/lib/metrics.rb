@@ -63,6 +63,18 @@ module Metrics
       g.set(value, labels: labels)
     end
 
+    # Called at boot (config/initializers/prometheus.rb). A scrape lists only
+    # the metrics registered in the process serving it (then reads every
+    # process's files for them), so a counter raised only in another Puma
+    # worker or Sidekiq process would otherwise be missing. Gauges stay lazy:
+    # registering an unlabelled one writes 0 for this process, which as the
+    # :most_recent value would hide what the sweeper set; each process that
+    # serves a scrape sets its own gauges (MetricsController, the sweepers).
+    sig { void }
+    def register_counters!
+      COUNTERS.each_key { |name| counter(name) }
+    end
+
     # Called at boot (config/initializers/prometheus.rb). With Puma workers
     # and no file store, each scrape sees only the worker that answered it.
     sig { params(web_concurrency: T.nilable(String), multiproc_dir: T.nilable(String)).void }

@@ -15,6 +15,8 @@ if (dir = ENV["PROMETHEUS_MULTIPROC_DIR"].presence)
   Prometheus::Client.config.data_store = Prometheus::Client::DataStores::DirectFileStore.new(dir:)
 end
 
+# After the store is set (above), in every process: web and Sidekiq.
 Rails.application.config.after_initialize do
+  Metrics.register_counters!
   Metrics.warn_if_per_process_in_production
 end

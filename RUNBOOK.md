@@ -146,6 +146,8 @@ Every verifier accepts a list of secrets, so no step below drops a webhook (DECI
 
 `PROMETHEUS_MULTIPROC_DIR` makes every process of a service (each Puma worker, each Sidekiq process) write its metrics to files in that directory; the service's `/metrics` sums the counters and reports each gauge's most recently set value. Without it, each process keeps its own and a scrape sees only the one that answered; production logs a warning at boot when `WEB_CONCURRENCY` is set and the directory is not.
 
+Every counter is registered when a process boots, because a scrape lists only the metrics registered in the process serving it: that is what lets a counter raised in another Puma worker, a Sidekiq job or a `bin/rails runner` show up in every scrape of that service. Gauges are not registered at boot (registering one would write 0 as its newest value and hide what the sweeper set); the process serving each scrape sets them itself, web on every scrape and Sidekiq on every sweep. So a worker scrape shows its gauges only once a sweep has run since it started.
+
 - **One directory per service**, on the container's own disk, never a volume shared between containers or hosts.
 - **Wipe it when the process starts** (today the Docker Compose commands do `rm -rf`; the production image's entrypoint will).
 

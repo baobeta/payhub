@@ -38,6 +38,77 @@ RSpec.describe Metrics do
     Prometheus::Client.config.data_store = original_store
   end
 
+  describe "PR-4: counters registered at boot" do
+    # A private store directory and registry, as a freshly booted process has.
+    def with_private_store
+      original_store = Prometheus::Client.config.data_store
+      Dir.mktmpdir("prometheus-boot") do |dir|
+        Prometheus::Client.config.data_store = Prometheus::Client::DataStores::DirectFileStore.new(dir:)
+        stub_const("Metrics::REGISTRY", Prometheus::Client::Registry.new)
+        yield
+      end
+    ensure
+      Prometheus::Client.config.data_store = original_store
+    end
+
+    def in_child(&)
+      Process.wait2(fork do
+        yield
+        exit!(0)
+      end).last.success?
+    end
+
+    def scrape = Prometheus::Client::Formats::Text.marshal(Metrics::REGISTRY)
+
+    # A scrape lists only metrics registered in the process serving it, then
+    # reads every process's files for them.
+    it "PR-4: a counter only another process incremented reaches this process's scrape" do
+      skip "needs fork" unless Process.respond_to?(:fork)
+
+      with_private_store do
+        described_class.register_counters!
+        child_ok = in_child { described_class.increment(:late_success, psp: "kiripay") }
+
+        expect(child_ok).to be(true)
+        expect(scrape).to include('payhub_late_success_total{psp="kiripay"} 1.0')
+      end
+    end
+
+    it "PR-4: registering twice is harmless and registers every counter once" do
+      with_private_store do
+        described_class.register_counters!
+        expect { described_class.register_counters! }.not_to raise_error
+        expect(Metrics::REGISTRY.metrics.map(&:name))
+          .to match_array(described_class::COUNTERS.keys.map { |name| :"payhub_#{name}_total" })
+      end
+    end
+
+    it "PR-4: an unlabelled counter reads 0 before any increment" do
+      with_private_store do
+        described_class.register_counters!
+        expect(scrape).to include("payhub_ledger_imbalance_detected_total 0.0")
+      end
+    end
+
+    # Registering an unlabelled gauge writes 0 for this process, and with
+    # :most_recent that 0 would hide the value the sweeper set until it next
+    # ran, so a console or runner booting next to Sidekiq must not register gauges.
+    it "PR-4: another process booting does not reset a gauge" do
+      skip "needs fork" unless Process.respond_to?(:fork)
+
+      with_private_store do
+        described_class.gauge(:unknown_state_payments, 5)
+        child_ok = in_child do
+          stub_const("Metrics::REGISTRY", Prometheus::Client::Registry.new)
+          described_class.register_counters!
+        end
+
+        expect(child_ok).to be(true)
+        expect(scrape).to include("payhub_unknown_state_payments 5.0")
+      end
+    end
+  end
+
   describe "PR-4: boot warning when Puma forks workers without the file store" do
     before { allow(Rails.logger).to receive(:warn) }
 
