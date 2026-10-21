@@ -61,3 +61,8 @@ node_modules
 # Playwright
 /test-results/
 /playwright-report/
+
+# dbml-erd render output (generated)
+docs/*.erd.html
+docs/*.erd.svg
+docs/*.model.json

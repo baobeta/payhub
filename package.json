@@ -6,7 +6,10 @@
     "lint": "eslint --max-warnings=0 app/frontend e2e playwright.config.ts",
     "test": "vitest run",
     "build": "vite build",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "erd": "npm --prefix tools/dbml-erd run edit",
+    "erd:build": "npm --prefix tools/dbml-erd run build",
+    "erd:install": "npm --prefix tools/dbml-erd install"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
