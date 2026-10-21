@@ -43,6 +43,12 @@ gem "opentelemetry-instrumentation-all", "~> 0.80"
 # stripped to no-ops in production via T::Configuration (see initializer).
 gem "sorbet-runtime"
 
+# Refuses migrations that would lock a busy table (an index built without
+# CONCURRENTLY, a column rewrite) and sets lock and statement timeouts on the
+# migration connection. Default group: production runs the migrations
+# (RUN_MIGRATIONS=true), so the checks and timeouts must load there too.
+gem "strong_migrations", "~> 2.0"
+
 group :development, :test do
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
   gem "rspec-rails", "~> 8.0"
