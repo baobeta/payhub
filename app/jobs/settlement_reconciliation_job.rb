@@ -174,7 +174,7 @@ class SettlementReconciliationJob < ApplicationJob
     # A PSP with no report (Kiripay) never clears its receivable, so this list
     # only grows. Log the first few in detail and the size once, every run:
     # counts and exceptions per run, not one line per item forever.
-    unsettled.first(DETAIL_LIMIT).each do |payment_id, outstanding|
+    unsettled.to_a.take(DETAIL_LIMIT).each do |payment_id, outstanding|
       Rails.logger.warn({ event: "settlement.unsettled_capture", psp: psp_name, payment_id: payment_id,
                           outstanding_minor: outstanding.to_i }.to_json)
     end
