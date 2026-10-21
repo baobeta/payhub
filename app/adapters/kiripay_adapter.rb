@@ -14,8 +14,8 @@ class KiripayAdapter < PspAdapter
 
   # webhook_secrets: current first; more than one only while rotating (#15).
   sig { params(base_url: String, api_key: String, webhook_secrets: T::Array[String]).void }
-  def initialize(base_url: ENV.fetch("KIRIPAY_URL", "http://localhost:4002"),
-                 api_key: ENV.fetch("KIRIPAY_API_KEY", "kp_test_key"),
+  def initialize(base_url: PspEnv.fetch("KIRIPAY_URL", "http://localhost:4002"),
+                 api_key: PspEnv.fetch("KIRIPAY_API_KEY", "kp_test_key"),
                  webhook_secrets: WebhookSignature.secrets_from_env("KIRIPAY_WEBHOOK_SECRETS", "KIRIPAY_WEBHOOK_SECRET", "kp_whsec_test"))
     @webhook_secrets = webhook_secrets
     @conn = T.let(

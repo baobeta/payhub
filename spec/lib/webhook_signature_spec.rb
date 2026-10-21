@@ -47,4 +47,16 @@ RSpec.describe WebhookSignature do
     stub_const("ENV", ENV.to_h.except("X_SECRETS").merge("X_SECRET" => "single"))
     expect(described_class.secrets_from_env("X_SECRETS", "X_SECRET", "d")).to eq(["single"])
   end
+
+  it "PR-2: in production a missing single secret raises instead of using the simulator default" do
+    allow(Rails.env).to receive(:production?).and_return(true)
+    stub_const("ENV", ENV.to_h.except("X_SECRETS", "X_SECRET"))
+    expect { described_class.secrets_from_env("X_SECRETS", "X_SECRET", "d") }.to raise_error(PspEnv::Missing, /X_SECRET/)
+  end
+
+  it "PR-2: in production the secret list wins and the single-secret variable is not required" do
+    allow(Rails.env).to receive(:production?).and_return(true)
+    stub_const("ENV", ENV.to_h.except("X_SECRET").merge("X_SECRETS" => "new, old"))
+    expect(described_class.secrets_from_env("X_SECRETS", "X_SECRET", "d")).to eq(%w[new old])
+  end
 end
