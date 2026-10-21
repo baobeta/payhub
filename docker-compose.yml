@@ -26,11 +26,12 @@ services:
       retries: 10
 
   web:
-    build: .
+    # The dev target of the Dockerfile; its entrypoint (bin/docker-entrypoint)
+    # wipes PROMETHEUS_MULTIPROC_DIR at every start, or a restart keeps the old values.
+    build: { context: ., target: dev }
     # rm the pid file first: the bind mount preserves it across container
-    # restarts, and Puma refuses to boot if it sees one. The metrics files
-    # (PROMETHEUS_MULTIPROC_DIR) go too, or a restart keeps the old values.
-    command: sh -c "rm -f tmp/pids/server.pid && rm -rf $$PROMETHEUS_MULTIPROC_DIR && bin/rails server -b 0.0.0.0 -p 3000"
+    # restarts, and Puma refuses to boot if it sees one.
+    command: sh -c "rm -f tmp/pids/server.pid && exec bin/rails server -b 0.0.0.0 -p 3000"
     ports:
       - "${WEB_PORT:-3000}:3000" # host port; set WEB_PORT in .env if 3000 is taken
     environment: &app_env
@@ -77,7 +78,7 @@ services:
       - /rails/node_modules # keep the image's Linux node_modules, not the host's
 
   vite:
-    build: .
+    build: { context: ., target: dev }
     command: bin/vite dev
     environment:
       VITE_RUBY_HOST: 0.0.0.0
@@ -88,10 +89,10 @@ services:
       - /rails/node_modules
 
   worker:
-    build: .
-    # Wipe the metrics files at start, as web does. exec keeps Sidekiq as PID 1
-    # so it still gets the stop signal and shuts down cleanly.
-    command: sh -c "rm -rf $$PROMETHEUS_MULTIPROC_DIR && exec bundle exec sidekiq"
+    # Same image as web; the entrypoint wipes this service's metrics directory
+    # and execs the command, so Sidekiq is PID 1 and gets the stop signal.
+    build: { context: ., target: dev }
+    command: bundle exec sidekiq
     # App env (see &app_env above) plus a key of its own: ChaosRun drives the
     # real HTTP API from a job (D-04), so the demo's chaos button needs to
     # reach the web process, not localhost.

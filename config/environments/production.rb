@@ -19,8 +19,11 @@ Rails.application.configure do
   # key such as config/credentials/production.key. This key is used to decrypt credentials (and other encrypted files).
   # config.require_master_key = true
 
-  # Disable serving static files from `public/`, relying on NGINX/Apache to do so instead.
-  # config.public_file_server.enabled = false
+  # Rails serves public/ itself (public_file_server is on by default), Vite's
+  # bundles in public/vite included: the image is self-contained, with no CDN
+  # or NGINX to keep in step with each deploy. The bundles are fingerprinted,
+  # so browsers and any CDN placed in front may cache them for a year.
+  config.public_file_server.headers = { "cache-control" => "public, max-age=#{1.year.to_i}" }
 
   # Enable serving of images, stylesheets, and JavaScripts from an asset server.
   # config.asset_host = "http://assets.example.com"
@@ -34,7 +37,9 @@ Rails.application.configure do
   # config.assume_ssl = true
 
   # Force all access to the app over SSL, use Strict-Transport-Security, and use secure cookies.
-  config.force_ssl = true
+  # TLS is terminated at the load balancer. RAILS_FORCE_SSL=false is for
+  # running the image without TLS (CI's boot test); never set it behind a real host.
+  config.force_ssl = ENV.fetch("RAILS_FORCE_SSL", "true") == "true"
 
   # Skip http-to-https redirect for the default health check endpoint.
   # config.ssl_options = { redirect: { exclude: ->(request) { request.path == "/up" } } }

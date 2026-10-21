@@ -149,7 +149,7 @@ Every verifier accepts a list of secrets, so no step below drops a webhook (DECI
 Every counter is registered when a process boots, because a scrape lists only the metrics registered in the process serving it: that is what lets a counter raised in another Puma worker, a Sidekiq job or a `bin/rails runner` show up in every scrape of that service. Gauges are not registered at boot (registering one would write 0 as its newest value and hide what the sweeper set); the process serving each scrape sets them itself, web on every scrape and Sidekiq on every sweep. So a worker scrape shows its gauges only once a sweep has run since it started.
 
 - **One directory per service**, on the container's own disk, never a volume shared between containers or hosts.
-- **Wipe it when the process starts** (today the Docker Compose commands do `rm -rf`; the production image's entrypoint will).
+- **Wipe it when the process starts.** `bin/docker-entrypoint` does it on every container start, in production and in Docker Compose; the image's default is `/rails/tmp/prometheus`.
 
 Why each rule matters:
 - A gauge's "most recent" is judged by `CLOCK_MONOTONIC`, which restarts from zero when the host reboots. Files that survive a reboot carry larger timestamps than every new write, so a stale gauge (e.g. `payhub_unknown_state_payments`) would win until they are wiped.
@@ -322,4 +322,6 @@ Grafana evaluates these every minute from ClickHouse (`observability/grafana/pro
 | What did the PSP tell us? | `inbound_events` (`signature_valid=false` rows were rejected, never processed) |
 | What did we tell the merchant? | `outbound_events` + `outbound_delivery_attempts`; `POST /v1/events/:id/redeliver` for dead ones. Retries back off 1m, 5m, 30m, 2h, 8h, 24h, 36h; dead after attempt 8 (~70.6h). A redelivery gets a fresh 8-attempt budget on the same schedule; attempt numbers continue from where they stopped |
 | Backlog right now | `/metrics`: `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead` |
+| Migrate on deploy | One container from the new image with `RUN_MIGRATIONS=true` (entrypoint runs `bin/rails db:prepare`); web (`CMD`, Puma) and worker (`bundle exec sidekiq`) without it. README "Production image" |
+| Boot without TLS (debugging the image) | `RAILS_FORCE_SSL=false`; never behind a real host |
 | Job counters (late success, stuck-payment alerts, settlement discrepancies, PSP call in transaction) | The worker's own `/metrics` on port 9394 (`WORKER_METRICS_PORT`), same bearer token; not in the web scrape. `docker compose exec worker curl -s -H "Authorization: Bearer $METRICS_TOKEN" localhost:9394/metrics`. In ClickHouse: `ServiceName = 'payhub-worker'` (web is `'payhub-web'`) |

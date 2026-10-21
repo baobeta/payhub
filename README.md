@@ -20,6 +20,7 @@ PayHub is a payment orchestration API. Merchants integrate once; PayHub routes e
 - [Quick start](#quick-start)
 - [Dashboards](#dashboards)
 - [Local development](#local-development)
+- [Production image](#production-image)
 - [Configuration and troubleshooting](#configuration-and-troubleshooting)
 - [API reference](#api-reference)
 - [Webhook delivery guarantees](#webhook-delivery-guarantees)
@@ -219,6 +220,31 @@ Then run each of these in its own terminal:
 
 **Versions:** Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22. Postgres is exposed on host port **5434**, because 5432 is often taken. The simulators are standalone apps with their own specs: `cd simulators/nordpay && bundle exec rspec`.
 
+## Production image
+
+The `Dockerfile` has two targets. `dev` is what `docker compose` builds (every gem group, `node_modules`, the Vite dev server). `production` is the image to deploy: it runs as uid 1000, carries no compilers and no node, installs production gems only, and has the Vite bundles (`public/vite`) and the bootsnap cache precompiled.
+
+```bash
+docker build --target production -t payhub .
+```
+
+One image, two commands:
+
+| Process | Command |
+| --- | --- |
+| Web (default `CMD`) | `bundle exec puma -C config/puma.rb`, on port 3000 (`PORT`) |
+| Worker | `bundle exec sidekiq` (reads `config/sidekiq.yml`); serves its own `/metrics` on 9394 |
+
+```bash
+docker run --rm --env-file production.env payhub bin/rails db:prepare   # once per deploy, before the rest
+docker run --env-file production.env -p 3000:3000 payhub                # web
+docker run --env-file production.env payhub bundle exec sidekiq         # worker
+```
+
+`production.env` holds `SECRET_KEY_BASE`, `DATABASE_URL`, `REDIS_URL` and every variable in the production table below. The entrypoint (`bin/docker-entrypoint`) wipes `PROMETHEUS_MULTIPROC_DIR` (`/rails/tmp/prometheus` in the image, on the container's own disk) on every start, then runs `bin/rails db:prepare` only when `RUN_MIGRATIONS=true` (the alternative to the first line above, for platforms with no release step), then the command. In production `db:prepare` seeds nothing: `db/seeds.rb` skips there unless `DEMO_ENABLED=true`.
+
+Rails serves `public/`, the Vite bundles included, with a one-year `cache-control` (they are fingerprinted), so no CDN or NGINX is required; one in front of the app may cache them. TLS is terminated at the load balancer; the app still redirects to HTTPS and sends HSTS unless `RAILS_FORCE_SSL=false`. CI's `image` job builds this target and boots web and worker from it.
+
 ## Configuration and troubleshooting
 
 **Production** also requires:
@@ -231,7 +257,9 @@ Then run each of these in its own terminal:
 | `KIRIPAY_URL`, `KIRIPAY_API_KEY`, `KIRIPAY_WEBHOOK_SECRET` | The same for Kiripay (`KIRIPAY_WEBHOOK_SECRETS` while rotating; simulator defaults such as `kp_test_key` are refused). |
 | `METRICS_TOKEN` | Bearer token for `GET /metrics` (generate with `openssl rand -hex 32`); scrapers send `Authorization: Bearer <token>`. Without it, production answers every scrape with `401`; the app still boots and logs a warning. Outside production an unset token leaves `/metrics` open. |
 | `WORKER_METRICS_PORT` / `WORKER_METRICS_HOST` | Where the Sidekiq process serves its own `/metrics` (default `9394` on `0.0.0.0`), guarded by `METRICS_TOKEN` like the web endpoint. In production, keep `:9394` off public interfaces or rely on `METRICS_TOKEN`. If the port is taken, Sidekiq logs an error and runs on without it. |
-| `PROMETHEUS_MULTIPROC_DIR` | Required when a service runs more than one process (Puma workers, several Sidekiq processes). Without it each process keeps its own metrics and a scrape sees only the one that answers. Use a directory per service, and wipe it when the service starts, or it keeps the stopped processes' values. Production logs a warning at boot when `WEB_CONCURRENCY` is set without it. See [RUNBOOK](RUNBOOK.md#metrics-across-processes-planned-work-at-deploy). |
+| `PROMETHEUS_MULTIPROC_DIR` | Required when a service runs more than one process (Puma workers, several Sidekiq processes). Without it each process keeps its own metrics and a scrape sees only the one that answers. Use a directory per service, and wipe it when the service starts, or it keeps the stopped processes' values (the image sets `/rails/tmp/prometheus` and its entrypoint wipes it). Production logs a warning at boot when `WEB_CONCURRENCY` is set without it. See [RUNBOOK](RUNBOOK.md#metrics-across-processes-planned-work-at-deploy). |
+| `RUN_MIGRATIONS` | Image only. `true` makes the entrypoint run `bin/rails db:prepare` before the command. Set it on one container per deploy, not on every web and worker: concurrent migrations race. |
+| `RAILS_FORCE_SSL` | Default `true`: redirect to HTTPS, HSTS, secure cookies (TLS ends at the load balancer). `false` only to run the image without TLS, as CI's boot test does. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional. Enables trace export outside Docker Compose. |
 | `DEMO_ENABLED` | Optional. The public demo (`/demo`, no login) is off in production and answers `404`. Set `true` only on a demo-only host. That host still runs in production, so it needs non-default PSP keys and webhook secrets, set to the same values on PayHub and on the simulators. Other environments default to on; `false` turns it off. Only the exact value `true` enables it. |
 
