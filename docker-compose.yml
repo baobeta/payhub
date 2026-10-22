@@ -91,6 +91,14 @@ services:
       # session SETs and advisory lock must not go through the pool. RUNBOOK
       # "Connection pooling".
       MIGRATION_DATABASE_URL: postgres://payhub:${POSTGRES_PASSWORD:-payhub}@db:5432/payhub_development
+      # The test database (payhub_test, or TEST_DATABASE): config/database.yml
+      # reads these, so db:test:prepare and rspec here reach Postgres itself.
+      # In the test env the two URLs above are dropped (config/application.rb);
+      # in development they still win over these.
+      PGHOST: db
+      PGPORT: "5432"
+      PGUSER: payhub
+      PGPASSWORD: ${POSTGRES_PASSWORD:-payhub}
       REDIS_URL: redis://redis:6379/0
       # Secrets come from .env (git-ignored; template: .env.example), with the
       # simulators' dev defaults. The simulators read the same variables.
