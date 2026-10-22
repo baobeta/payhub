@@ -48,10 +48,12 @@ services:
   # Persistent: Sidekiq's queues, scheduled jobs and retries, the cron schedule
   # and the circuit-breaker state live here (RUNBOOK "Redis persistence").
   # AOF (fsync every second: at most ~1 s of writes lost on a crash) plus the
-  # default RDB snapshots, in the named volume redis-data.
+  # default RDB snapshots, in the named volume redis-data. noeviction: a full
+  # Redis refuses writes (an error on enqueue) instead of dropping jobs. No
+  # maxmemory locally (the machine's memory is the limit); production sets one.
   redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "3600 1 300 100 60 10000"]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "3600 1 300 100 60 10000", "--maxmemory-policy", "noeviction"]
     ports:
       - "6379:6379"
     volumes:
