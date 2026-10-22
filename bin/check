@@ -47,7 +47,8 @@ step "transaction pooling (no session state in app code or config)"
 # backtick, paren or ;) or of a line (heredoc SQL), so Ruby's set_x, .set( and
 # r.call("SET", ...) never match. Upper-case SET matches any `name = | TO`;
 # other cases only `name = ...` or `name to <literal>`, so English ("set X to
-# Postgres") does not, nor does `set search_path to myschema`. Also scans
+# Postgres") does not, nor does `set search_path to myschema`. Lower-case
+# listen/notify/with hold count only at a SQL start (with hold also after cursor). Also scans
 # config/ (initializers) and config/database.yml. Opt out with # pooling-allow
 # (-- pooling-allow inside SQL) and a reason.
 # grep exits 1 for no match and 2 for an error (a missing file): only the
@@ -65,14 +66,15 @@ literal="(['\"0-9\$?-]|#\{|(default|on|off|true|false|public|local)([^a-z0-9_]|\
 # Matched case-insensitively.
 pooling_any_case="${sql_start}set${sp}+(session${sp}+)?(${name}${sp}*=|${name}${sp}+to${sp}+${literal}"
 pooling_any_case+="|time${sp}+zone${sp}+(${literal}|interval)|role${sp}+[a-z_\"]+${end_of_sql}|authorization${sp}|characteristics${sp})"
-pooling_any_case+="|set_config${sp}*\(.*,${sp}*false${sp}*\)"
+pooling_any_case+="|set_config${sp}*\([^)]*,${sp}*(is_local${sp}*=>${sp}*)?false${sp}*\)"
 pooling_any_case+="|pg_(try_)?advisory_lock(_shared)?${sp}*\(|with_advisory_lock|pg_notify${sp}*\("
-pooling_any_case+="|${sql_start}((un)?listen|notify)${sp}+[a-z_\"*]+${end_of_sql}|with${sp}+hold([^a-z_]|\$)"
+pooling_any_case+="|${sql_start}((un)?listen|notify)${sp}+[a-z_\"*]+${end_of_sql}"
+pooling_any_case+="|(${sql_start}|cursor([^;]*${sp})?)with${sp}+hold([^a-z_]|\$)"
 pooling_any_case+="|create${sp}+((global|local)${sp}+)?temp(orary)?${sp}+(table|view|sequence)"
 # Matched case-sensitively: upper-case SQL.
 pooling_upper="${sql_start}SET${sp}+(SESSION${sp}+)?(([A-Za-z_][A-Za-z0-9_.]*|#\{[^}]*\})${sp}*(=|TO${sp}|to${sp})"
 pooling_upper+="|TIME${sp}+ZONE${sp}|ROLE${sp}|AUTHORIZATION${sp}|CHARACTERISTICS${sp})"
-pooling_upper+="|(^|[^A-Za-z_])((UN)?LISTEN|NOTIFY)${sp}"
+pooling_upper+="|(^|[^A-Za-z_])((UN)?LISTEN|NOTIFY)${sp}|WITH${sp}+HOLD([^A-Za-z_]|\$)"
 pooling_src=(app lib config)
 pooling_inc=(--include='*.rb' --include='*.rake')
 # BSD grep (macOS) skips a missing directory without an error under --include.
