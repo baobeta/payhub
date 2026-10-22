@@ -26,12 +26,20 @@ module TestDatabase
   # Compose sets DATABASE_URL (pooled) and MIGRATION_DATABASE_URL (direct) on
   # web and worker, both to payhub_development; a test process there would
   # otherwise run on, and truncate, the dev database. A URL that names a test
-  # database is kept (spec/boot/direct_database_spec.rb sets them).
+  # database is kept (spec/boot/direct_database_spec.rb sets them), and so is
+  # one with no database (Rails takes the yml's). The warning names only the
+  # database, never the credentials.
   sig { void }
   def self.drop_foreign_urls!
     URL_VARIABLES.each do |var|
       url = ENV.fetch(var, nil)
-      ENV.delete(var) unless url.nil? || name?(database_in(url))
+      next if url.nil?
+
+      database = database_in(url)
+      next if database.nil? || name?(database)
+
+      ENV.delete(var)
+      warn "[test_database] ignoring #{var}: #{database.inspect} is not a test database"
     end
   end
 
@@ -44,10 +52,13 @@ module TestDatabase
           "(payhub_test, payhub_test_<lane>, payhub_e2e); check TEST_DATABASE and DATABASE_URL"
   end
 
+  # The database a URL names; nil when it names none. An unparsable URL
+  # counts as naming "", which is no test database.
   sig { params(url: String).returns(T.nilable(String)) }
   def self.database_in(url)
-    URI.parse(url).path&.delete_prefix("/")
+    database = URI.parse(url).path.to_s.delete_prefix("/")
+    database.empty? ? nil : database
   rescue URI::InvalidURIError
-    nil
+    ""
   end
 end
