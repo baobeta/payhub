@@ -1,5 +1,12 @@
 require "spec_helper"
-ENV["RAILS_ENV"] ||= "test"
+# Always the test env, whatever the caller's: inside the web container
+# RAILS_ENV is development, and the suite must never run (and truncate) there.
+ENV["RAILS_ENV"] = "test"
+ENV["RACK_ENV"] = "test"
+# Compose's service URLs (simulators, OTel collector) are not the suite's: the
+# specs stub the defaults, and tracing must stay off. Dropped before boot.
+%w[NORDPAY_URL KIRIPAY_URL OTEL_EXPORTER_OTLP_ENDPOINT OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+   OTEL_TRACES_EXPORTER].each { |var| ENV.delete(var) }
 # Metrics go to the file store, as in Docker Compose. The suite owns this path:
 # it always replaces the caller's value (inside the web container that is the
 # dev server's directory, which the wipe below would delete), one per run.
@@ -9,7 +16,7 @@ ENV["PROMETHEUS_MULTIPROC_DIR"] = prometheus_dir
 FileUtils.rm_rf(prometheus_dir)
 at_exit { FileUtils.rm_rf(prometheus_dir) }
 require_relative "../config/environment"
-abort("The Rails environment is running in production mode!") if Rails.env.production?
+abort("The suite runs only in the test environment, not #{Rails.env}") unless Rails.env.test?
 require "rspec/rails"
 require "webmock/rspec"
 
@@ -42,6 +49,7 @@ RSpec.configure do |config|
     self.use_transactional_tests = false
     example.run
     connection = ActiveRecord::Base.connection
+    TestDatabase.refuse_unless_test!(connection.pool.db_config.database)
     # audit_events and psp_calls refuse TRUNCATE (append-only); replica mode
     # skips their triggers for this cleanup only.
     connection.execute("SET session_replication_role = replica")

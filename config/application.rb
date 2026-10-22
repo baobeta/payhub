@@ -26,6 +26,14 @@ T::Configuration.default_checked_level = :never if Rails.env.production?
 # Plain Ruby, needed while this file runs, so it is required here rather than
 # autoloaded (and ignored by Zeitwerk below).
 require_relative "../lib/payhub_config"
+require_relative "../lib/test_database"
+
+# The test env never uses a DATABASE_URL or MIGRATION_DATABASE_URL that names
+# another database (Compose points both at payhub_development): it falls back
+# to config/database.yml, PGHOST/PGPORT and TEST_DATABASE, i.e. Postgres
+# itself. Rails has set RAILS_ENV by now for every entry point (bin/rails -e,
+# rake, rspec's rails_helper), and reads the URLs only when it initializes.
+TestDatabase.drop_foreign_urls! if Rails.env.test?
 
 module Payhub
   class Application < Rails::Application
@@ -35,7 +43,7 @@ module Payhub
     # Please, add to the `ignore` list any other `lib` subdirectories that do
     # not contain `.rb` files, or that should not be reloaded or eager loaded.
     # Common ones are `templates`, `generators`, or `middleware`, for example.
-    config.autoload_lib(ignore: %w[assets tasks payhub_config.rb])
+    config.autoload_lib(ignore: %w[assets tasks payhub_config.rb test_database.rb])
 
     # Configuration for the application, engines, and railties goes here.
     #

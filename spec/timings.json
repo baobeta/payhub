@@ -1,8 +1,10 @@
 {
   "spec/adapters/kiripay_adapter_spec.rb": 0.12,
   "spec/adapters/nordpay_adapter_spec.rb": 0.33,
-  "spec/boot/docker_entrypoint_spec.rb": 0.13,
+  "spec/boot/direct_database_spec.rb": 3.69,
+  "spec/boot/docker_entrypoint_spec.rb": 0.05,
   "spec/boot/production_boot_spec.rb": 3.46,
+  "spec/boot/test_database_spec.rb": 7.24,
   "spec/controllers/web/base_controller_authorization_spec.rb": 0.05,
   "spec/db/roles_spec.rb": 0.24,
   "spec/db/strong_migrations_spec.rb": 0.03,
