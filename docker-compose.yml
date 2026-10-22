@@ -35,6 +35,8 @@ services:
     expose:
       - "6432"
     healthcheck:
+      # PgBouncer's own listener (its admin database) only; Postgres behind it
+      # is covered by depends_on db: service_healthy.
       test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432", "-U", "payhub", "-d", "pgbouncer"]
       interval: 5s
       timeout: 3s
@@ -80,8 +82,10 @@ services:
       # Through PgBouncer (transaction mode). advisory_locks=false: Rails takes
       # no session advisory lock through the pool (a session lock is held by
       # whichever client gets the server connection next, not by this one).
-      DATABASE_URL: postgres://payhub:${POSTGRES_PASSWORD:-payhub}@pgbouncer:6432/payhub_development?advisory_locks=false
-      # Postgres itself, for every db: task (the Rakefile swaps it in): migrations'
+      # prepared_statements=false: against Postgres 16 Rails frees statements
+      # with SQL DEALLOCATE, which breaks behind the pool (config/pgbouncer/pgbouncer.ini).
+      DATABASE_URL: postgres://payhub:${POSTGRES_PASSWORD:-payhub}@pgbouncer:6432/payhub_development?advisory_locks=false&prepared_statements=false
+      # Postgres itself, for every db: task (lib/tasks/direct_database.rake): migrations'
       # session SETs and advisory lock must not go through the pool. RUNBOOK
       # "Connection pooling".
       MIGRATION_DATABASE_URL: postgres://payhub:${POSTGRES_PASSWORD:-payhub}@db:5432/payhub_development
