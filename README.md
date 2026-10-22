@@ -219,7 +219,7 @@ Then run each of these in its own terminal:
 | `bin/check` | The full gate: zeitwerk → generated files → rubocop → sorbet → frontend → rspec → brakeman. CI runs the same gates, with rspec split into 3 shards |
 | `npm run e2e` | Playwright end-to-end tests (uses its own database, `payhub_e2e`) |
 
-**Versions:** Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22. Postgres is exposed on host port **5434**, because 5432 is often taken. The simulators are standalone apps with their own specs: `cd simulators/nordpay && bundle exec rspec`.
+**Versions:** Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22. Postgres is exposed on host port **5434**, because 5432 is often taken, and Redis on **6380**, so it does not clash with a Homebrew Redis on 6379: outside production, Rails, rspec and Sidekiq on the host default to `redis://localhost:6380/0`. Inside Compose, web and worker use `redis://redis:6379/0`. An existing checkout that still publishes 6379 needs `docker compose up -d redis` once after pulling (the `redis-data` volume, and the queued work in it, is kept); until then the host app fails with `RedisClient::CannotConnectError ... 127.0.0.1:6380`, or set `REDIS_URL=redis://localhost:6379/0`. The simulators are standalone apps with their own specs: `cd simulators/nordpay && bundle exec rspec`.
 
 ### Migrations
 
@@ -276,7 +276,7 @@ Rails serves `public/`, the Vite bundles included, with a one-year `cache-contro
 | Variable | Purpose |
 | --- | --- |
 | `SECRET_KEY_BASE` | Signs and encrypts cookies and sessions. Generate with `bin/rails secret`. Boot fails without it. |
-| `REDIS_URL` | Sidekiq's queues and the shared cache behind the rate limits (`config/initializers/sidekiq.rb`, `config/environments/production.rb`). Default `redis://localhost:6379/0`, which is wrong anywhere but one host: set it. That Redis needs AOF persistence (`appendonly yes`, `appendfsync everysec`), `maxmemory-policy noeviction` with a `maxmemory` sized for the queues, and a failover replica: RUNBOOK [Redis persistence](RUNBOOK.md#redis-persistence). |
+| `REDIS_URL` | Sidekiq's queues and the shared cache behind the rate limits (`config/initializers/sidekiq.rb`, `config/environments/production.rb`). Default (`PayhubConfig.redis_url`): `redis://localhost:6380/0` in development and test (Compose publishes its Redis on host port 6380, clear of a Homebrew Redis on 6379), `redis://localhost:6379/0` in production, which is wrong anywhere but one host: set it. That Redis needs AOF persistence (`appendonly yes`, `appendfsync everysec`), `maxmemory-policy noeviction` with a `maxmemory` sized for the queues, and a failover replica: RUNBOOK [Redis persistence](RUNBOOK.md#redis-persistence). |
 | `APP_HOST` | Host used for links in emails. Boot fails without it. |
 | `AR_ENCRYPTION_*` (three keys) | Active Record encryption for TOTP secrets. Generate with `bin/rails db:encryption:init`. |
 | `NORDPAY_URL`, `NORDPAY_API_KEY`, `NORDPAY_WEBHOOK_SECRET` | Nordpay endpoint, API key and inbound webhook secret. During a rotation, set `NORDPAY_WEBHOOK_SECRETS=<new>,<old>` instead of the single secret. Without them, or with a simulator default such as `np_test_key` (also inside the rotation list), boot fails with `PspEnv::Missing` instead of using the simulator. |

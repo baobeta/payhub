@@ -65,7 +65,7 @@ Rails.application.configure do
   # uses, under its own namespace. A Redis outage is logged, and the cache
   # then reads as empty: throttles fail open rather than failing requests.
   config.cache_store = :redis_cache_store, {
-    url: ENV.fetch("REDIS_URL", "redis://localhost:6379/0"),
+    url: PayhubConfig.redis_url(Rails.env.to_s, ENV["REDIS_URL"]),
     namespace: "payhub-cache",
     error_handler: lambda { |method:, returning:, exception:|
       Rails.logger.error({ event: "cache_error", method:, returning: returning.inspect,

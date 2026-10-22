@@ -55,7 +55,7 @@ services:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "3600 1 300 100 60 10000", "--maxmemory-policy", "noeviction"]
     ports:
-      - "6379:6379"
+      - "6380:6379" # 6379 is often a Homebrew Redis on the host; Rails, rspec and Sidekiq on the host default to 6380
     volumes:
       - redis-data:/data
     healthcheck:

@@ -13,4 +13,15 @@ module PayhubConfig
 
     rails_env != "production"
   end
+
+  # Sidekiq, the PSP circuit and production's cache all use this Redis. Compose
+  # publishes its Redis on host port 6380 (6379 is often a Homebrew Redis), so
+  # Rails, rspec and Sidekiq run on the host find it there. Production keeps the
+  # plain default; set REDIS_URL anywhere but one host (README "Configuration").
+  sig { params(rails_env: String, url: T.nilable(String)).returns(String) }
+  def self.redis_url(rails_env, url)
+    return url unless url.nil?
+
+    rails_env == "production" ? "redis://localhost:6379/0" : "redis://localhost:6380/0"
+  end
 end
