@@ -86,12 +86,14 @@ services:
       # "Connection pooling".
       MIGRATION_DATABASE_URL: postgres://payhub:${POSTGRES_PASSWORD:-payhub}@db:5432/payhub_development
       REDIS_URL: redis://redis:6379/0
+      # Secrets come from .env (git-ignored; template: .env.example), with the
+      # simulators' dev defaults. The simulators read the same variables.
       NORDPAY_URL: http://nordpay:4001
-      NORDPAY_API_KEY: np_test_key
-      NORDPAY_WEBHOOK_SECRET: np_whsec_test
+      NORDPAY_API_KEY: ${NORDPAY_API_KEY:-np_test_key}
+      NORDPAY_WEBHOOK_SECRET: ${NORDPAY_WEBHOOK_SECRET:-np_whsec_test}
       KIRIPAY_URL: http://kiripay:4002
-      KIRIPAY_API_KEY: kp_test_key
-      KIRIPAY_WEBHOOK_SECRET: kp_whsec_test
+      KIRIPAY_API_KEY: ${KIRIPAY_API_KEY:-kp_test_key}
+      KIRIPAY_WEBHOOK_SECRET: ${KIRIPAY_WEBHOOK_SECRET:-kp_whsec_test}
       RAILS_ENV: development
       VITE_RUBY_HOST: vite
       # Proxy /vite-dev through Rails: "vite" only resolves inside compose, so
@@ -182,7 +184,8 @@ services:
     ports:
       - "4001:4001"
     environment:
-      NORDPAY_API_KEY: np_test_key
+      NORDPAY_API_KEY: ${NORDPAY_API_KEY:-np_test_key}
+      NORDPAY_WEBHOOK_SECRET: ${NORDPAY_WEBHOOK_SECRET:-np_whsec_test}
       # Where the simulator POSTs its webhooks. Inside compose: the web service.
       # For a locally-run Rails (bin/rails s), override to http://host.docker.internal:3000/v1/webhooks/nordpay
       PAYHUB_WEBHOOK_URL: ${NORDPAY_WEBHOOK_URL:-http://web:3000/v1/webhooks/nordpay}
@@ -197,8 +200,8 @@ services:
     ports:
       - "4002:4002"
     environment:
-      KIRIPAY_API_KEY: kp_test_key
-      KIRIPAY_WEBHOOK_SECRET: kp_whsec_test
+      KIRIPAY_API_KEY: ${KIRIPAY_API_KEY:-kp_test_key}
+      KIRIPAY_WEBHOOK_SECRET: ${KIRIPAY_WEBHOOK_SECRET:-kp_whsec_test}
       KIRIPAY_PUBLIC_URL: http://localhost:4002
       # Where the simulator POSTs its webhooks. Inside compose: the web service.
       # For a locally-run Rails (bin/rails s), override to http://host.docker.internal:3000/v1/webhooks/kiripay
@@ -215,7 +218,7 @@ services:
     environment:
       CLICKHOUSE_DB: otel
       CLICKHOUSE_USER: otel
-      CLICKHOUSE_PASSWORD: otel
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-otel}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     ports:
       - "8123:8123" # HTTP interface, for ad-hoc SQL: curl 'localhost:8123/?user=otel&password=otel' -d 'SELECT 1'
@@ -236,6 +239,7 @@ services:
     command: ["--config=/etc/otelcol/config.yaml"]
     environment:
       METRICS_TOKEN: ${METRICS_TOKEN:-} # sent on every /metrics scrape
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-otel}
     volumes:
       - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
       - ./log:/var/log/payhub:ro # the JSON request/job lines, shipped as logs
@@ -247,6 +251,7 @@ services:
     image: grafana/grafana:11.2.2
     environment:
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource 4.4.0
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-otel} # provisioning/datasources/clickhouse.yaml
       # Local only: no login, everyone is admin.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin

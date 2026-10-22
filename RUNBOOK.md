@@ -178,7 +178,7 @@ Never put the owner URL or `RUN_MIGRATIONS` in the web or worker environment: a 
 **Once per database** (production, staging), as a superuser:
 
 1. `psql "$SUPERUSER_URL" -1 -v ON_ERROR_STOP=1 -f db/roles.sql`, connected to that database (`-1`: one transaction, so a rerun on a live database never leaves the app without its grants). It creates both roles, makes `payhub_owner` the owner of every existing table, sequence, function and type in `public` (whoever ran the migrations until now, so this is the one-time ownership transfer), gives `payhub_owner` `CREATE` on the database and the schema, takes `TEMPORARY` on the database from `PUBLIC` (every non-superuser role in that database loses it; grant it back by name to one that needs it), and resets `payhub_app` to exactly its rows: anything granted to it by hand (`TRUNCATE`, a role membership) is revoked. It is idempotent: running it again changes nothing.
-2. Set both passwords from the secrets manager, never in the repo: `\password payhub_app` and `\password payhub_owner` in psql (keeps them out of shell history), or `ALTER ROLE payhub_app PASSWORD '…'`.
+2. Set both passwords, never in the repo: `bin/generate-secrets` prints them (`APP_DB_PASSWORD`, `OWNER_DB_PASSWORD`; kept in `production.env` until there is a secrets manager, [Secrets](#secrets)). Use `\password payhub_app` and `\password payhub_owner` in psql (keeps them out of shell history), or `ALTER ROLE payhub_app PASSWORD '…'`.
 3. Point the release container at `payhub_owner` and web and worker at `payhub_app`, then deploy.
 4. Check from a web container: `bin/rails runner 'p ActiveRecord::Base.connection.select_value("SELECT current_user")'` prints `"payhub_app"`; `ALTER TABLE ledger_entries DISABLE TRIGGER trg_ledger_entries_immutable` as that user fails with `must be owner of table ledger_entries`.
 
@@ -244,6 +244,25 @@ Redis is not the source of truth, but it holds work that exists nowhere else unt
 | Circuit-breaker state | A PSP whose breaker was open is called again at full rate | The breaker opens again after the next failures ([#17](DECISIONS.md#17-a-circuit-breaker-per-psp--and-the-one-rule-any-future-failover-must-obey)) |
 
 **Production** (D3 in `docs/plans/2026-10-21-production-readiness.md`; the host is still undecided, D2): the same AOF settings (`appendonly yes`, `appendfsync everysec`) with RDB snapshots kept for backups, `maxmemory-policy noeviction` (Sidekiq requires it: an evicted key is a lost job; the cache shares this Redis and every cache entry has a TTL), and high availability: a replica with automatic failover (Redis Sentinel, or a managed service's Multi-AZ / standard tier). Replication is asynchronous, so a failover can lose the last writes; the sweepers cover lost payment work, so restart the worker after a failover if its cron jobs are missing (`Sidekiq::Cron::Job.all.size` in `bin/rails runner`, 7 today). D3's exit criterion is a tested failover.
+
+## Secrets
+
+**Until D4** (a secrets manager, `docs/plans/2026-10-21-production-readiness.md`), secrets live in environment files on the host that starts the containers, and nowhere else:
+
+- `production.env`, one per environment, made from `production.env.example` (placeholders only; it says which container gets what). Mode `600`, owned by the deploy user, never committed (`.gitignore`: `.env`, `.env.*`, `*.env`, except `*.example`; `git check-ignore production.env` prints the path). Keep a copy where the team's recovery process can reach it: losing `AR_ENCRYPTION_*` makes every stored TOTP secret unreadable.
+- `bin/generate-secrets` prints fresh `SECRET_KEY_BASE`, `AR_ENCRYPTION_PRIMARY_KEY`, `AR_ENCRYPTION_DETERMINISTIC_KEY`, `AR_ENCRYPTION_KEY_DERIVATION_SALT`, `METRICS_TOKEN`, `APP_DB_PASSWORD` and `OWNER_DB_PASSWORD` (standard library only). It writes nothing unless given `--append <file>`, which adds only the keys the file lacks (creating it with mode `600`) and never overwrites one; it warns if the file is readable by others.
+- Locally, Compose reads `.env` (`.env.example` lists every variable, all with dev defaults). Changing `POSTGRES_PASSWORD` after the `pgdata` volume exists also needs `ALTER ROLE payhub PASSWORD '…'` in `docker compose exec db psql -U payhub`.
+
+**Rotation is manual**: change the value in `production.env`, then restart what reads it.
+
+| Secret | Rotate by |
+| --- | --- |
+| `SECRET_KEY_BASE` | New value, restart web and worker. Every session cookie becomes invalid: everyone signs in again |
+| `AR_ENCRYPTION_*` | Not by replacing them: stored TOTP secrets would become unreadable. Rails' `previous:` keys (config `active_record.encryption.previous`) are needed first; that is part of D4 |
+| `METRICS_TOKEN` | New value on web, worker and the collector, restarted together; scrapes get 401 in between |
+| `APP_DB_PASSWORD` / `OWNER_DB_PASSWORD` | `ALTER ROLE … PASSWORD` (psql `\password`), then the URLs in `production.env` (and PgBouncer's `auth_file`), then restart web and worker. Existing connections stay up; new ones need the new password |
+| PSP webhook secrets | [Rotating a webhook secret](#rotating-a-webhook-secret-not-a-page--planned-work) (two secrets at once, no dropped webhook) |
+| PSP API keys, SMTP | New value from the provider, restart web and worker, then revoke the old one at the provider |
 
 ## A merchant reports 429s (not a page — a support ticket)
 

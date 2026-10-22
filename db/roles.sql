@@ -16,7 +16,8 @@
 --     granted to payhub_app automatically, by the default privileges below).
 -- Run it with psql --single-transaction (-1) so a rerun on a live database
 -- never shows the app a moment without its grants.
--- Passwords are not set here: ALTER ROLE ... PASSWORD from the secrets manager.
+-- Passwords are not set here: ALTER ROLE ... PASSWORD, with the values from
+-- bin/generate-secrets kept in production.env (RUNBOOK "Secrets").
 
 -- Roles are cluster-wide. Two sessions running this at once can both pass
 -- NOT EXISTS; the loser's CREATE then fails, which means the role exists.

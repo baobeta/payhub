@@ -17,6 +17,9 @@
 .env
 .env.*
 !.env.example
+# production.env, staging.env, ...: real values. The templates end in .example.
+*.env
+!*.env.example
 
 # Test / coverage output
 /coverage

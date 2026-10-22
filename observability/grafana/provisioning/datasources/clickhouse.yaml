@@ -21,4 +21,4 @@ datasources:
         defaultTable: otel_logs
         otelEnabled: true
     secureJsonData:
-      password: otel
+      password: ${CLICKHOUSE_PASSWORD} # compose: CLICKHOUSE_PASSWORD, default otel
