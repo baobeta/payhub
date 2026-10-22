@@ -43,10 +43,17 @@ services:
       db:
         condition: service_healthy
 
+  # Persistent: Sidekiq's queues, scheduled jobs and retries, the cron schedule
+  # and the circuit-breaker state live here (RUNBOOK "Redis persistence").
+  # AOF (fsync every second: at most ~1 s of writes lost on a crash) plus the
+  # default RDB snapshots, in the named volume redis-data.
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "3600 1 300 100 60 10000"]
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -263,5 +270,6 @@ services:
 
 volumes:
   pgdata:
+  redis-data:
   clickhouse-data:
   grafana-data:

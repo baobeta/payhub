@@ -227,6 +227,24 @@ After editing `pgbouncer.ini`: `docker compose exec pgbouncer psql … -c 'RELOA
 
 **Troubleshooting.** `prepared statement "a1" does not exist` (or `already exists`): the pooler is older than 1.21 or `max_prepared_statements = 0`; fix it, or append `&prepared_statements=false` to `DATABASE_URL`. `db:migrate: DATABASE_URL is the pooled URL`: set `MIGRATION_DATABASE_URL` (Compose already does on web and worker). `no such user` / `SASL authentication failed` in the PgBouncer log: its `userlist.txt` (written at start from `DB_USER` / `DB_PASSWORD`) disagrees with the role's password; `POSTGRES_PASSWORD` changed after the `pgdata` volume was created.
 
+## Redis persistence
+
+Redis is not the source of truth, but it holds work that exists nowhere else until it runs: Sidekiq's queues (`payments`: the PSP calls behind authorize, capture and refund), its scheduled set and retry set, the dead set, the cron schedule that drives every sweeper (sidekiq-cron, loaded from `config/schedule.yml` only when a worker boots), and in production the rate-limit counters and API-key cache (`Rails.cache`, keys under `payhub-cache:`) and each PSP's circuit-breaker state.
+
+**Locally.** Compose runs `redis-server --appendonly yes --appendfsync everysec` with the default RDB snapshots (`save 3600 1 300 100 60 10000`), on the named volume `redis-data` (`/data`). `docker compose restart redis`, `docker compose up -d --force-recreate redis` and a crash (SIGKILL) all keep the data; at most the last second of writes is lost on a crash. `docker compose down -v` deletes the volume, and with it everything above. Check it with `docker compose exec redis redis-cli INFO persistence` (`aof_enabled:1`, `aof_last_write_status:ok`, `rdb_last_bgsave_status:ok`).
+
+**What is lost with Redis' data**, and what brings it back:
+
+| Lost | Effect | Recovered by |
+| --- | --- | --- |
+| The cron schedule | No sweeper runs: nothing polls stuck payments, delivers outbound webhooks or expires authorizations | Restarting the worker (it reloads `config/schedule.yml`). Do it first, after any Redis data loss |
+| Queued and scheduled jobs, retries | PSP calls not made | Once the cron schedule is back, the stuck-payment sweeper re-drives payments in `pending` or `unknown` and pending refunds from Postgres, and outbound webhooks are delivered from their table. Anything else: [§6](#6-the-job-never-ran) |
+| The dead set | The record of jobs that exhausted their retries | Nothing: it is evidence, not work. The JSON job logs still have each failure |
+| Rate-limit counters, the API-key cache | Every merchant gets a fresh budget for the current minute; keys are looked up again | Themselves, within a minute |
+| Circuit-breaker state | A PSP whose breaker was open is called again at full rate | The breaker opens again after the next failures ([#17](DECISIONS.md#17-a-circuit-breaker-per-psp--and-the-one-rule-any-future-failover-must-obey)) |
+
+**Production** (D3 in `docs/plans/2026-10-21-production-readiness.md`; the host is still undecided, D2): the same AOF settings (`appendonly yes`, `appendfsync everysec`) with RDB snapshots kept for backups, `maxmemory-policy noeviction` (Sidekiq requires it: an evicted key is a lost job; the cache shares this Redis and every cache entry has a TTL), and high availability: a replica with automatic failover (Redis Sentinel, or a managed service's Multi-AZ / standard tier). Replication is asynchronous, so a failover can lose the last writes; the sweepers cover lost payment work, so restart the worker after a failover if its cron jobs are missing (`Sidekiq::Cron::Job.all.size` in `bin/rails runner`, 7 today). D3's exit criterion is a tested failover.
+
 ## A merchant reports 429s (not a page — a support ticket)
 
 The `/v1` budget is per merchant, shared by all its keys: 300/min live, 75/min test (`config/initializers/rack_attack.rb`). Spreading traffic over more keys does not help them; batching or backing off on `Retry-After` does. `PayHub-Rate-Limited-Reason: global-rate` means the merchant's whole budget; `endpoint-rate` means the sign-in throttle (20/min per IP). Raising the budget for everyone is `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_TEST_PER_MINUTE` on web and a restart; there is no per-merchant override. A revoked key keeps counting against its merchant for up to a minute (the key lookup is cached), then falls to the 30/min per-IP budget. A bearer string that is not shaped like a PayHub key (`sk_live_`/`sk_test_` + 16-96 letters or digits) is never looked up, and a key that is not found is not cached; both count against the 30/min per-IP budget.

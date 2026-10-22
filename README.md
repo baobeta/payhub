@@ -99,7 +99,7 @@ flowchart LR
 | **worker** | All PSP traffic (authorize, capture, refund, status polls, voids), outbound webhook delivery, and the scheduled sweepers and reconciliations. | Retries, backoff and crashes stay away from requests. |
 | **Postgres** | The only source of truth. Unique indexes, CHECKs and append-only triggers enforce the invariants. | Correctness lives in the database, not in process memory. |
 | **PgBouncer** | Transaction-mode connection pool between web/worker and Postgres (`config/pgbouncer/pgbouncer.ini`). Migrations and other `db:` tasks bypass it. | Many Puma threads and Sidekiq processes share a few Postgres backends. See [RUNBOOK](RUNBOOK.md#connection-pooling-pgbouncer). |
-| **Redis** | Sidekiq queues, and one circuit-breaker state per PSP shared by every process ([#17](DECISIONS.md#17-a-circuit-breaker-per-psp--and-the-one-rule-any-future-failover-must-obey)). | Holds nothing that must survive. Lost jobs are re-driven from Postgres by the sweepers. |
+| **Redis** | Sidekiq queues, scheduled jobs and retries, the cron schedule, the rate-limit counters (production) and one circuit-breaker state per PSP shared by every process ([#17](DECISIONS.md#17-a-circuit-breaker-per-psp--and-the-one-rule-any-future-failover-must-obey)). | Not the source of truth: payments stuck by a lost job are re-driven from Postgres by the sweepers. Still persisted (AOF, the `redis-data` volume), because losing it drops queued work and the sweepers' own schedule. See [RUNBOOK](RUNBOOK.md#redis-persistence). |
 | **nordpay / kiripay** | Deliberately unreliable PSP simulators (Sinatra), each with its own Gemfile and specs. | They stand in for real PSPs and misbehave on demand. |
 | **otel-collector, ClickHouse, Grafana** | Traces, JSON logs and metrics in one place. See [Observability](#observability). | Optional; nothing is exported unless configured. |
 | **vite, mailcatcher** | Development only: hot-reloaded UI bundles and a local email inbox. | Production uses precompiled assets and real SMTP. |
@@ -270,7 +270,7 @@ Rails serves `public/`, the Vite bundles included, with a one-year `cache-contro
 | Variable | Purpose |
 | --- | --- |
 | `SECRET_KEY_BASE` | Signs and encrypts cookies and sessions. Generate with `bin/rails secret`. Boot fails without it. |
-| `REDIS_URL` | Sidekiq's queues and the shared cache behind the rate limits (`config/initializers/sidekiq.rb`, `config/environments/production.rb`). Default `redis://localhost:6379/0`, which is wrong anywhere but one host: set it. |
+| `REDIS_URL` | Sidekiq's queues and the shared cache behind the rate limits (`config/initializers/sidekiq.rb`, `config/environments/production.rb`). Default `redis://localhost:6379/0`, which is wrong anywhere but one host: set it. That Redis needs AOF persistence (`appendonly yes`, `appendfsync everysec`), `maxmemory-policy noeviction` and a failover replica: RUNBOOK [Redis persistence](RUNBOOK.md#redis-persistence). |
 | `APP_HOST` | Host used for links in emails. Boot fails without it. |
 | `AR_ENCRYPTION_*` (three keys) | Active Record encryption for TOTP secrets. Generate with `bin/rails db:encryption:init`. |
 | `NORDPAY_URL`, `NORDPAY_API_KEY`, `NORDPAY_WEBHOOK_SECRET` | Nordpay endpoint, API key and inbound webhook secret. During a rotation, set `NORDPAY_WEBHOOK_SECRETS=<new>,<old>` instead of the single secret. Without them, or with a simulator default such as `np_test_key` (also inside the rotation list), boot fails with `PspEnv::Missing` instead of using the simulator. |
