@@ -1,5 +1,9 @@
-# Local dev: Rails runs natively, Postgres runs in docker compose (port 5432).
-# Inside compose, DATABASE_URL overrides host/user/password.
+# Local dev: Rails runs natively, Postgres runs in docker compose (host port 5434).
+# Inside compose, DATABASE_URL overrides host/user/password: web and worker go
+# through PgBouncer (its ?advisory_locks=false turns Rails' session advisory
+# locks off), and db: tasks use MIGRATION_DATABASE_URL, Postgres itself
+# (Rakefile; RUNBOOK "Connection pooling"). prepared_statements stays on:
+# PgBouncer >= 1.21 tracks protocol-level prepared statements.
 default: &default
   adapter: postgresql
   encoding: unicode

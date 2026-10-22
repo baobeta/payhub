@@ -3,7 +3,9 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: payhub
-      POSTGRES_PASSWORD: payhub
+      # Read once, when the volume is first initialised; changing it later
+      # needs ALTER ROLE payhub PASSWORD as well (RUNBOOK "Secrets").
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payhub}
       POSTGRES_DB: payhub_development
     ports:
       - "5434:5432" # 5432 is taken on the host; app connects via PGPORT=5434 locally
@@ -14,6 +16,32 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Transaction-mode pool in front of db: web and worker connect here, anything
+  # that migrates connects to db directly. Config: config/pgbouncer/pgbouncer.ini;
+  # rules and sizing: RUNBOOK "Connection pooling". Not published to the host;
+  # admin console: docker compose exec pgbouncer psql -h localhost -p 6432 -U payhub pgbouncer
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.25.2-p0
+    environment:
+      # The image's entrypoint writes these to userlist.txt (plain text, for SCRAM).
+      DB_USER: payhub
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-payhub}
+      AUTH_TYPE: scram-sha-256
+      PGPASSWORD: ${POSTGRES_PASSWORD:-payhub} # for the admin console above
+    volumes:
+      # A file of its own, so the entrypoint skips generating one.
+      - ./config/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+    expose:
+      - "6432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432", "-U", "payhub", "-d", "pgbouncer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      db:
+        condition: service_healthy
 
   redis:
     image: redis:7-alpine
@@ -42,7 +70,14 @@ services:
       # The port on YOUR machine (the container always listens on 3000). Links
       # the app prints or emails use it. Set WEB_PORT in .env if 3000 is taken.
       WEB_PORT: ${WEB_PORT:-3000}
-      DATABASE_URL: postgres://payhub:payhub@db:5432/payhub_development
+      # Through PgBouncer (transaction mode). advisory_locks=false: Rails takes
+      # no session advisory lock through the pool (a session lock is held by
+      # whichever client gets the server connection next, not by this one).
+      DATABASE_URL: postgres://payhub:${POSTGRES_PASSWORD:-payhub}@pgbouncer:6432/payhub_development?advisory_locks=false
+      # Postgres itself, for every db: task (the Rakefile swaps it in): migrations'
+      # session SETs and advisory lock must not go through the pool. RUNBOOK
+      # "Connection pooling".
+      MIGRATION_DATABASE_URL: postgres://payhub:${POSTGRES_PASSWORD:-payhub}@db:5432/payhub_development
       REDIS_URL: redis://redis:6379/0
       NORDPAY_URL: http://nordpay:4001
       NORDPAY_API_KEY: np_test_key
@@ -72,6 +107,8 @@ services:
       METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
       db:
+        condition: service_healthy
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -115,6 +152,8 @@ services:
       - "9394"
     depends_on:
       db:
+        condition: service_healthy
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
