@@ -14,7 +14,7 @@ gem "sidekiq", "~> 7.3"
 gem "sidekiq-cron", "~> 2.0"
 # Sidekiq 7.3 calls ConnectionPool::TimedStack#pop(timeout); connection_pool 3.x removed that
 # argument and the scheduler thread dies at boot. Pin until Sidekiq 8.
-gem "connection_pool", "< 3"
+gem "connection_pool", "< 4"
 
 # Outbound HTTP to the PSP simulators. Faraday gives us per-request timeouts
 # and a retry middleware that we control (we must NOT retry blindly).
