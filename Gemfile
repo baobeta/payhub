@@ -32,7 +32,7 @@ gem "redis", "~> 5.4"
 gem "prometheus-client", "~> 5.0"
 
 # JSON log lines: one per request and per job.
-gem "lograge", "~> 0.14"
+gem "lograge", "~> 0.15"
 
 # Distributed tracing via OpenTelemetry OTLP.
 gem "opentelemetry-sdk", "~> 1.8"
