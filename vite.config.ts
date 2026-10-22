@@ -7,4 +7,7 @@ export default defineConfig({
   plugins: [RubyPlugin(), vue(), tailwindcss()],
   // Under docker compose, Rails proxies /vite-dev to this server as "vite".
   server: { allowedHosts: ["vite"] },
+  // vite-plugin-ruby turns source maps on outside local builds; production
+  // serves public/vite to anyone, so do not publish the source with it.
+  build: { sourcemap: false },
 });

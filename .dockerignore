@@ -44,3 +44,12 @@
 # Host node_modules holds native binaries for the host OS; the image runs npm ci.
 /node_modules
 /public/vite*
+
+# Local artefacts (git-ignored) that have no place in an image.
+/coverage
+/test-results
+/playwright-report
+/tools/*/node_modules
+/.claude
+/.omc
+/.omx

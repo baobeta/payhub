@@ -4,7 +4,7 @@ ruby "3.3.12"
 
 gem "rails", "~> 8.1.4"
 gem "pg", "~> 1.1"
-gem "puma", ">= 5.0"
+gem "puma", ">= 6.0", "< 9" # MetricsExporter needs Puma::LogWriter (6+)
 gem "bootsnap", require: false
 gem "tzinfo-data", platforms: %i[ windows jruby ]
 
@@ -42,6 +42,12 @@ gem "opentelemetry-instrumentation-all", "~> 0.80"
 # Gradual static typing. Runtime sigs are checked in dev/test and
 # stripped to no-ops in production via T::Configuration (see initializer).
 gem "sorbet-runtime"
+
+# Refuses migrations that would lock a busy table (an index built without
+# CONCURRENTLY, a column rewrite) and sets lock and statement timeouts on the
+# migration connection. Default group: production runs the migrations
+# (RUN_MIGRATIONS=true), so the checks and timeouts must load there too.
+gem "strong_migrations", "~> 2.0"
 
 group :development, :test do
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"

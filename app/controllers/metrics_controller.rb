@@ -4,10 +4,12 @@
 require "prometheus/client/formats/text"
 
 # GET /metrics — Prometheus text exposition of the Metrics registry.
-# Unauthenticated like /healthz: scraped from inside the network. In a real
-# deployment both sit behind the load balancer's internal listener.
+# Unlike /healthz (which only says "up"), it requires a bearer token when
+# METRICS_TOKEN is set, and always in production (see MetricsAuth).
 class MetricsController < ApplicationController
   extend T::Sig
+
+  before_action :require_scrape_token
 
   sig { void }
   def show
@@ -19,5 +21,15 @@ class MetricsController < ApplicationController
 
     render plain: Prometheus::Client::Formats::Text.marshal(Metrics::REGISTRY),
            content_type: Prometheus::Client::Formats::Text::CONTENT_TYPE
+  end
+
+  private
+
+  sig { void }
+  def require_scrape_token
+    return if MetricsAuth.authorized?(request.authorization)
+
+    response.headers["WWW-Authenticate"] = 'Bearer realm="metrics"'
+    head :unauthorized
   end
 end

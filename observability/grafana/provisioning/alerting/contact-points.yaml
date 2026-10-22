@@ -1,0 +1,35 @@
+# Where alerts go. Pages (severity page) to payhub-oncall, the on-call's paging
+# integration (PagerDuty, Opsgenie, …); tickets (severity ticket) to
+# payhub-tickets, for the day team (a ticketing or Slack webhook). The URLs are
+# secrets, so they come from the environment: Grafana expands
+# ${ALERT_WEBHOOK_URL} and ${ALERT_TICKET_WEBHOOK_URL} when it loads this file.
+# Every rule in payhub-rules.yaml names its contact point by severity (its
+# DatasourceError alerts follow it); the default policy below sends any alert
+# that names none to on-call.
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: payhub-oncall
+    receivers:
+      - uid: payhub-oncall-webhook
+        type: webhook
+        settings:
+          url: ${ALERT_WEBHOOK_URL}
+          httpMethod: POST
+        disableResolveMessage: false
+  - orgId: 1
+    name: payhub-tickets
+    receivers:
+      - uid: payhub-tickets-webhook
+        type: webhook
+        settings:
+          url: ${ALERT_TICKET_WEBHOOK_URL}
+          httpMethod: POST
+        disableResolveMessage: false
+
+policies:
+  - orgId: 1
+    receiver: payhub-oncall
+    group_by: [alertname, grafana_folder] # as the rules' notification_settings
+    repeat_interval: 4h

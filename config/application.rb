@@ -18,6 +18,15 @@ require "action_view/railtie"
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
+# Production skips sorbet-runtime's per-call sig checks (`srb tc` in CI has
+# proven the types). Sorbet only accepts this before any sig is evaluated, and
+# payhub_config.rb below has one, so it cannot wait for an initializer.
+T::Configuration.default_checked_level = :never if Rails.env.production?
+
+# Plain Ruby, needed while this file runs, so it is required here rather than
+# autoloaded (and ignored by Zeitwerk below).
+require_relative "../lib/payhub_config"
+
 module Payhub
   class Application < Rails::Application
     # Initialize configuration defaults for originally generated Rails version.
@@ -26,7 +35,7 @@ module Payhub
     # Please, add to the `ignore` list any other `lib` subdirectories that do
     # not contain `.rb` files, or that should not be reloaded or eager loaded.
     # Common ones are `templates`, `generators`, or `middleware`, for example.
-    config.autoload_lib(ignore: %w[assets tasks])
+    config.autoload_lib(ignore: %w[assets tasks payhub_config.rb])
 
     # Configuration for the application, engines, and railties goes here.
     #
@@ -59,5 +68,9 @@ module Payhub
     config.active_record.schema_format = :sql
 
     config.active_job.queue_adapter = :sidekiq
+
+    # The public demo needs no login, so production keeps it off unless
+    # DEMO_ENABLED=true.
+    config.x.demo_enabled = PayhubConfig.demo_enabled_default(Rails.env.to_s, ENV["DEMO_ENABLED"])
   end
 end

@@ -20,6 +20,7 @@ PayHub is a payment orchestration API. Merchants integrate once; PayHub routes e
 - [Quick start](#quick-start)
 - [Dashboards](#dashboards)
 - [Local development](#local-development)
+- [Production image](#production-image)
 - [Configuration and troubleshooting](#configuration-and-troubleshooting)
 - [API reference](#api-reference)
 - [Webhook delivery guarantees](#webhook-delivery-guarantees)
@@ -214,20 +215,82 @@ Then run each of these in its own terminal:
 | `bin/rails s` | Web server |
 | `bin/vite dev` | UI bundles with hot reload |
 | `bundle exec sidekiq -C config/sidekiq.yml` | Background worker |
-| `bin/check` | The full gate, exactly as CI runs it: zeitwerk → generated files → rubocop → sorbet → frontend → rspec → brakeman |
+| `bin/check` | The full gate: zeitwerk → generated files → rubocop → sorbet → frontend → rspec → brakeman. CI runs the same gates, with rspec split into 3 shards |
 | `npm run e2e` | Playwright end-to-end tests (uses its own database, `payhub_e2e`) |
 
 **Versions:** Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22. Postgres is exposed on host port **5434**, because 5432 is often taken. The simulators are standalone apps with their own specs: `cd simulators/nordpay && bundle exec rspec`.
 
+### Migrations
+
+[strong_migrations](https://github.com/ankane/strong_migrations) refuses a migration that would lock a busy table (an index built without `CONCURRENTLY`, a column type change, a `NOT NULL` added in one step, …) and prints the safe version. It checks every migration newer than `StrongMigrations.start_after` (`config/initializers/strong_migrations.rb`); the ones up to it had already run when it arrived. Build indexes with `disable_ddl_transaction!` and `algorithm: :concurrently`. Wrap an operation in `safety_assured { … }` only with a comment in the migration saying why it is safe (the table is new or small, nothing writes to it yet). See [RUNBOOK](RUNBOOK.md#safe-migrations).
+
+## Production image
+
+The `Dockerfile` has two targets. `dev` is what `docker compose` builds (every gem group, `node_modules`, the Vite dev server). `production` is the image to deploy: it runs as uid 1000, carries no compilers and no node, installs production gems only, and has the Vite bundles (`public/vite`) and the bootsnap cache precompiled.
+
+```bash
+docker build --target production -t payhub .
+```
+
+One image, two commands:
+
+| Process | Command |
+| --- | --- |
+| Web (default `CMD`) | `bundle exec puma -C config/puma.rb`, on port 3000 (`PORT`) |
+| Worker | `bundle exec sidekiq` (reads `config/sidekiq.yml`); serves its own `/metrics` on 9394 |
+
+```bash
+docker run --rm --env-file production.env -e DATABASE_URL="$OWNER_DATABASE_URL" payhub bin/rails db:prepare   # once per deploy, before the rest
+docker run --env-file production.env -p 3000:3000 payhub                # web
+docker run --env-file production.env payhub bundle exec sidekiq         # worker
+```
+
+`production.env` holds every variable in the production table below; its `DATABASE_URL` is the `payhub_app` URL. Only the migration step gets the `payhub_owner` URL (`OWNER_DATABASE_URL` here; RUNBOOK "Database roles"). The entrypoint (`bin/docker-entrypoint`) wipes `PROMETHEUS_MULTIPROC_DIR` (`/rails/tmp/prometheus` in the image, on the container's own disk) on every start, then runs `bin/rails db:prepare` only when `RUN_MIGRATIONS=true`, then the command. On a platform with no release step, migrate in an init container or one-off task whose command exits, instead of the first line above:
+
+```bash
+docker run --rm --env-file production.env -e RUN_MIGRATIONS=true -e DATABASE_URL="$OWNER_DATABASE_URL" payhub true
+```
+
+Never set `RUN_MIGRATIONS` or the owner URL on web or worker: the container would go on to serve traffic as the owner. The entrypoint refuses `RUN_MIGRATIONS=true` with a server command (`puma`, `rails server`, `sidekiq`) and exits 1, unless `ALLOW_MIGRATE_AND_SERVE=true` (a single-container setup with one database user, never production). In production `db:prepare` seeds nothing: `db/seeds.rb` skips there unless `DEMO_ENABLED=true`.
+
+A fresh production database therefore has **no FX rates**. Same-currency payments work, but a payment whose currency differs from the merchant's default currency answers `503 currency_unavailable` (`FxRate.latest!` raises `FxRate::Missing`) until a rate for that pair exists. Nothing in the app fetches rates (no job, no rake task); an operator inserts them, one row per direction, and the newest `captured_at` wins:
+
+```bash
+docker run --rm --env-file production.env payhub bin/rails runner \
+  'FxRate.create!(base: "USD", quote: "EUR", rate: "0.92", captured_at: Time.current)'
+```
+
+Rails serves `public/`, the Vite bundles included, with a one-year `cache-control` (they are fingerprinted), so no CDN or NGINX is required; one in front of the app may cache them. TLS is terminated at the load balancer; the app still redirects to HTTPS and sends HSTS unless `RAILS_FORCE_SSL=false`. CI's `image` job builds this target and boots web and worker from it.
+
 ## Configuration and troubleshooting
 
-**Production** also requires:
+**Production** reads these. Each is required unless the row gives a default or says optional:
 
 | Variable | Purpose |
 | --- | --- |
+| `SECRET_KEY_BASE` | Signs and encrypts cookies and sessions. Generate with `bin/rails secret`. Boot fails without it. |
+| `REDIS_URL` | Sidekiq's queues and the shared cache behind the rate limits (`config/initializers/sidekiq.rb`, `config/environments/production.rb`). Default `redis://localhost:6379/0`, which is wrong anywhere but one host: set it. |
 | `APP_HOST` | Host used for links in emails. Boot fails without it. |
 | `AR_ENCRYPTION_*` (three keys) | Active Record encryption for TOTP secrets. Generate with `bin/rails db:encryption:init`. |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Optional. Enables trace export outside Docker Compose. |
+| `NORDPAY_URL`, `NORDPAY_API_KEY`, `NORDPAY_WEBHOOK_SECRET` | Nordpay endpoint, API key and inbound webhook secret. During a rotation, set `NORDPAY_WEBHOOK_SECRETS=<new>,<old>` instead of the single secret. Without them, or with a simulator default such as `np_test_key` (also inside the rotation list), boot fails with `PspEnv::Missing` instead of using the simulator. |
+| `KIRIPAY_URL`, `KIRIPAY_API_KEY`, `KIRIPAY_WEBHOOK_SECRET` | The same for Kiripay (`KIRIPAY_WEBHOOK_SECRETS` while rotating; simulator defaults such as `kp_test_key` are refused). |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` | Outbound mail (invitations, security notices, proposals waiting for approval). Defaults `localhost` and `587`; username and password are sent only when set. |
+| `MAIL_FROM` | The emails' `From`. Default `PayHub <no-reply@payhub.local>`, which no real mail server will deliver for: set it. |
+| `METRICS_TOKEN` | Bearer token for `GET /metrics` (generate with `openssl rand -hex 32`); scrapers send `Authorization: Bearer <token>`. Without it, production answers every scrape with `401`; the app still boots and logs a warning. Outside production an unset token leaves `/metrics` open. |
+| `WORKER_METRICS_PORT` / `WORKER_METRICS_HOST` | Where the Sidekiq process serves its own `/metrics` (default `9394` on `0.0.0.0`), guarded by `METRICS_TOKEN` like the web endpoint. In production, keep `:9394` off public interfaces or rely on `METRICS_TOKEN`. If the port is taken, Sidekiq logs an error and runs on without it. |
+| `WEB_CONCURRENCY` / `RAILS_MAX_THREADS` | Puma worker processes per web container (unset or `0`: single mode, one process; `2` or more: cluster mode, a master and that many workers, the app preloaded before forking; `1` also runs cluster mode, without preloading, and Puma warns that a single worker is often a misconfiguration, so use `0` or at least `2`; `auto`: one per CPU) and threads per process (default `3`). Puma reads `WEB_CONCURRENCY` itself; a value that is not a number fails the boot. Set `PROMETHEUS_MULTIPROC_DIR` with it. `RAILS_MAX_THREADS` also sizes the database pool (`config/database.yml`), whose default is `5`, not `3`: the worker leaves it unset so its pool covers the Sidekiq concurrency (`config/sidekiq.yml`, `5`). In production set it explicitly: on web to the threads you want, on the worker to at least the Sidekiq concurrency, or leave it unset there. Connections to Postgres (or PgBouncer) at most: web containers × `WEB_CONCURRENCY` × web threads + worker containers × Sidekiq concurrency + headroom for one-off tasks (migrations, consoles). |
+| *Stop grace period* (platform setting, not a variable) | Web: above Puma's `worker_shutdown_timeout` (25 s, `config/puma.rb`), which bounds only cluster mode: in single mode (`WEB_CONCURRENCY` unset or `0`) Puma waits for requests in flight with no limit, so the grace period is the only bound; worker: at least Sidekiq's `:timeout:` (25 s, `config/sidekiq.yml`) + 5 s, so 30 s or more. ECS and Kubernetes default to 30 s, Docker to 10 s (`docker stop -t`; Compose sets 30 s and 35 s). With less, SIGKILL lands mid-drain: requests are cut, and the jobs Sidekiq is running are lost: it has already popped them from Redis, and no retry is scheduled. Puma closes its listeners on SIGTERM, so the load balancer must stop sending first (ALB deregistration delay, a Kubernetes `preStop` sleep). Keep Puma's `persistent_timeout` (65 s, `PUMA_PERSISTENT_TIMEOUT`) above the load balancer's idle timeout (ALB: 60 s); lowering it makes the ALB reuse connections Puma has closed (502s). |
+| `PROMETHEUS_MULTIPROC_DIR` | Required when a service runs more than one process (Puma workers, several Sidekiq processes). Without it each process keeps its own metrics and a scrape sees only the one that answers. Use a directory per service, and wipe it when the service starts, or it keeps the stopped processes' values (the image sets `/rails/tmp/prometheus` and its entrypoint wipes it). Production logs a warning at boot when `WEB_CONCURRENCY` is set without it. See [RUNBOOK](RUNBOOK.md#metrics-across-processes-planned-work-at-deploy). |
+| *Migration timeouts* (`config/initializers/strong_migrations.rb`, not a variable) | On the migration's own connection, in every environment: `lock_timeout` 10 s (a migration waiting on a lock queues writes behind it for at most 10 s, then fails; rerun it when traffic is lower) and `statement_timeout` 1 h. They are session `SET`s, so the app's web and worker connections keep the server defaults only because the entrypoint runs `db:prepare` in its own process before the command starts. Run migrations against Postgres directly or through a session-mode pool, never a transaction-mode PgBouncer: there the `SET`s stick to a pooled server connection and leak into app traffic, and the migration advisory lock (session-level) is not held. The migration container's `DATABASE_URL` (the owner URL, RUNBOOK "Database roles") points at the server, not at PgBouncer. |
+| `DATABASE_URL` | Web and worker connect as `payhub_app`, which can read and write rows but owns nothing, so it cannot drop or disable the append-only triggers; only the migration step (the `db:prepare` release task, or the one-off `RUN_MIGRATIONS=true` container running `true`) gets a `payhub_owner` URL. Without `DATABASE_URL`, production falls back to `PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD` (`config/database.yml`: `localhost`, `5434`, `payhub`/`payhub`) and the database `payhub_production`, so always set it. Both roles come from `db/roles.sql`, run once per database as a superuser; passwords come from the secrets manager. See [RUNBOOK](RUNBOOK.md#database-roles-planned-work-before-the-first-deploy-with-them). Development and tests use the Compose superuser. |
+| `RUN_MIGRATIONS` / `ALLOW_MIGRATE_AND_SERVE` | Image only. `RUN_MIGRATIONS=true` makes the entrypoint run `bin/rails db:prepare` before the command. Set it only on the one-off migration container (command `true`, owner URL, see "Production image"), never on web or worker: the entrypoint refuses it with a server command unless `ALLOW_MIGRATE_AND_SERVE=true`. Two migrations at once do not race: Rails' advisory lock makes the second fail with `ActiveRecord::ConcurrentMigrationError`, which fails that deploy. |
+| `RAILS_FORCE_SSL` | Default `true`: redirect to HTTPS, HSTS, secure cookies (TLS ends at the load balancer). `false` only to run the image without TLS, as CI's boot test does. The load balancer must send `X-Forwarded-Proto: https`, or every request redirect-loops; `/healthz` is never redirected, so plain-HTTP probes work. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | The collector's OTLP endpoint (e.g. `http://otel-collector:4318`); `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` also works. Without either, no traces are exported (`OTEL_TRACES_EXPORTER` defaults to `none`). Required wherever alerting is wanted: the error-span page and the API p95 SLO (RUNBOOK "Alerts") read traces. |
+| `OTEL_SERVICE_NAME` | Default `payhub`. Production must set `payhub-web` on web and `payhub-worker` on the worker: the alert rules, the SLOs (`docs/SLO.md`) and the production collector's log filter select on those names, and with the default the traces match none of them. |
+| `RAILS_LOG_LEVEL` | Default `info`. `debug` adds SQL and much more; keep `info` in production. |
+| `PORT`, `PIDFILE` | Puma's port (default `3000`) and PID file (none unless set). |
+| `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_TEST_PER_MINUTE` | Optional. The per-merchant API budgets (defaults `300` live, `75` test; "Rate limits" under API reference). |
+| `DEMO_ENABLED` | Optional. The public demo (`/demo`, no login) is off in production and answers `404`. Set `true` only on a demo-only host. That host still runs in production, so it needs non-default PSP keys and webhook secrets, set to the same values on PayHub and on the simulators. Other environments default to on; `false` turns it off. Only the exact value `true` enables it. The demo's chaos run is a worker job that calls the API at `CHAOS_API_URL` (default `http://localhost:3000`; on the worker, set it to web's address) and the Nordpay simulator at `NORDPAY_URL`. |
 
 **Common issues:**
 
@@ -359,7 +422,11 @@ Behaviour, signatures, failure modes and admin endpoints are documented in **[do
 
 ## Testing and verification
 
-`bin/check` runs the whole gate, and CI runs exactly the same thing.
+`bin/check` runs the whole gate. CI runs the same gates, with rspec split into 3 parallel shards:
+
+- `bin/check --skip-rspec` runs every gate but rspec (CI's static job).
+- `bin/rspec-shard SHARD TOTAL` prints the spec files of one shard (`bin/rspec-shard 0 3`), packed by the per-file times in `spec/timings.json`.
+- After adding or moving a slow spec file, or when the shards' CI times drift apart, re-record the timings: `bundle exec rspec -f json -o tmp/rspec.json && bin/rspec-shard --record tmp/rspec.json`. A run of some files updates only theirs.
 
 | Layer | What it proves |
 | --- | --- |
@@ -402,9 +469,9 @@ It exits non-zero on any violation and restores the simulator's configuration af
 | Signal | Details |
 | --- | --- |
 | **Logs** | One JSON line per request (lograge) and per job, carrying `request_id`, `merchant_id`, `payment_id`, `psp_name` and `duration_ms`. Jobs inherit the enqueuing request's id, so `grep '"payment_id":"…"' log/*.log` reconstructs a payment's whole life. Request bodies are never logged. Every PSP call also writes one redacted `psp_call` line (PSP, method, path template, status, outcome, duration, reference, error), which survives when the transaction holding its `psp_calls` row rolls back. |
-| **Metrics** | `GET /metrics` (Prometheus): `payhub_payments_created_total`, `payhub_psp_calls_total`, `payhub_webhook_deliveries_total`, `payhub_webhook_duplicates_total`, `payhub_webhook_signature_failures_total`, `payhub_stuck_payment_alerts_total`, `payhub_ledger_imbalance_detected_total`, `payhub_psp_call_in_transaction_total` (a PSP call made inside a database transaction, which [#13](DECISIONS.md#13-the-sweeper-schedules-each-payment-instead-of-re-scanning-the-oldest) forbids; should stay 0); gauges `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead` |
+| **Metrics** | `GET /metrics` (Prometheus): `payhub_payments_created_total`, `payhub_psp_calls_total`, `payhub_webhook_deliveries_total`, `payhub_webhook_duplicates_total`, `payhub_webhook_signature_failures_total`, `payhub_stuck_payment_alerts_total`, `payhub_ledger_imbalance_detected_total`, `payhub_psp_call_in_transaction_total` (a PSP call made inside a database transaction, which [#13](DECISIONS.md#13-the-sweeper-schedules-each-payment-instead-of-re-scanning-the-oldest) forbids; should stay 0); gauges `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead`. Requires a bearer token; see `METRICS_TOKEN`. Metrics are per service: with `PROMETHEUS_MULTIPROC_DIR` set, every process of that service writes to files there, and its scrape sums counters and reports each gauge's most recently set value. Docker Compose sets one directory each for web and worker. The web scrape does not include counters raised in Sidekiq jobs (`payhub_late_success_total`, `payhub_stuck_payment_alerts_total`, …): the worker serves those on its own `GET :9394/metrics` (`WORKER_METRICS_PORT`, bound on `WORKER_METRICS_HOST`, default `0.0.0.0`), with the same token rule. It does not refresh the DB-backed gauges on scrape; the sweepers set them. |
 | **Traces** | OpenTelemetry across web, Sidekiq and every PSP call, with each SQL statement as a span |
-| **Alert** | `event=alert.stuck_payment` at ERROR, for any payment in `pending` or `unknown` past 15 minutes. This is the only signal that pages; everything else is a dashboard. |
+| **Alerts** | 16 Grafana alert rules over ClickHouse (stuck and unknown payments, late successes, ledger imbalance, the circuit breaker, error rate and latency, failed scrapes, silent logs, failed log archive uploads), each `page` (to the `payhub-oncall` webhook) or `ticket` (to `payhub-tickets`). See [Alerting](#alerting) below; [RUNBOOK.md](RUNBOOK.md#alerts-grafana) says what to do for each, [docs/SLO.md](docs/SLO.md) which SLO each protects (the dashboard's SLOs row shows their values now). The log also carries `event=alert.stuck_payment` at ERROR for any payment in `pending` or `unknown` past 15 minutes. |
 | **Health** | `GET /healthz` checks the database only. A liveness probe that fails on a slow dependency causes restarts, not fixes. |
 
 Docker Compose also runs a telemetry stack ([observability/](observability/)):
@@ -413,14 +480,32 @@ Docker Compose also runs a telemetry stack ([observability/](observability/)):
 flowchart LR
     W["web"] & K["worker"] -- "OTLP spans" --> OC["otel-collector"]
     L["log/development.log<br/>JSON request + job lines"] -- tailed --> OC
-    M["/metrics"] -- "scraped every 15s" --> OC
-    OC --> CH[("ClickHouse<br/>otel db · 72h TTL")] --> GF["Grafana · :3300<br/>PayHub tracing"]
+    M["web :3000/metrics<br/>worker :9394/metrics"] -- "scraped every 15s" --> OC
+    OC --> CH[("ClickHouse<br/>otel db · 72h TTL")] --> GF["Grafana · :3300<br/>PayHub tracing · alert rules"]
+    GF -- "alerts" --> WH["ALERT_WEBHOOK_URL<br/>payhub-oncall"]
 ```
+
+The collector scrapes web and worker as two jobs, `payhub-web` and `payhub-worker` (and its own metrics, from `localhost:8888`, as `otelcol`):
+
+- **Token.** It sends `METRICS_TOKEN` as the bearer token on both. Compose passes the same `METRICS_TOKEN` to web, worker and collector.
+- **Unset (the default).** The header goes out as `Authorization: Bearer` with nothing after it, and `/metrics` stays open outside production.
+- **Trying the production behaviour.** Put `METRICS_TOKEN=<token>` in `.env`, then `docker compose up -d --force-recreate otel-collector web worker`.
+- **Telling web from worker in ClickHouse.** The job name is the `ServiceName` column (`ResourceAttributes['service.name']`), not a metric attribute: `SELECT ServiceName, MetricName, max(TimeUnix) FROM otel.otel_metrics_gauge WHERE MetricName LIKE 'payhub_%' GROUP BY 1, 2`.
+- **Failed scrapes.** A failed scrape (a wrong token gives 401) still writes `up = 0` to `otel.otel_metrics_gauge` under that `ServiceName`.
+- **DB-backed gauges.** Only web refreshes `payhub_unknown_state_payments` and `payhub_outbound_events_*` on every scrape, so the dashboard reads them from `payhub-web` only.
 
 In Grafana (<http://localhost:3300>, no login locally), the *PayHub tracing* dashboard lets you filter by `payment_id`. Clicking a `trace_id` shows its waterfall with that trace's log lines underneath.
 
 - **Ad-hoc SQL:** `curl 'localhost:8123/?user=otel&password=otel' -d 'SELECT SpanName, count() FROM otel.otel_traces GROUP BY 1'`
 - **"Error spans" include handled exceptions.** For example, a duplicate webhook is rejected by a unique index on purpose, and that still counts.
+
+### Alerting
+
+Grafana provisions its alert rules and contact points from [observability/grafana/provisioning/alerting/](observability/grafana/provisioning/alerting/) (`spec/observability/alert_rules_spec.rb` pins them). Each rule is plain ClickHouse SQL (paste it into the ad-hoc `curl` above to see the number the rule saw), evaluated every minute. `page` rules notify the `payhub-oncall` contact point (a webhook to `ALERT_WEBHOOK_URL`), `ticket` rules `payhub-tickets` (`ALERT_TICKET_WEBHOOK_URL`); grouped by alert name, repeated every 4 hours while firing, with the value the rule saw in the summary. The rules are listed in the *PayHub* folder under Alerting in Grafana, or with `curl -s -u admin:admin localhost:3300/api/v1/provisioning/alert-rules | jq length` (16).
+
+- **Locally, alerts go nowhere.** The Compose default URL refuses the connection, which Grafana logs. To watch them arrive, run anything that prints HTTP requests on the Compose network and point Grafana at it, e.g. `docker run --rm -d --name alert-sink --network payhub_default mendhak/http-https-echo:31`, then `ALERT_WEBHOOK_URL=http://alert-sink:8080/oncall ALERT_TICKET_WEBHOOK_URL=http://alert-sink:8080/tickets docker compose up -d grafana` and `docker logs -f alert-sink`. Stopping the worker makes `payhub-scrape-down` fire for `service=payhub-worker` about 5 minutes later (its `for`, plus up to a minute's evaluation); the webhook gets it 30 seconds after that, or up to 5 minutes after if a scrape-down alert for web is already firing (a group already notified is updated at most every 5 minutes).
+- **In production**, set `ALERT_WEBHOOK_URL` on Grafana to the paging integration's webhook (PagerDuty, Opsgenie) and `ALERT_TICKET_WEBHOOK_URL` to the day team's (a ticketing or Slack webhook). They are secrets: never commit them.
+- **Counters count from zero, except on a cold start.** A counter series appears on its first increment, so the rules add up each sample's rise per series (a drop being a restart) instead of `max - min`, which would miss the first late success after a restart. A series' first value counts only if the collector was already scraping that instance (an `up` sample at least 30 seconds older); on the collector's first deploy or a fresh ClickHouse volume, every counter's value is the baseline, so nothing pages at once.
 
 ## Performance
 
@@ -451,6 +536,7 @@ Deliberately out of scope:
 | [docs/DOMAIN.md](docs/DOMAIN.md) | Everyone | The domain model in plain words: every table, with examples |
 | [DECISIONS.md](DECISIONS.md) | Engineers | 26 design decisions: what was chosen, what was rejected, why, and the trade-off accepted |
 | [RUNBOOK.md](RUNBOOK.md) | On-call | What to do when an alert fires |
+| [docs/SLO.md](docs/SLO.md) | Engineers, on-call | The SLOs, their error budgets, the alerts that watch them, and how to measure each by hand |
 | [docs/permissions.md](docs/permissions.md) | Engineers, security | Generated permission matrix |
 | [docs/schema.dbml](docs/schema.dbml) | Engineers | Full database schema |
 | [docs/SIMULATORS.md](docs/SIMULATORS.md) | Engineers | PSP simulator behaviour, failure modes and admin endpoints |

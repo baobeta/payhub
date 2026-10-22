@@ -26,10 +26,16 @@ services:
       retries: 10
 
   web:
-    build: .
+    # The dev target of the Dockerfile; its entrypoint (bin/docker-entrypoint)
+    # wipes PROMETHEUS_MULTIPROC_DIR at every start, or a restart keeps the old values.
+    build: { context: ., target: dev }
     # rm the pid file first: the bind mount preserves it across container
     # restarts, and Puma refuses to boot if it sees one.
-    command: sh -c "rm -f tmp/pids/server.pid && bin/rails server -b 0.0.0.0 -p 3000"
+    command: sh -c "rm -f tmp/pids/server.pid && exec bin/rails server -b 0.0.0.0 -p 3000"
+    # Above Puma's worker_shutdown_timeout (25 s, config/puma.rb); Docker's default is 10 s.
+    # Compose runs single mode (no WEB_CONCURRENCY): Puma then waits for requests
+    # with no limit, and this grace period is the only bound.
+    stop_grace_period: 30s
     ports:
       - "${WEB_PORT:-3000}:3000" # host port; set WEB_PORT in .env if 3000 is taken
     environment: &app_env
@@ -55,6 +61,15 @@ services:
       # stores them in ClickHouse; view them in Grafana on :3300.
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       OTEL_SERVICE_NAME: payhub-web
+      # Every process writes its metrics here and /metrics adds them up. One
+      # directory per service: web and worker share the bind mount, and their
+      # PIDs overlap (each container counts from 1). Each is scraped on its
+      # own: web on :3000/metrics, worker on :9394/metrics.
+      PROMETHEUS_MULTIPROC_DIR: /rails/tmp/prometheus/web
+      # Bearer token for /metrics; the collector sends the same one. Empty by
+      # default, which leaves /metrics open outside production. Set it in .env
+      # to try the production behaviour locally.
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
       db:
         condition: service_healthy
@@ -67,7 +82,7 @@ services:
       - /rails/node_modules # keep the image's Linux node_modules, not the host's
 
   vite:
-    build: .
+    build: { context: ., target: dev }
     command: bin/vite dev
     environment:
       VITE_RUBY_HOST: 0.0.0.0
@@ -78,8 +93,12 @@ services:
       - /rails/node_modules
 
   worker:
-    build: .
+    # Same image as web; the entrypoint wipes this service's metrics directory
+    # and execs the command, so Sidekiq is PID 1 and gets the stop signal.
+    build: { context: ., target: dev }
     command: bundle exec sidekiq
+    # Sidekiq's :timeout: (25 s, config/sidekiq.yml) + 5 s to push unfinished jobs back to Redis.
+    stop_grace_period: 35s
     # App env (see &app_env above) plus a key of its own: ChaosRun drives the
     # real HTTP API from a job (D-04), so the demo's chaos button needs to
     # reach the web process, not localhost.
@@ -87,6 +106,13 @@ services:
       <<: *app_env
       CHAOS_API_URL: ${CHAOS_API_URL:-http://web:3000}
       OTEL_SERVICE_NAME: payhub-worker
+      PROMETHEUS_MULTIPROC_DIR: /rails/tmp/prometheus/worker
+    # Sidekiq serves its own /metrics here (MetricsExporter), same token rule
+    # as web. Not published to the host; from your machine:
+    #   docker compose exec worker sh -c 'curl -s -H "Authorization: Bearer $METRICS_TOKEN" localhost:9394/metrics'
+    # (the header is only needed once METRICS_TOKEN is set).
+    expose:
+      - "9394"
     depends_on:
       db:
         condition: service_healthy
@@ -162,6 +188,8 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.111.0
     command: ["--config=/etc/otelcol/config.yaml"]
+    environment:
+      METRICS_TOKEN: ${METRICS_TOKEN:-} # sent on every /metrics scrape
     volumes:
       - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
       - ./log:/var/log/payhub:ro # the JSON request/job lines, shipped as logs
@@ -178,6 +206,12 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/payhub.json
+      # Where the contact points POST alerts (provisioning/alerting/
+      # contact-points.yaml): pages to payhub-oncall, tickets to payhub-tickets.
+      # The defaults go nowhere (connection refused, logged by Grafana); to
+      # watch alerts arrive locally, see README "Alerting".
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:-http://localhost:9/payhub-oncall}
+      ALERT_TICKET_WEBHOOK_URL: ${ALERT_TICKET_WEBHOOK_URL:-http://localhost:9/payhub-tickets}
     ports:
       - "${GRAFANA_PORT:-3300}:3000" # not 3000: that is the app's default port
     volumes:

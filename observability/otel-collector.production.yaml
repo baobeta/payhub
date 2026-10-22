@@ -1,0 +1,243 @@
+# OpenTelemetry Collector, production. Same shape as otel-collector.yaml
+# (traces, logs and metrics all land in ClickHouse); what differs:
+#   logs    <- container stdout (production logs to STDOUT), read from Docker's
+#              json-file log driver on the host, envelope unwrapped by a
+#              json_parser. Only lines from containers that log with
+#              `env: OTEL_SERVICE_NAME` (web and worker, see RUNBOOK.md) are
+#              kept, as that service; of those, every JSON line (requests, jobs,
+#              every "event" line) is kept and plain-text lines are dropped.
+#   metrics <- Prometheus scrape of WEB_METRICS_TARGET and WORKER_METRICS_TARGET
+#              as payhub-web / payhub-worker (the same job names as development,
+#              so ClickHouse ServiceName is the same everywhere), with
+#              METRICS_TOKEN as the bearer token. Unset, /metrics answers 401
+#              and `up` is 0. Plus the collector's own metrics (localhost:8888)
+#              as job otelcol: payhub-archive-upload-failed reads its failed
+#              awss3 exports.
+#   retention: 90 days queryable in ClickHouse (ttl 2160h, the same for logs,
+#              traces and metrics: one retention, on purpose) and every log line
+#              archived to S3 (bucket lifecycle >= 13 months, set on the bucket).
+#              PCI DSS 10.5.1: 12 months kept, the last 3 immediately available.
+#   restarts: read positions and the ClickHouse export queue live in
+#              file_storage, on a persistent volume, so a restart resumes where
+#              it stopped instead of skipping to the end of each file.
+# Every endpoint and secret comes from the environment; see RUNBOOK.md
+# "Logs and retention" for the required variables.
+
+extensions:
+  file_storage:
+    directory: /var/lib/otelcol/storage
+    create_directory: true
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+  prometheus:
+    config:
+      # One target per container, never a load-balanced address: each web and
+      # worker container has its own metrics store, so scrapes that alternate
+      # between containers see each counter jump back and forth, and the
+      # counter rules page on the drops. As shipped (one variable per job) this
+      # assumes one web and one worker container per host, each collector
+      # scraping its own host. With more, list every container's host:port
+      # under `targets`, or replace static_configs with service discovery
+      # (docker_sd_configs, ecs/kubernetes_sd_configs) that yields one target
+      # per container. RUNBOOK "Logs and retention".
+      scrape_configs:
+        - job_name: payhub-web
+          scrape_interval: 15s
+          metrics_path: /metrics
+          authorization:
+            credentials: "${env:METRICS_TOKEN}"
+          static_configs:
+            - targets: ["${env:WEB_METRICS_TARGET}"]
+        - job_name: payhub-worker
+          scrape_interval: 15s
+          metrics_path: /metrics
+          authorization:
+            credentials: "${env:METRICS_TOKEN}"
+          static_configs:
+            - targets: ["${env:WORKER_METRICS_TARGET}"]
+        # The collector's own metrics (service.telemetry below): exporter
+        # failures, queue sizes. ServiceName 'otelcol' in ClickHouse.
+        - job_name: otelcol
+          scrape_interval: 15s
+          static_configs:
+            - targets: ["localhost:8888"]
+
+  filelog:
+    # *-json.log* also matches Docker's rotated files (<id>-json.log.1, …), so
+    # a tail written just before rotation is not lost; fingerprints stop a
+    # rotated file from being read twice. Docker must not compress them.
+    include: [/var/lib/docker/containers/*/*-json.log*]
+    include_file_path: true
+    # Only on first start: afterwards the checkpoint in file_storage decides.
+    start_at: end
+    storage: file_storage
+    operators:
+      # Docker's json-file driver wraps each stdout line as
+      # {"log":"...","stream":"stdout","attrs":{...},"time":"..."}; unwrap it.
+      # Not with the `container` operator: in 0.111.0 its docker format parses
+      # the time only after it has passed the entry on, so the timestamp is
+      # set late (racing the export) and removing attributes.time breaks it.
+      # Here the envelope's time becomes the timestamp before anything else.
+      - type: json_parser
+        parse_from: body
+        parse_to: attributes
+        timestamp:
+          parse_from: attributes.time
+          layout_type: gotime
+          layout: "2006-01-02T15:04:05.999999999Z07:00"
+      - type: move
+        from: attributes.log
+        to: body
+      # Docker splits a line over 16KB into chunks and only the last ends in
+      # "\n"; join them per file (keeping the first chunk's timestamp and
+      # attributes). Up to 1MiB: a longer line is truncated. The first ~1MiB is
+      # kept as one unparsed record (truncated JSON, so the parsers below fail
+      # on it) and the rest is dropped (it lacks the prefix the filter wants).
+      # stdout and stderr share one file, so a stderr line arriving between two
+      # stdout chunks would be glued in; production logs only to STDOUT.
+      - type: recombine
+        combine_field: body
+        combine_with: ""
+        is_last_entry: 'body matches "\n$"'
+        source_identifier: attributes["log.file.path"]
+        max_log_size: 1MiB
+        overwrite_with: oldest
+      - type: move
+        from: attributes.stream
+        to: attributes["log.iostream"]
+      - type: remove
+        if: 'attributes.time != nil'
+        field: attributes.time
+      # Every container on the host is tailed. web and worker log with
+      # `env: OTEL_SERVICE_NAME`, so Docker puts their service name in attrs;
+      # a line without it is some other container's and never reaches the archive.
+      - type: filter
+        expr: 'attributes.attrs?.OTEL_SERVICE_NAME == nil'
+      - type: move
+        from: attributes.attrs.OTEL_SERVICE_NAME
+        to: resource["service.name"]
+      - type: remove
+        field: attributes.attrs
+      # The container ID is the directory name: keep it, so a line can be
+      # traced back to the container that wrote it.
+      - type: regex_parser
+        parse_from: attributes["log.file.path"]
+        regex: '^/var/lib/docker/containers/(?P<container_id>[0-9a-f]+)/'
+        parse_to: attributes
+      - type: move
+        from: attributes.container_id
+        to: resource["container.id"]
+      # The path only carried the container ID; log.file.name stays.
+      - type: remove
+        field: attributes["log.file.path"]
+      # Production's Logger::Formatter prefixes each line
+      # ("I, [<time> #<pid>]  INFO -- : "), then the tagged-logging tags
+      # ([request_id], ActiveJob's tags); keep only lines that end in JSON.
+      - type: filter
+        expr: 'not (body matches "^([A-Z], \\[[^\\]]*\\] +[A-Z]+ -- [^:]*: )?(\\[[^\\]]*\\] )*\\{")'
+      - type: regex_parser
+        regex: '^(?:(?P<level>[A-Z]), \[[^\]]*\] +[A-Z]+ -- [^:]*: )?(?:\[[^\]]*\] )*(?P<json>\{.*\})\s*$'
+        parse_to: attributes
+      - type: severity_parser
+        if: 'attributes.level != nil'
+        parse_from: attributes.level
+        mapping:
+          debug: D
+          info: I
+          warn: W
+          error: E
+          fatal: F
+      - type: remove
+        if: 'attributes.level != nil'
+        field: attributes.level
+      - type: json_parser
+        parse_from: attributes.json
+        parse_to: attributes
+      # The body becomes the JSON line itself, without the prefix and tags.
+      - type: move
+        from: attributes.json
+        to: body
+      # Request and job lines ("kind") carry their own "time" (milliseconds),
+      # the moment the request or job finished. Event lines have no "time" and
+      # keep the timestamp taken from Docker's envelope.
+      - type: time_parser
+        if: 'attributes.kind != nil and attributes.time != nil'
+        parse_from: attributes.time
+        layout_type: gotime
+        layout: "2006-01-02T15:04:05.999999999Z07:00"
+      # The timestamp holds it now, and the body still has it.
+      - type: remove
+        if: 'attributes.time != nil'
+        field: attributes.time
+      - type: trace_parser
+        if: 'attributes.trace_id != nil'
+        trace_id:
+          parse_from: attributes.trace_id
+        span_id:
+          parse_from: attributes.span_id
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 800
+  batch:
+    timeout: 5s
+
+exporters:
+  clickhouse:
+    endpoint: "${env:CLICKHOUSE_ENDPOINT}"
+    database: otel
+    username: "${env:CLICKHOUSE_USER}"
+    password: "${env:CLICKHOUSE_PASSWORD}"
+    create_schema: true
+    ttl: 2160h
+    timeout: 10s
+    retry_on_failure:
+      enabled: true
+    # Queued on disk: a ClickHouse outage or a restart does not lose batches.
+    sending_queue:
+      enabled: true
+      storage: file_storage
+
+  # Credentials come from the AWS default chain (instance role / env).
+  # 0.111.0's awss3 has no sending_queue, retry_on_failure or timeout
+  # (validate rejects them): a batch whose upload fails is dropped from the
+  # archive (it is still in ClickHouse for 90 days). RUNBOOK.md "Logs and
+  # retention" has the backfill.
+  awss3:
+    s3uploader:
+      region: "${env:LOG_ARCHIVE_REGION}"
+      s3_bucket: "${env:LOG_ARCHIVE_BUCKET}"
+      s3_prefix: payhub/logs
+      # 0.111.0 has no s3_partition_format; "hour" writes
+      # year=%Y/month=%m/day=%d/hour=%H/ under the prefix.
+      s3_partition: hour
+    marshaler: otlp_json
+
+service:
+  # Served on localhost only, for the otelcol scrape job above.
+  telemetry:
+    metrics:
+      level: normal
+      address: localhost:8888
+  extensions: [file_storage]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]
+    logs:
+      receivers: [filelog, otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse, awss3]
+    metrics:
+      receivers: [prometheus, otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse]

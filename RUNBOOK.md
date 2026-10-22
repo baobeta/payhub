@@ -2,6 +2,8 @@
 
 You were paged: **`alert.stuck_payment`** — a payment has been in `pending` or `unknown` for more than 15 minutes. This page is written for 3am. Follow it top to bottom; every step is safe to run.
 
+Paged by Grafana? The alert's `runbook_url` points at its row in [Alerts](#alerts-grafana), which says where to start. A `DatasourceError` alert carries the failing rule's `runbook_url` too, but the rule could not run: see [DatasourceError](#datasource-error) first.
+
 ## 0. The one rule
 
 **Never re-send a charge you cannot prove was not received.** Nothing in this runbook re-sends an authorize. If you find yourself wanting to, stop and read step 4 again. Reads (`fetch`) are always safe; writes are not.
@@ -48,6 +50,8 @@ If the PSP is down: **there is nothing to do to the payment.** It is in a safe s
 `psp_circuit.opened` in the log (and `payhub_psp_circuit_opened_total`) means PayHub has stopped calling that PSP for 30 seconds at a time: new payments stay `pending`, sweeps skip it, `POST /cancel` answers a retriable 503. That is the breaker doing its job (DECISIONS #17) — nothing was sent, so nothing is ambiguous. It closes itself on the first successful probe after the PSP recovers.
 
 If the PSP is *up* and we still time out, check `NORDPAY_URL` / `KIRIPAY_URL` in the worker's environment, then go to §5.
+
+A deploy that fails to boot with `PspEnv::Missing` is missing a `NORDPAY_*` / `KIRIPAY_*` variable, or has one still set to the simulator's test value. The error names the variable. Set it to the real value and redeploy.
 
 ## 4. The PSP knows the answer and we don't
 
@@ -138,6 +142,50 @@ Every verifier accepts a list of secrets, so no step below drops a webhook (DECI
 - **A PSP's secret (inbound).** Set `NORDPAY_WEBHOOK_SECRETS=<new>,<old>` (or `KIRIPAY_…`) on web and restart; the single-secret variable is ignored while the list is set. Switch the secret in the PSP's dashboard. Once `inbound_events` shows no `signature_valid=false` rows for an hour, set the list to `<new>` alone.
 - **A merchant's secret (outbound).** `bin/rails "merchants:rotate_webhook_secret[<MERCHANT_ID>]"` prints the new secret once. For 24 hours every webhook carries two `v1=` signatures, new and old, so the merchant can deploy the new secret whenever suits them in that window.
 
+## Metrics across processes (planned work, at deploy)
+
+`PROMETHEUS_MULTIPROC_DIR` makes every process of a service (each Puma worker, each Sidekiq process) write its metrics to files in that directory; the service's `/metrics` sums the counters and reports each gauge's most recently set value. Without it, each process keeps its own and a scrape sees only the one that answered; production logs a warning at boot when `WEB_CONCURRENCY` is set and the directory is not.
+
+Every counter is registered when a process boots, because a scrape lists only the metrics registered in the process serving it: that is what lets a counter raised in another Puma worker, a Sidekiq job or a `bin/rails runner` show up in every scrape of that service. Gauges are not registered at boot (registering one would write 0 as its newest value and hide what the sweeper set); the process serving each scrape sets them itself, web on every scrape and Sidekiq on every sweep. So a worker scrape shows its gauges only once a sweep has run since it started.
+
+- **One directory per service**, on the container's own disk, never a volume shared between containers or hosts.
+- **Wipe it when the process starts.** `bin/docker-entrypoint` does it on every container start, in production and in Docker Compose; the image's default is `/rails/tmp/prometheus`.
+
+Why each rule matters:
+- A gauge's "most recent" is judged by `CLOCK_MONOTONIC`, which restarts from zero when the host reboots. Files that survive a reboot carry larger timestamps than every new write, so a stale gauge (e.g. `payhub_unknown_state_payments`) would win until they are wiped.
+- Files are named by PID, and container PIDs repeat (each container counts from 1). A new process that gets an old PID reopens that file and carries on from its counter totals; two containers sharing a directory would write to the same file.
+- Files of processes that have exited stay (their counts are still part of the totals) until the next wipe; that is expected, not a leak.
+
+## Database roles (planned work, before the first deploy with them)
+
+The append-only triggers (ledger, audit log, PSP call log, payment history) only hold if the role the app connects as cannot drop or disable them. `db/roles.sql` creates two roles:
+
+| Role | Used by | Can |
+| --- | --- | --- |
+| `payhub_app` | Web (Puma) and worker (Sidekiq): their `DATABASE_URL` | Read and write rows (`SELECT`, `INSERT`, `UPDATE`, `DELETE`; sequences). Owns nothing and is no superuser, so it cannot `ALTER`, `DISABLE` or `DROP` a trigger (`must be owner of table …`), skip them with `SET session_replication_role = replica` (`permission denied to set parameter`), `TRUNCATE`, create tables (temp tables included: `TEMPORARY` on the database is revoked from `PUBLIC`, so no temp table can stand in for one a trigger reads) or grant anything; `schema_migrations` and `ar_internal_metadata` are read-only to it. The triggers still refuse its `UPDATE` and `DELETE` on the append-only tables, apart from what each one lets through (the purge of audit and PSP-call rows older than 12 months; clearing `payment_transitions.most_recent`). |
+| `payhub_owner` | The migration step only: the `bin/rails db:prepare` release task, or the one-off container with `RUN_MIGRATIONS=true` whose command is `true` | Owns every table, sequence, function and type in `public`; creates and alters them. |
+
+The entrypoint and Rails read only `DATABASE_URL`, so the release container gets the owner's URL and nothing else does. With the README's commands:
+
+```bash
+docker run --rm --env-file production.env -e DATABASE_URL="$OWNER_DATABASE_URL" payhub bin/rails db:prepare
+# or, as an init container / one-off task: ... -e RUN_MIGRATIONS=true -e DATABASE_URL="$OWNER_DATABASE_URL" payhub true
+docker run --env-file production.env -p 3000:3000 payhub   # production.env: DATABASE_URL=postgres://payhub_app:…@…/payhub_production
+```
+
+Never put the owner URL or `RUN_MIGRATIONS` in the web or worker environment: a container that migrates and then starts Puma or Sidekiq serves traffic as the owner. The entrypoint refuses `RUN_MIGRATIONS=true` with a server command (exit 1, `refusing RUN_MIGRATIONS=true with a server command`); `ALLOW_MIGRATE_AND_SERVE=true` overrides that, for single-container setups with one database user only. The owner URL also bypasses PgBouncer: it points at Postgres itself (or a session-mode pool), because the migration's session `SET`s (strong_migrations' lock and statement timeouts) would leak into app traffic through a transaction-mode pool, and its advisory lock would not hold. Development and the test suite keep using the Compose superuser (`payhub`); the suite's cleanup TRUNCATEs and switches to replica mode, which `payhub_app` is refused. `spec/db/roles_spec.rb` checks the roles themselves.
+
+**Once per database** (production, staging), as a superuser:
+
+1. `psql "$SUPERUSER_URL" -1 -v ON_ERROR_STOP=1 -f db/roles.sql`, connected to that database (`-1`: one transaction, so a rerun on a live database never leaves the app without its grants). It creates both roles, makes `payhub_owner` the owner of every existing table, sequence, function and type in `public` (whoever ran the migrations until now, so this is the one-time ownership transfer), gives `payhub_owner` `CREATE` on the database and the schema, takes `TEMPORARY` on the database from `PUBLIC` (every non-superuser role in that database loses it; grant it back by name to one that needs it), and resets `payhub_app` to exactly its rows: anything granted to it by hand (`TRUNCATE`, a role membership) is revoked. It is idempotent: running it again changes nothing.
+2. Set both passwords from the secrets manager, never in the repo: `\password payhub_app` and `\password payhub_owner` in psql (keeps them out of shell history), or `ALTER ROLE payhub_app PASSWORD '…'`.
+3. Point the release container at `payhub_owner` and web and worker at `payhub_app`, then deploy.
+4. Check from a web container: `bin/rails runner 'p ActiveRecord::Base.connection.select_value("SELECT current_user")'` prints `"payhub_app"`; `ALTER TABLE ledger_entries DISABLE TRIGGER trg_ledger_entries_immutable` as that user fails with `must be owner of table ledger_entries`.
+
+**When to rerun `db/roles.sql`.** Not after normal deploys: tables and sequences that `payhub_owner` creates are granted to `payhub_app` automatically (`ALTER DEFAULT PRIVILEGES FOR ROLE payhub_owner`). Rerun it when an object was created by any other role (a migration run with the old or superuser URL, a hand-made table): until then `payhub_app` gets `permission denied for table …` on it, and the owner cannot alter it. Rerun it, too, for each new database (grants are per database, the roles are not), and after the first `db:prepare` of an empty one, which creates `schema_migrations` and `ar_internal_metadata` with the default grants: the rerun makes them read-only to `payhub_app`.
+
+On a managed service whose admin user is not a true superuser (RDS, Cloud SQL), the file is untested: handing objects to `payhub_owner` needs the admin to be a member first (`GRANT payhub_owner TO <admin>`), and changing role attributes may be refused. An empty database where the provider (or a superuser) already created `pgcrypto` fails the owner's first `db:prepare` at `COMMENT ON EXTENSION pgcrypto` (`must be owner of extension pgcrypto`): run that first `db:prepare` with the superuser's URL instead, then rerun `db/roles.sql`, which hands every table, function and sequence to `payhub_owner` (the extension stays with whoever created it, which migrations never need to change).
+
 ## A merchant reports 429s (not a page — a support ticket)
 
 The `/v1` budget is per merchant, shared by all its keys: 300/min live, 75/min test (`config/initializers/rack_attack.rb`). Spreading traffic over more keys does not help them; batching or backing off on `Retry-After` does. `PayHub-Rate-Limited-Reason: global-rate` means the merchant's whole budget; `endpoint-rate` means the sign-in throttle (20/min per IP). Raising the budget for everyone is `RATE_LIMIT_PER_MINUTE` / `RATE_LIMIT_TEST_PER_MINUTE` on web and a restart; there is no per-merchant override. A revoked key keeps counting against its merchant for up to a minute (the key lookup is cached), then falls to the 30/min per-IP budget. A bearer string that is not shaped like a PayHub key (`sk_live_`/`sk_test_` + 16-96 letters or digits) is never looked up, and a key that is not found is not cached; both count against the 30/min per-IP budget.
@@ -183,6 +231,119 @@ AuditEvent.record!(action: "team.ownership_transferred", result: "success", merc
 
 If nobody suitable is left, `bin/rails "merchants:invite_owner[<merchant id>,<email>]"` invites one. A twin of a twin: point its `live_merchant_id` at the live merchant at the top of the chain (or delete the empty twin), then deploy.
 
+## Logs and retention
+
+PCI DSS 10.5.1: keep audit logs 12 months, the last 3 immediately available.
+
+- **90 days queryable in Grafana.** The production collector writes logs, traces and metrics to ClickHouse with a 2160h TTL; older rows drop out.
+- **12 months archived in S3.** Every PayHub JSON log line (requests, jobs, and every `"event"` line: `psp_call`, `webhook.*`, `settlement.*`, `alert.*`, …) also goes to `s3://$LOG_ARCHIVE_BUCKET/payhub/logs/year=YYYY/month=MM/day=DD/hour=HH/` as OTLP JSON. The bucket, set up outside this repo, needs a lifecycle rule that expires objects after **13 months** (one month of slack over the requirement), and should block deletes before then (S3 Object Lock in compliance mode is optional, but it is what proves no one trimmed the archive).
+
+**Running the production collector.** `otelcol-contrib --config=/etc/otelcol/config.production.yaml`, with `observability/otel-collector.production.yaml` mounted there. It reads each container's stdout from Docker's json-file log files, keeps the lines of web and worker only, and of those every JSON line: request and job lines (`"kind"`) and every structured `"event"` line. Plain-text lines (Rails' own, a few boot warnings) are dropped, so anything that must reach the archive has to be logged as JSON. Request and job lines keep their own `time`; event lines take the time Docker recorded. In ClickHouse a line's `ServiceName` is `payhub-web` or `payhub-worker` (as for traces and metrics) and `ResourceAttributes['container.id']` says which container; the `Body` is the JSON line itself and the severity comes from the line's level letter.
+
+In the production compose file:
+
+```yaml
+x-app-logging: &app-logging            # web and worker
+  driver: json-file
+  options:
+    env: OTEL_SERVICE_NAME             # Docker writes it into every line: the collector keeps only these
+    max-size: 50m                      # rotate; the collector also reads the rotated <id>-json.log.N files
+    max-file: "5"                      # no `compress`: a gzipped rotated file cannot be read
+services:
+  web:    { logging: *app-logging, environment: { OTEL_SERVICE_NAME: payhub-web,    METRICS_TOKEN: "${METRICS_TOKEN:?set METRICS_TOKEN}" } }
+  worker: { logging: *app-logging, environment: { OTEL_SERVICE_NAME: payhub-worker, METRICS_TOKEN: "${METRICS_TOKEN:?set METRICS_TOKEN}" } }
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    command: ["--config=/etc/otelcol/config.production.yaml"]
+    user: "0"                          # Docker's log files are root:root 0640 in 0710 directories
+    environment:
+      METRICS_TOKEN: "${METRICS_TOKEN:?set METRICS_TOKEN}"   # plus every variable in the table below
+    volumes:
+      - ./observability/otel-collector.production.yaml:/etc/otelcol/config.production.yaml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - otelcol-storage:/var/lib/otelcol/storage   # read positions + ClickHouse queue; must survive restarts
+volumes:
+  otelcol-storage:
+```
+
+- **Without `env: OTEL_SERVICE_NAME`** on a container, none of its lines reach ClickHouse or the archive. After any change to the logging options, check that `SELECT ServiceName, count() FROM otel.otel_logs WHERE Timestamp > now() - INTERVAL 10 MINUTE GROUP BY ServiceName` shows both services. Logging options apply only to containers created after the change.
+- **Permissions.** The image runs as uid 10001, which cannot read Docker's logs. Run it as `user: "0"` with the mount read-only (or give uid 10001 read access through a group and ACL). Otherwise filelog only logs permission errors and the archive stays empty, with nothing else failing.
+- **Restarts.** Read positions are checkpointed in `/var/lib/otelcol/storage`, so a restarted collector resumes where it stopped. Lines written while it was down are delivered when it starts again, as long as Docker has not rotated them away in the meantime (with the settings above, 250 MB per container). Without that volume, a restart starts at the end of every file and loses the gap. ClickHouse batches wait in the same volume while ClickHouse is down.
+- **S3 outage.** The 0.111.0 S3 exporter has no queue and no retry: a batch whose upload fails is dropped from the archive (the collector logs an `awss3` export error) but is still in ClickHouse for 90 days. The collector's own metrics are scraped into ClickHouse (job `otelcol`), and `payhub-archive-upload-failed` pages on any failed upload (see [Alerts](#alerts-grafana)). Backfill it from ClickHouse before then, under its own prefix so it is not mistaken for the collector's output:
+  `INSERT INTO FUNCTION s3('https://<bucket>.s3.<region>.amazonaws.com/payhub/logs-backfill/<from>_<to>.jsonl.gz', 'JSONEachRow') SELECT Timestamp, ServiceName, SeverityText, Body, LogAttributes FROM otel.otel_logs WHERE Timestamp >= '<from>' AND Timestamp < '<to>'`
+- **Long lines.** Docker splits a line over 16KB into chunks; the collector joins them again, up to 1MiB. A line over 1MiB is truncated: the first ~1MiB is kept as one unparsed record (the raw line, with its service but none of its fields) and the rest is dropped. Keep log lines short anyway: never log a body or a payload.
+- **Network.** The OTLP receivers (4317, 4318) accept anything sent to them, without authentication. Expose them only on the internal network that web and worker use, never on a public interface.
+- **Retention.** The TTL is set when the exporter creates the tables, the same 90 days for logs, traces and metrics. Changing `ttl` later does not alter existing tables; run e.g. `ALTER TABLE otel.otel_logs MODIFY TTL TimestampTime + toIntervalDay(<days>)` (and the same for `otel_traces` and `otel_metrics_*`, whose TTL columns differ: `SHOW CREATE TABLE` first).
+
+The collector cannot refuse to start without a variable, so the deploy must set all of these:
+
+| Variable | What |
+|---|---|
+| `CLICKHOUSE_ENDPOINT`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` | ClickHouse, e.g. `tcp://clickhouse.internal:9000?dial_timeout=10s` |
+| `LOG_ARCHIVE_REGION`, `LOG_ARCHIVE_BUCKET` | The archive bucket. AWS credentials come from the default chain (instance role or `AWS_*`) |
+| `WEB_METRICS_TARGET`, `WORKER_METRICS_TARGET` | `host:port` of web's and the worker's `/metrics` (the worker serves on 9394). One container each, never a load-balanced address (see below) |
+| `METRICS_TOKEN` | The same value web and worker have. Unset or different, every scrape gets 401: `up` is 0 and the metrics panels go empty |
+
+**One scrape target per container.** Each web and worker container keeps its own metrics, so a target behind a load balancer answers from a different container on each scrape; the counters then seem to drop and rise, and the counter-based alerts page for nothing. The shipped config has one target per service, so it assumes one web and one worker container per host, with a collector on each host. With more containers, list each one's `host:port` in that job's `targets` (`observability/otel-collector.production.yaml`), or use service discovery that returns every container (`docker_sd_configs`, `ecs`/`kubernetes_sd_configs`).
+
+In any production compose file, write `METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}` (for the collector, web and worker, as above) so a missing token stops the deploy instead of the scrape.
+
+**Querying the archive** (an incident or an auditor asks about something older than 90 days). From ClickHouse, with the `s3()` table function (credentials as its extra arguments, or the server's own); narrow the path to the days you need. Objects are partitioned by the hour they were *uploaded*, not the hour of the line, so widen the range by an hour either side:
+
+```sql
+SELECT fromUnixTimestamp64Nano(toInt64(JSONExtractString(rec, 'timeUnixNano'))) AS ts,
+       JSONExtractString(rec, 'body', 'stringValue') AS body
+FROM (
+  SELECT arrayJoin(JSONExtractArrayRaw(scope, 'logRecords')) AS rec
+  FROM (
+    SELECT arrayJoin(JSONExtractArrayRaw(arrayJoin(JSONExtractArrayRaw(json, 'resourceLogs')), 'scopeLogs')) AS scope
+    FROM s3('https://<bucket>.s3.<region>.amazonaws.com/payhub/logs/year=2026/month=03/day=14/hour=*/*', 'JSONAsString')
+  )
+)
+WHERE body LIKE '%"payment_id":"<PAYMENT_ID>"%'
+ORDER BY ts
+```
+
+Lines backfilled from ClickHouse (see "S3 outage" above) are under `payhub/logs-backfill/`, one row per line:
+
+```sql
+SELECT Timestamp, ServiceName, Body
+FROM s3('https://<bucket>.s3.<region>.amazonaws.com/payhub/logs-backfill/*', 'JSONEachRow')
+WHERE Body LIKE '%"payment_id":"<PAYMENT_ID>"%'
+ORDER BY Timestamp
+```
+
+Athena works too (a table over `payhub/logs/` partitioned by year/month/day/hour), if one has been set up.
+
+**Quarterly restore drill.** Once a quarter, pick a payment from 6–12 months ago, find its lines under both prefixes (`payhub/logs/` and `payhub/logs-backfill/`, with the two queries above), and check the collector's logs for the quarter for `awss3` export errors (each one is a gap that needs a backfill while ClickHouse still has it). Record with the team's audit evidence the date, the payment, how long it took and anything that did not work (missing hours, a credential that had expired). An archive that has never been read is not evidence.
+
+## Alerts (Grafana)
+
+Grafana evaluates these every minute from ClickHouse (`observability/grafana/provisioning/alerting/payhub-rules.yaml`). **page** goes to the `payhub-oncall` webhook (`ALERT_WEBHOOK_URL` on Grafana) and wakes someone; **ticket** goes to `payhub-tickets` (`ALERT_TICKET_WEBHOOK_URL`) for the day team. Both are grouped by alert name and repeated every 4 hours while firing. Each notification carries the value the rule saw; each rule's query is in the file as plain SQL: paste it into ClickHouse to see the number now. Which SLO each alert protects, its error budget, and how to measure it by hand are in [docs/SLO.md](docs/SLO.md); the dashboard's **SLOs** row shows those alerts' queries as they run now.
+
+- **Windows outlast the incident.** A rule fires while its window holds the rise: `payhub-recon-breaks` and `payhub-ledger-imbalance` stay firing for 24 hours after one event (and repeat every 4 hours). A second event in that time does not fire again; it only raises the value, so compare the notification's value with the last one.
+- **Cold starts do not page.** On the collector's first deploy, after ClickHouse loses its volume, or after the collector was down for over a day, every counter reappears at once; its first value is taken as the baseline, not a rise. A counter that rose during that gap is not seen: after such a gap, check the log for `late_success`, `alert.stuck_payment`, `settlement.discrepancy` and `ledger_imbalance` lines over it.
+
+| Alert (uid) | Severity | Fired because | Start at |
+|---|---|---|---|
+| <a id="payhub-late-success"></a>`payhub-late-success` | page | A PSP reported `authorized`/`captured` for a payment we had already failed (`webhook.late_success` in the worker log). The customer may be charged for an order the merchant was told failed; nothing was booked. | [§7](#7-money-questions-did-the-customer-get-charged) to confirm the charge with the PSP ([§4](#4-the-psp-knows-the-answer-and-we-dont)), then the payment waits in `/ops` for a refund. Do not move it out of `failed`. |
+| <a id="payhub-psp-never-received"></a>`payhub-psp-never-received` | ticket | The sweeper failed a Kiripay payment as `psp_never_received` after 30 minutes. | [§4](#4-the-psp-knows-the-answer-and-we-dont) "404 — the PSP has never seen it". If the charge turns up later, it arrives as a late success. |
+| <a id="payhub-audit-write-failed"></a>`payhub-audit-write-failed` | page | An authorization refusal could not be written to the audit log (`audit_refusal_failed` in the web log). The audit trail has a gap. | The log line's `error` and `detail`; usually the database. [§5](#5-it-is-our-bug) if it is not an outage. |
+| <a id="payhub-psp-call-in-tx"></a>`payhub-psp-call-in-tx` | ticket | A PSP call was made inside an open database transaction (DECISIONS #13): a rollback would lose the record of a call the PSP received. | [§5](#5-it-is-our-bug): the `psp_call` log line names the PSP and path; the fix is code. |
+| <a id="payhub-circuit-open"></a>`payhub-circuit-open` | page | A PSP's circuit breaker opened (`psp_circuit.opened`): PayHub stopped calling it for 30 seconds at a time. | [§3](#3-psp-unreachable). |
+| <a id="payhub-recon-breaks"></a>`payhub-recon-breaks` | ticket | The settlement run found lines that do not match the ledger. | [Settlement discrepancies](#settlement-discrepancies-the-morning-after). |
+| <a id="payhub-ledger-imbalance"></a>`payhub-ledger-imbalance` | page | Reconciliation found a transfer that does not net to zero. | [§7](#7-money-questions-did-the-customer-get-charged) "Every `transfer_id` must net to zero"; page the day team. |
+| <a id="payhub-stuck-alerts"></a>`payhub-stuck-alerts` | page | The sweeper raised `alert.stuck_payment`: a payment in `pending` or `unknown` for more than 15 minutes. | The top of this runbook, [§1](#1-find-the-payment-30-seconds). |
+| <a id="payhub-stuck-unknown"></a>`payhub-stuck-unknown` | page | `payhub_unknown_state_payments` (from web) has been above 0 for 15 minutes. | [§2](#2-decide-which-of-four-situations-you-are-in-1-minute); find them with `Payment.where(state: "unknown")`. |
+| <a id="payhub-dead-letters"></a>`payhub-dead-letters` | ticket | `payhub_outbound_events_dead` (from web) is above 0: merchant webhooks that ran out of retries. | [Quick reference](#quick-reference) "What did we tell the merchant?"; redeliver once the merchant's endpoint is fixed. |
+| <a id="payhub-error-spans"></a>`payhub-error-spans` | page | More than 2% of requests and jobs (server and consumer spans, at least 20 in 5 minutes, `/metrics` and `/healthz` left out) ended in error, for 5 minutes. Jobs count in the ratio too: a burst of failing jobs pages as well. | Grafana Explore on `otel_traces` with `StatusCode = 'Error'` to see which route or job; then [§3](#3-psp-unreachable) (PSP), [§6](#6-the-job-never-ran) (Sidekiq) or [§5](#5-it-is-our-bug). |
+| <a id="payhub-slo-api-p95"></a>`payhub-slo-api-p95` | ticket | The p95 of `/v1` request duration, over the last 10 minutes, has been above 300ms for 10 minutes. | The slowest `/v1` traces in Grafana; a slow PSP shows as long client spans ([§3](#3-psp-unreachable)). |
+| <a id="payhub-slo-outcome"></a>`payhub-slo-outcome` | page | Payments have stayed in `unknown` for the whole hour (`payhub_unknown_state_payments` from web above 0 throughout): the payment outcome SLO is burning. Stuck-payment alerts page on their own (`payhub-stuck-alerts`). | [§1](#1-find-the-payment-30-seconds), then [§2](#2-decide-which-of-four-situations-you-are-in-1-minute). |
+| <a id="payhub-scrape-down"></a>`payhub-scrape-down` | page | The collector has not scraped the labelled `service` (`payhub-web` or `payhub-worker`) for 5 minutes (`up` = 0, or no scrape at all); one alert per service. Every metric alert for it is blind. | Is the service up (`docker compose ps`, [§6](#6-the-job-never-ran) for the worker)? If it is, `METRICS_TOKEN` differs between it and the collector ([Logs and retention](#logs-and-retention), the variable table). |
+| <a id="payhub-logs-silent"></a>`payhub-logs-silent` | page | No PayHub log line reached ClickHouse in 15 minutes. The sweepers log every minute, so this is the pipeline, and the S3 archive has the same gap. | The collector's own logs, then [Logs and retention](#logs-and-retention) (`env: OTEL_SERVICE_NAME`, permissions, restarts). |
+| <a id="datasource-error"></a>`DatasourceError` (any rule) | the rule's | Grafana could not run a rule's query: ClickHouse is unreachable, refused the login, or rejected the SQL. The alert names the rule (`rulename`) and carries the error. While it fires that rule is blind; when every rule errors, all alerting is. | `docker compose ps clickhouse` and `curl -s localhost:8123/ping` (production: the ClickHouse host Grafana's datasource points at); then Grafana → Connections → ClickHouse → *Save & test*. If only one rule errors, paste its SQL into ClickHouse to see the error; a ClickHouse upgrade can reject a function the rule uses. Until it clears, watch the log and the `/ops` queue by hand. |
+| <a id="payhub-archive-upload-failed"></a>`payhub-archive-upload-failed` | page | The collector failed to upload log records to S3 (`otelcol_exporter_send_failed_log_records`, exporter `awss3`). The 0.111.0 exporter does not retry: those lines are not in the archive. | [Logs and retention](#logs-and-retention) "S3 outage": fix the bucket or credentials, then backfill the hour from ClickHouse. |
+
 ## Quick reference
 
 | Question | Where |
@@ -193,3 +354,10 @@ If nobody suitable is left, `bin/rails "merchants:invite_owner[<merchant id>,<em
 | What did the PSP tell us? | `inbound_events` (`signature_valid=false` rows were rejected, never processed) |
 | What did we tell the merchant? | `outbound_events` + `outbound_delivery_attempts`; `POST /v1/events/:id/redeliver` for dead ones. Retries back off 1m, 5m, 30m, 2h, 8h, 24h, 36h; dead after attempt 8 (~70.6h). A redelivery gets a fresh 8-attempt budget on the same schedule; attempt numbers continue from where they stopped |
 | Backlog right now | `/metrics`: `payhub_unknown_state_payments`, `payhub_outbound_events_pending`, `payhub_outbound_events_dead` |
+| Which database user? | Web and worker: `payhub_app` (rows only; cannot touch the triggers). The migration container only: `payhub_owner`, via its own `DATABASE_URL`. `permission denied for table …` after a deploy: something was created by another role; rerun `db/roles.sql` as a superuser. [Database roles](#database-roles-planned-work-before-the-first-deploy-with-them) |
+| Migrate on deploy | One one-off container from the new image: `bin/rails db:prepare` as a release task, or `RUN_MIGRATIONS=true` with the command `true` (the entrypoint migrates, then `true` exits); web (`CMD`, Puma) and worker (`bundle exec sidekiq`) without it, and the entrypoint refuses it with a server command. Its `DATABASE_URL` is the owner URL ([Database roles](#database-roles-planned-work-before-the-first-deploy-with-them)) pointing at Postgres itself or a session-mode pool, never a transaction-mode PgBouncer (the migration's session `SET`s would leak into app traffic, and its advisory lock would not hold). README "Production image" |
+| <a id="safe-migrations"></a>Safe migrations (strong_migrations blocked one) | The error names the operation and prints the safe version; use it. Indexes: `disable_ddl_transaction!` plus `algorithm: :concurrently` (a failed concurrent build leaves an INVALID index; rerunning the same `add_index :table, :columns, …` drops it first, automatically; for any other form, such as an `execute`d `CREATE INDEX`, `DROP INDEX CONCURRENTLY` it by hand before rerunning). `safety_assured { … }` only with a comment in the migration saying why it is safe. `canceling statement due to lock timeout` on deploy: something held the table for over 10 s. A migration in a transaction (the default) rolled back whole; one with `disable_ddl_transaction!` kept the steps before it, so check which ran. Rerun it when traffic is lower, on Postgres directly or a session-mode pool, never a transaction-mode PgBouncer ("Migrate on deploy"). README "Migrations" |
+| Puma workers and database connections | `WEB_CONCURRENCY` worker processes per web container (cluster mode from 1, the app preloaded from 2; use 0 or at least 2, Puma warns about a single worker; the boot log says `Puma starting in cluster mode` and `Workers: N`) × `RAILS_MAX_THREADS` threads (default 3; the DB pool defaults to 5, so set it explicitly on web, and on the worker keep it at least the Sidekiq concurrency). Connections at most: web containers × `WEB_CONCURRENCY` × threads + worker containers × Sidekiq concurrency (5) + headroom for one-off tasks (migrations, consoles); size Postgres or PgBouncer for it. README "Configuration" |
+| <a id="stop-grace-periods"></a>Stop grace periods | Web: the platform's stop grace above Puma's `worker_shutdown_timeout` (25 s, cluster mode only; in single mode, `WEB_CONCURRENCY` unset or `0`, Puma waits for requests with no limit, so the grace period is the only bound); worker: at least Sidekiq's `:timeout:` (25 s) + 5 s. ECS/Kubernetes default 30 s, Docker 10 s (Compose sets 30 s web, 35 s worker). Deregister from the load balancer before SIGTERM (ALB deregistration delay, Kubernetes `preStop` sleep): Puma closes its listeners at once. Keep `persistent_timeout` (65 s) above the ALB idle timeout (60 s). A worker SIGKILLed mid-drain loses the jobs it was running (already popped from Redis, no retry). README "Configuration" |
+| Boot without TLS (debugging the image) | `RAILS_FORCE_SSL=false`; never behind a real host |
+| Job counters (late success, stuck-payment alerts, settlement discrepancies, PSP call in transaction) | The worker's own `/metrics` on port 9394 (`WORKER_METRICS_PORT`), same bearer token; not in the web scrape. `docker compose exec worker curl -s -H "Authorization: Bearer $METRICS_TOKEN" localhost:9394/metrics`. In ClickHouse: `ServiceName = 'payhub-worker'` (web is `'payhub-web'`) |

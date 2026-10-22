@@ -14,8 +14,8 @@ class NordpayAdapter < PspAdapter
 
   # webhook_secrets: current first; more than one only while rotating (#15).
   sig { params(base_url: String, api_key: String, webhook_secrets: T::Array[String]).void }
-  def initialize(base_url: ENV.fetch("NORDPAY_URL", "http://localhost:4001"),
-                 api_key: ENV.fetch("NORDPAY_API_KEY", "np_test_key"),
+  def initialize(base_url: PspEnv.fetch("NORDPAY_URL", "http://localhost:4001"),
+                 api_key: PspEnv.fetch("NORDPAY_API_KEY", "np_test_key"),
                  webhook_secrets: WebhookSignature.secrets_from_env("NORDPAY_WEBHOOK_SECRETS", "NORDPAY_WEBHOOK_SECRET", "np_whsec_test"))
     @webhook_secrets = webhook_secrets
     @conn = T.let(

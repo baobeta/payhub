@@ -1,12 +1,52 @@
 #!/bin/bash -e
+shopt -s extglob
+
+# Entrypoint for both image targets (Dockerfile): web, worker and vite.
 
 # Enable jemalloc for reduced memory usage and latency.
 if [ -z "${LD_PRELOAD+x}" ] && [ -f /usr/lib/*/libjemalloc.so.2 ]; then
   export LD_PRELOAD="$(echo /usr/lib/*/libjemalloc.so.2)"
 fi
 
-# If running the rails server then create or migrate existing database
-if [ "${1}" == "./bin/rails" ] && [ "${2}" == "server" ]; then
+# Metrics files from a previous start must go, or the restarted process keeps
+# their values (stale gauges, PID files reused). RUNBOOK "Metrics across processes".
+# Only a directory inside a tmp/ directory is wiped, so a typo such as "/" or
+# "/rails" refuses to start instead of deleting the app.
+if [ -n "${PROMETHEUS_MULTIPROC_DIR}" ]; then
+  metrics_dir="${PROMETHEUS_MULTIPROC_DIR%%+(/)}"
+  case "${metrics_dir}" in
+    */../* | */.. | ../* | .. | */./* | */.) safe=no ;;
+    */tmp/?*) safe=yes ;;
+    *) safe=no ;;
+  esac
+  if [ "${safe}" != yes ]; then
+    echo "docker-entrypoint: refusing to wipe PROMETHEUS_MULTIPROC_DIR=${PROMETHEUS_MULTIPROC_DIR}:" \
+         "it must be a directory inside a tmp/ directory (e.g. /rails/tmp/prometheus)" >&2
+    exit 1
+  fi
+  mkdir -p "${metrics_dir}"
+  find "${metrics_dir}" -mindepth 1 -delete
+fi
+
+# Opt in on one short-lived container per deploy (a release task, an init
+# container), whose command exits: `docker run -e RUN_MIGRATIONS=true payhub true`.
+# Never on web or worker: that container holds the owner's DATABASE_URL, so a
+# server started after the migration would serve traffic as the owner, and two
+# migrating at once fail on Rails' migration lock (ConcurrentMigrationError).
+# A server command is refused unless ALLOW_MIGRATE_AND_SERVE=true (one-container
+# setups with a single database user). README "Production image".
+if [ "${RUN_MIGRATIONS}" == "true" ]; then
+  # Matches `puma`, `bundle exec sidekiq`, `bin/rails server`, also inside `sh -c "..."`.
+  case " ${*} " in
+    *[\ /]puma[\ ]* | *[\ /]sidekiq[\ ]* | *[\ /]rails\ server[\ ]* | *[\ /]rails\ s[\ ]*) server=yes ;;
+    *) server=no ;;
+  esac
+  if [ "${server}" == yes ] && [ "${ALLOW_MIGRATE_AND_SERVE}" != "true" ]; then
+    echo "docker-entrypoint: refusing RUN_MIGRATIONS=true with a server command (${*}):" \
+         "migrate in a one-off container whose command exits (e.g. \`true\`), then start" \
+         "web and worker without RUN_MIGRATIONS and with the app's DATABASE_URL" >&2
+    exit 1
+  fi
   ./bin/rails db:prepare
 fi
 

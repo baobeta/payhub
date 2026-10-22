@@ -6,8 +6,46 @@ on:
     branches: [master]
 
 jobs:
-  check:
+  # bin/check without rspec: zeitwerk, generated files, authz grep, rubocop,
+  # sorbet, frontend typecheck/lint/test/build, brakeman. None of it needs the
+  # database, so it runs once here rather than once per shard.
+  static:
+    name: static gates
     runs-on: ubuntu-latest
+
+    env:
+      RAILS_ENV: test
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: .ruby-version
+          bundler-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Quality gate (all but rspec)
+        run: bin/check --skip-rspec
+
+      - name: The rspec shards hold every spec file exactly once
+        run: diff <(for s in 0 1 2; do bin/rspec-shard "$s" 3; done | sort) <(find spec -name '*_spec.rb' | sort)
+
+  # RSpec in three parallel shards, split by bin/rspec-shard from the per-file
+  # times in spec/timings.json. Each shard has its own fresh database and
+  # writes its own coverage report (not merged).
+  rspec:
+    name: rspec (shard ${{ matrix.shard }} of 3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
 
     services:
       postgres:
@@ -42,11 +80,14 @@ jobs:
           ruby-version: .ruby-version
           bundler-cache: true
 
+      # The web shell specs render Vite tags; build once up front rather than
+      # inside whichever spec gets there first.
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: bin/vite build --clear --mode=test
 
       - name: Postgres client matching the server
         run: |
@@ -56,9 +97,253 @@ jobs:
       - name: Prepare database
         run: bin/rails db:create db:schema:load
 
-      # Same gate as `bin/check` locally: zeitwerk, generated files, rubocop, sorbet, frontend, rspec, brakeman.
-      - name: Quality gate
-        run: bin/check
+      - name: rspec (shard ${{ matrix.shard }} of 3)
+        run: |
+          out="$(bin/rspec-shard ${{ matrix.shard }} 3)"
+          mapfile -t files <<< "$out"
+          [ -n "$out" ] && [ ${#files[@]} -gt 0 ] || { echo "empty shard"; exit 1; }
+          echo "::group::${#files[@]} spec files"
+          printf '%s\n' "${files[@]}"
+          echo "::endgroup::"
+          bundle exec rspec "${files[@]}"
+
+  # The one required gate: green only when the static gates, every shard and
+  # the production image are. A skipped job would count as passing, so it runs
+  # unless the workflow was cancelled and checks every result itself.
+  check:
+    needs: [static, rspec, image]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Static gates, all rspec shards and the image passed
+        run: |
+          echo "static: ${{ needs.static.result }}, rspec: ${{ needs.rspec.result }}, image: ${{ needs.image.result }}"
+          test "${{ needs.static.result }}" = success && test "${{ needs.rspec.result }}" = success \
+            && test "${{ needs.image.result }}" = success
+
+  # The production image (Dockerfile, target production) builds, runs as
+  # non-root and boots in production: web answers /healthz and guards /metrics,
+  # the worker boots from the same image. Real-looking config, no TLS. The
+  # database is set up as RUNBOOK "Database roles" says: db/roles.sql as the
+  # superuser, migrations as payhub_owner in a one-off container, web and
+  # worker as payhub_app.
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: payhub
+          POSTGRES_PASSWORD: payhub
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U payhub"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: production
+          tags: payhub:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Runs as non-root
+        run: |
+          uid="$(docker run --rm payhub:ci id -u)"
+          echo "uid=$uid"
+          test "$uid" != "0"
+
+      # Every variable production requires (README "Configuration"), with
+      # throwaway values that are not the simulators' defaults. Host network:
+      # the services above listen on localhost. DATABASE_URL is payhub_app's;
+      # only the migration container gets the owner's URL.
+      - name: Production environment
+        run: |
+          app_pw="$(openssl rand -hex 16)"
+          owner_pw="$(openssl rand -hex 16)"
+          {
+            echo "APP_DB_PASSWORD=$app_pw"
+            echo "OWNER_DB_PASSWORD=$owner_pw"
+            echo "OWNER_DATABASE_URL=postgres://payhub_owner:$owner_pw@localhost:5432/payhub_production"
+          } >> "$GITHUB_ENV"
+          {
+            echo "SECRET_KEY_BASE=$(openssl rand -hex 64)"
+            echo "APP_HOST=ci.payhub.invalid"
+            echo "DATABASE_URL=postgres://payhub_app:$app_pw@localhost:5432/payhub_production"
+            echo "REDIS_URL=redis://localhost:6379/0"
+            echo "AR_ENCRYPTION_PRIMARY_KEY=$(openssl rand -hex 16)"
+            echo "AR_ENCRYPTION_DETERMINISTIC_KEY=$(openssl rand -hex 16)"
+            echo "AR_ENCRYPTION_KEY_DERIVATION_SALT=$(openssl rand -hex 16)"
+            echo "NORDPAY_URL=https://nordpay.invalid"
+            echo "NORDPAY_API_KEY=np_live_ci"
+            echo "NORDPAY_WEBHOOK_SECRET=np_whsec_ci"
+            echo "KIRIPAY_URL=https://kiripay.invalid"
+            echo "KIRIPAY_API_KEY=kp_live_ci"
+            echo "KIRIPAY_WEBHOOK_SECRET=kp_whsec_ci"
+            echo "METRICS_TOKEN=$(openssl rand -hex 32)"
+            echo "RAILS_FORCE_SSL=false"
+          } > "$RUNNER_TEMP/app.env"
+
+      # psql from the server's own image, as the superuser the service creates.
+      - name: Database roles (db/roles.sql as the superuser)
+        run: |
+          cat > "$RUNNER_TEMP/psql" <<'SH'
+          #!/bin/sh
+          exec docker run --rm -i --network host -e PGPASSWORD=payhub -v "$GITHUB_WORKSPACE/db:/db:ro" \
+            postgres:16-alpine psql -h localhost -U payhub -v ON_ERROR_STOP=1 "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/psql"
+          "$RUNNER_TEMP/psql" -d postgres -c "CREATE DATABASE payhub_production"
+          "$RUNNER_TEMP/psql" -d payhub_production -1 -f /db/roles.sql
+          "$RUNNER_TEMP/psql" -d payhub_production \
+            -c "ALTER ROLE payhub_owner PASSWORD '$OWNER_DB_PASSWORD'" -c "ALTER ROLE payhub_app PASSWORD '$APP_DB_PASSWORD'"
+
+      - name: The entrypoint refuses to migrate and then serve
+        run: |
+          set +e
+          docker run --rm --env-file "$RUNNER_TEMP/app.env" -e RUN_MIGRATIONS=true payhub:ci > "$RUNNER_TEMP/refuse.log" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/refuse.log"
+          test "$code" = 1
+          grep -q "refusing RUN_MIGRATIONS=true with a server command" "$RUNNER_TEMP/refuse.log"
+
+      # A one-off container whose command exits, as a release task or init
+      # container would run it; then roles.sql again, which makes the tables
+      # db:prepare created for itself (schema_migrations, ar_internal_metadata)
+      # read-only to payhub_app.
+      - name: Migrate as payhub_owner in a one-off container
+        run: |
+          docker run --rm --network host --env-file "$RUNNER_TEMP/app.env" \
+            -e RUN_MIGRATIONS=true -e DATABASE_URL="$OWNER_DATABASE_URL" payhub:ci true
+          "$RUNNER_TEMP/psql" -d payhub_production -1 -f /db/roles.sql
+          owner="$("$RUNNER_TEMP/psql" -d payhub_production -tAc "SELECT tableowner FROM pg_tables WHERE tablename = 'ledger_entries'")"
+          echo "ledger_entries owner: $owner"
+          test "$owner" = payhub_owner
+
+      # Two Puma workers, as production runs: every later check (/metrics
+      # included) is answered by whichever worker gets the request.
+      - name: Web boots as payhub_app and answers /healthz
+        run: |
+          docker run -d --name web --network host --env-file "$RUNNER_TEMP/app.env" -e OTEL_SERVICE_NAME=payhub-web -e WEB_CONCURRENCY=2 payhub:ci
+          for _ in $(seq 60); do
+            curl -sf localhost:3000/healthz && exit 0
+            sleep 1
+          done
+          echo "web did not answer /healthz in 60s"
+          docker logs web
+          exit 1
+
+      - name: Web's database user is payhub_app
+        run: |
+          user="$(docker exec web bin/rails runner 'puts "db_user=#{ActiveRecord::Base.connection.select_value("SELECT current_user")}"' | grep '^db_user=')"
+          echo "$user"
+          test "$user" = db_user=payhub_app
+
+      - name: WEB_CONCURRENCY runs Puma in cluster mode
+        run: |
+          docker logs web > "$RUNNER_TEMP/web.log" 2>&1
+          grep -E "Puma starting|Workers:|Preloading" "$RUNNER_TEMP/web.log" || true
+          grep -q "Puma starting in cluster mode" "$RUNNER_TEMP/web.log"
+          grep -qE '^\[[0-9]+\] \*\s+Workers: 2$' "$RUNNER_TEMP/web.log"
+
+      # docker stop lets a request in flight finish, and Puma then exits 0 (not
+      # 1, see raise_exception_on_sigterm in config/puma.rb). A rackup that
+      # takes 5 s, served with the app's config/puma.rb and two workers.
+      - name: docker stop drains a request in flight and exits 0
+        run: |
+          trap 'docker rm -f drain >/dev/null 2>&1 || true' EXIT
+          mkdir -p "$RUNNER_TEMP/drain"
+          cat > "$RUNNER_TEMP/drain/slow.ru" <<'RU'
+          run ->(_env) { sleep 5; [200, { "content-type" => "text/plain" }, ["drained\n"]] }
+          RU
+          docker run -d --name drain -p 3002:3000 -e WEB_CONCURRENCY=2 \
+            -v "$RUNNER_TEMP/drain:/drain:ro" payhub:ci bundle exec puma -C config/puma.rb /drain/slow.ru
+          booted=no
+          for _ in $(seq 30); do
+            [ "$(docker logs drain 2>&1 | grep -c ' booted in ')" = 2 ] && booted=yes && break
+            sleep 1
+          done
+          if [ "$booted" != yes ]; then
+            echo "drain: two workers did not boot in 30s"
+            docker logs drain
+            exit 1
+          fi
+          curl -s -o /dev/null -w '%{http_code}' --max-time 20 localhost:3002/ > "$RUNNER_TEMP/drain/code" &
+          curl_pid=$!
+          sleep 1
+          docker stop drain
+          wait "$curl_pid" || true
+          code="$(cat "$RUNNER_TEMP/drain/code")"
+          exit_code="$(docker inspect -f '{{.State.ExitCode}}' drain)"
+          echo "in-flight request: $code, puma exit code: $exit_code"
+          docker logs drain 2>&1 | tail -5
+          docker rm drain
+          test "$code" = 200 && test "$exit_code" = 0
+
+      - name: /metrics wants the token
+        run: |
+          token="$(grep ^METRICS_TOKEN= "$RUNNER_TEMP/app.env" | cut -d= -f2)"
+          without="$(curl -s -o /dev/null -w '%{http_code}' localhost:3000/metrics)"
+          with="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" localhost:3000/metrics)"
+          echo "without token: $without, with token: $with"
+          test "$without" = 401 && test "$with" = 200
+
+      - name: Rails serves the Vite bundles
+        run: |
+          asset="$(curl -sf localhost:3000/dashboard | grep -o '/vite/assets/[^"]*\.js' | head -1)"
+          echo "asset: $asset"
+          test -n "$asset"
+          curl -sf -o /dev/null "localhost:3000$asset"
+
+      # The default (RAILS_FORCE_SSL unset): /healthz still answers plain-HTTP
+      # probes, everything else redirects to HTTPS. A second web on port 3001.
+      - name: With force_ssl on, /healthz is not redirected
+        run: |
+          grep -v '^RAILS_FORCE_SSL=' "$RUNNER_TEMP/app.env" > "$RUNNER_TEMP/app-ssl.env"
+          docker run -d --name web-ssl --network host --env-file "$RUNNER_TEMP/app-ssl.env" -e OTEL_SERVICE_NAME=payhub-web -e PORT=3001 payhub:ci
+          for _ in $(seq 60); do
+            curl -sf localhost:3001/healthz >/dev/null && break
+            sleep 1
+          done
+          healthz="$(curl -s -o /dev/null -w '%{http_code}' localhost:3001/healthz)"
+          dashboard="$(curl -s -o /dev/null -w '%{http_code}' localhost:3001/dashboard)"
+          echo "healthz: $healthz, dashboard: $dashboard"
+          [ "$healthz" = 200 ] || docker logs web-ssl
+          docker rm -f web-ssl
+          test "$healthz" = 200 && test "$dashboard" = 301
+
+      - name: Worker boots from the same image
+        run: |
+          docker run -d --name worker --network host --env-file "$RUNNER_TEMP/app.env" -e OTEL_SERVICE_NAME=payhub-worker payhub:ci bundle exec sidekiq
+          for _ in $(seq 60); do
+            docker logs worker 2>&1 | grep -q "Worker metrics on" && exit 0
+            sleep 1
+          done
+          echo "worker did not start in 60s"
+          docker logs worker
+          exit 1
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          docker logs web || true
+          docker logs worker || true
 
   # Browser flows against the real app in the test env (playwright.config.ts
   # builds its own payhub_e2e database, seed and Vite bundle).

@@ -52,10 +52,20 @@ module WebhookSignature
     end
 
     # "NEW,OLD" in `list_var`, else the single-secret variable. The first
-    # secret is the current one.
+    # secret is the current one. The single-secret variable goes through
+    # PspEnv, which refuses a missing or simulator value in production.
+    # Production refuses the same simulator value inside a rotation list, and
+    # a list that holds no secret at all (e.g. "" or ","): every webhook would fail.
     sig { params(list_var: String, single_var: String, default: String).returns(T::Array[String]) }
     def secrets_from_env(list_var, single_var, default)
-      ENV.fetch(list_var) { ENV.fetch(single_var, default) }.split(",").map(&:strip).reject(&:empty?)
+      secrets = ENV.fetch(list_var) { PspEnv.fetch(single_var, default) }.split(",").map(&:strip).reject(&:empty?)
+      return secrets unless Rails.env.production?
+
+      var = ENV.key?(list_var) ? list_var : single_var
+      raise PspEnv::Missing, "#{var} holds no webhook secret" if secrets.empty?
+      raise PspEnv::Missing, "#{var} holds the simulator's test value" if secrets.include?(default)
+
+      secrets
     end
 
     private

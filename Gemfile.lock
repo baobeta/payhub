@@ -572,6 +572,8 @@ GEM
       rexml (>= 3.2.6)
       sorbet-static-and-runtime (>= 0.5.10187)
       thor (>= 0.19.2)
+    strong_migrations (2.8.0)
+      activerecord (>= 7.2)
     tapioca (0.20.0)
       benchmark
       bundler (>= 2.2.25)
@@ -642,7 +644,7 @@ DEPENDENCIES
   pg_query (~> 6.0)
   prometheus-client (~> 5.0)
   prosopite (~> 2.2)
-  puma (>= 5.0)
+  puma (>= 6.0, < 9)
   rack-attack (~> 6.7)
   rails (~> 8.1.4)
   redis (~> 5.4)
@@ -657,6 +659,7 @@ DEPENDENCIES
   simplecov (~> 0.22)
   sorbet
   sorbet-runtime
+  strong_migrations (~> 2.0)
   tapioca
   tzinfo-data
   vite_rails (~> 3.0)
