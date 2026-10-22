@@ -57,13 +57,12 @@ module Metrics
     sig { params(name: Symbol, value: Numeric, labels: T.untyped).void }
     def gauge(name, value, **labels)
       label_names = GAUGES.fetch(name) { raise ArgumentError, "unknown gauge #{name.inspect}" }
-      # store_settings are only valid for DirectFileStore; Synchronized (the default
-      # in-process store, used when PROMETHEUS_MULTIPROC_DIR is unset) rejects any
-      # store_settings with InvalidStoreSettingsError. See RUNBOOK §Metrics.
-      file_store = Prometheus::Client.config.data_store.is_a?(Prometheus::Client::DataStores::DirectFileStore)
-      extra = file_store ? { store_settings: { aggregation: :most_recent } } : {}
+      # The in-process store (PROMETHEUS_MULTIPROC_DIR unset) refuses any store
+      # settings; aggregation only applies to the file store (RUNBOOK "Metrics across processes").
+      settings = Prometheus::Client.config.data_store.is_a?(Prometheus::Client::DataStores::DirectFileStore) ? { aggregation: :most_recent } : {}
       g = REGISTRY.get(:"payhub_#{name}") ||
-          REGISTRY.gauge(:"payhub_#{name}", **T.unsafe({ docstring: name.to_s.tr("_", " "), labels: label_names, **extra }))
+          REGISTRY.gauge(:"payhub_#{name}", docstring: name.to_s.tr("_", " "), labels: label_names,
+                                            store_settings: settings)
       g.set(value, labels: labels)
     end
 
