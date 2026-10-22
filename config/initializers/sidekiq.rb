@@ -8,9 +8,12 @@ Sidekiq.configure_server do |config|
   config.redis = { url: ENV.fetch("REDIS_URL", "redis://localhost:6379/0") }
 
   # Register the periodic sweepers from config/schedule.yml. Idempotent: an
-  # existing job with the same name is updated, not duplicated.
-  schedule = Rails.root.join("config/schedule.yml")
-  Sidekiq::Cron::Job.load_from_hash!(YAML.load_file(schedule)) if File.exist?(schedule)
+  # existing job with the same name is updated, not duplicated. sidekiq-cron
+  # loads the file itself on :startup (source "schedule": jobs dropped from it
+  # are deleted). If Redis loses them later, CronSchedule.heal! (on Sidekiq's
+  # 10-second :beat, checking every CRON_SCHEDULE_CHECK_SECONDS, 60) loads it again.
+  Sidekiq::Cron.configure { |cron| cron.cron_schedule_file = Rails.root.join("config/schedule.yml").to_s }
+  config.on(:beat) { CronSchedule.heal! }
 
   # Jobs raise counters the web scrape never sees (each service has its own
   # metrics directory), so the worker serves its own /metrics on
