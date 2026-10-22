@@ -21,7 +21,7 @@ npm run erd:build    # one-shot docs/schema.erd.html, no server
 
 `npm run erd` serves the diagram, reloads it whenever you save
 `docs/schema.dbml`, and writes every drag to **`docs/schema.erd.layout.json`**.
-Commit that file and everyone gets the same arrangement. The server only listens
+That file is git-ignored: each machine keeps its own arrangement. The server only listens
 on `127.0.0.1` and only accepts layout writes from its own page.
 
 Opening `docs/schema.erd.html` directly (from `erd:build`) shows the saved
@@ -61,7 +61,7 @@ The auto layout is a starting point. Rearrange it by hand:
 
 Positions are saved to `docs/schema.erd.layout.json` (keyed by table/note
 name; group boxes are always re-fitted around their tables), so they survive
-re-renders, browser restarts and other machines. **Reset layout** returns to the
+re-renders and browser restarts (not other machines: the file is git-ignored). **Reset layout** returns to the
 auto layout and empties the file. Clicking a table in the sidebar zooms the view
 to it.
 

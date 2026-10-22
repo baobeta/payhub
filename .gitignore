@@ -67,3 +67,4 @@ docs/*.erd.html
 docs/*.erd.svg
 docs/*.model.json
 dbml-error.log
+docs/*.erd.layout.json
