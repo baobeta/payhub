@@ -427,6 +427,7 @@ Behaviour, signatures, failure modes and admin endpoints are documented in **[do
 - `bin/check --skip-rspec` runs every gate but rspec (CI's static job).
 - `bin/rspec-shard SHARD TOTAL` prints the spec files of one shard (`bin/rspec-shard 0 3`), packed by the per-file times in `spec/timings.json`.
 - After adding or moving a slow spec file, or when the shards' CI times drift apart, re-record the timings: `bundle exec rspec -f json -o tmp/rspec.json && bin/rspec-shard --record tmp/rspec.json`. A run of some files updates only theirs.
+- Dependabot patch updates merge themselves once CI passes on them (`.github/workflows/dependabot-auto-merge.yml`). Minor and major updates, and any dependabot PR with someone else's commit on it, wait for review. A merge made by the workflow does not start a CI run on master.
 
 | Layer | What it proves |
 | --- | --- |

@@ -1,0 +1,57 @@
+name: Dependabot auto-merge
+
+# Squash-merges a dependabot PR once CI has passed on it, when every dependency
+# it updates is a patch release. Minor and major updates wait for a person.
+#
+# workflow_run rather than pull_request: it runs from master after CI finishes,
+# so CI is the gate even though master has no required checks, and it never
+# checks out the PR's code. Untrusted text reaches the script only through env.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  merge-patch:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Merge if every update is a patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          pr=$(gh pr list --head "$HEAD_BRANCH" --state open --json number,author,headRefOid \
+            --jq ".[] | select(.author.login == \"app/dependabot\" and .headRefOid == \"$HEAD_SHA\") | .number")
+          if [ -z "$pr" ]; then
+            echo "No open dependabot PR at $HEAD_SHA (closed, or new commits since CI ran)."
+            exit 0
+          fi
+
+          # Someone else's commit on the branch means a person should look at it.
+          authors=$(gh api "repos/$GH_REPO/pulls/$pr/commits" --jq '[.[].author.login] | unique | join(",")')
+          if [ "$authors" != "dependabot[bot]" ]; then
+            echo "#$pr has commits by $authors; leaving it for review."
+            exit 0
+          fi
+
+          # Dependabot writes "update-type: version-update:semver-<level>" per dependency.
+          types=$(gh api "repos/$GH_REPO/pulls/$pr/commits" --jq '.[].commit.message' \
+            | sed -n 's/^ *update-type: //p' | sort -u)
+          echo "#$pr update types: ${types:-none}"
+          if [ "$types" != "version-update:semver-patch" ]; then
+            echo "Not patch-only; leaving #$pr for review."
+            exit 0
+          fi
+
+          gh pr merge "$pr" --squash --delete-branch --match-head-commit "$HEAD_SHA"
+          echo "Merged #$pr."
