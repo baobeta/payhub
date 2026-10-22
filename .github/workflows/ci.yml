@@ -24,7 +24,7 @@ jobs:
           ruby-version: .ruby-version
           bundler-cache: true
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -82,7 +82,7 @@ jobs:
 
       # The web shell specs render Vite tags; build once up front rather than
       # inside whichever spec gets there first.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -382,18 +382,20 @@ jobs:
         with:
           ruby-version: .ruby-version
           bundler-cache: true
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: playwright-report
-          path: playwright-report/
+          # Playwright keeps traces of failed tests here (trace: retain-on-failure);
+          # there is no HTML reporter, so playwright-report/ is never written.
+          name: playwright-traces
+          path: test-results/
 
   # The one rule, end to end: the real compose stack, a hostile PSP simulator,
   # and bin/rails chaos:run checking the ledger against the simulator's own
