@@ -83,7 +83,7 @@ exporters:
     endpoint: tcp://clickhouse:9000?dial_timeout=10s
     database: otel
     username: otel
-    password: otel
+    password: ${env:CLICKHOUSE_PASSWORD} # compose: CLICKHOUSE_PASSWORD, default otel
     create_schema: true
     ttl: 72h
     timeout: 10s

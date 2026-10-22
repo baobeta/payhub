@@ -1,5 +1,13 @@
-# Local dev: Rails runs natively, Postgres runs in docker compose (port 5432).
-# Inside compose, DATABASE_URL overrides host/user/password.
+# Local dev: Rails runs natively, Postgres runs in docker compose (host port 5434).
+# Inside compose, DATABASE_URL overrides host/user/password: web and worker go
+# through PgBouncer (its ?advisory_locks=false turns Rails' session advisory
+# locks off), and db: tasks use MIGRATION_DATABASE_URL, Postgres itself
+# (lib/tasks/direct_database.rake; RUNBOOK "Connection pooling"). The pooled
+# URL also has prepared_statements=false: with Postgres 16, Rails frees
+# statements with SQL DEALLOCATE, which PgBouncer passes to the wrong server
+# connection (aborting the transaction). From Postgres 17 (and pg >= 1.6 on
+# libpq >= 17) Rails uses the protocol-level Close, which PgBouncer >= 1.21
+# tracks; then the flag can go.
 default: &default
   adapter: postgresql
   encoding: unicode

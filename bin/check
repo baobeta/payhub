@@ -38,6 +38,21 @@ if grep -rnE "role ?==|\.(owner|admin|developer|support|viewer|approver)\?" app 
   exit 1
 fi
 
+step "transaction pooling (no session state in app code)"
+# Web and worker run behind a transaction-mode PgBouncer (RUNBOOK "Connection
+# pooling"): session SETs, session advisory locks, LISTEN/NOTIFY, WITH HOLD
+# cursors and temp tables would stick to a pooled server connection. SET LOCAL
+# and pg_advisory_xact_lock are fine. Opt out with # pooling-allow and a reason.
+hits="$( { grep -rnE "[\"'\`(]\s*SET\s" app lib --include='*.rb' --include='*.rake' | grep -vE "SET\s+LOCAL\s"
+          grep -rnE "pg_(try_)?advisory_lock(_shared)?\(|with_advisory_lock|\b(UN)?LISTEN\s|\bNOTIFY\s|pg_notify|WITH HOLD|CREATE\s+(TEMP|TEMPORARY)\s" \
+            app lib --include='*.rb' --include='*.rake'
+        } | grep -v "pooling-allow" || true )"
+if [ -n "$hits" ]; then
+  echo "$hits"
+  echo "Session state through the transaction pool: use SET LOCAL inside a transaction, pg_advisory_xact_lock, or a direct connection"
+  exit 1
+fi
+
 step "rubocop (style)"
 bundle exec rubocop
 

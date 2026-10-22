@@ -3,7 +3,9 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: payhub
-      POSTGRES_PASSWORD: payhub
+      # Read once, when the volume is first initialised; changing it later
+      # needs ALTER ROLE payhub PASSWORD as well (RUNBOOK "Secrets").
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-payhub}
       POSTGRES_DB: payhub_development
     ports:
       - "5434:5432" # 5432 is taken on the host; app connects via PGPORT=5434 locally
@@ -15,10 +17,47 @@ services:
       timeout: 3s
       retries: 10
 
+  # Transaction-mode pool in front of db: web and worker connect here, anything
+  # that migrates connects to db directly. Config: config/pgbouncer/pgbouncer.ini;
+  # rules and sizing: RUNBOOK "Connection pooling". Not published to the host;
+  # admin console: docker compose exec pgbouncer psql -h localhost -p 6432 -U payhub pgbouncer
+  pgbouncer:
+    image: edoburu/pgbouncer:v1.25.2-p0
+    environment:
+      # The image's entrypoint writes these to userlist.txt (plain text, for SCRAM).
+      DB_USER: payhub
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-payhub}
+      AUTH_TYPE: scram-sha-256
+      PGPASSWORD: ${POSTGRES_PASSWORD:-payhub} # for the admin console above
+    volumes:
+      # A file of its own, so the entrypoint skips generating one.
+      - ./config/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+    expose:
+      - "6432"
+    healthcheck:
+      # PgBouncer's own listener (its admin database) only; Postgres behind it
+      # is covered by depends_on db: service_healthy.
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "6432", "-U", "payhub", "-d", "pgbouncer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Persistent: Sidekiq's queues, scheduled jobs and retries, the cron schedule
+  # and the circuit-breaker state live here (RUNBOOK "Redis persistence").
+  # AOF (fsync every second: at most ~1 s of writes lost on a crash) plus the
+  # default RDB snapshots, in the named volume redis-data. noeviction: a full
+  # Redis refuses writes (an error on enqueue) instead of dropping jobs. No
+  # maxmemory locally (the machine's memory is the limit); production sets one.
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--save", "3600 1 300 100 60 10000", "--maxmemory-policy", "noeviction"]
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -42,14 +81,25 @@ services:
       # The port on YOUR machine (the container always listens on 3000). Links
       # the app prints or emails use it. Set WEB_PORT in .env if 3000 is taken.
       WEB_PORT: ${WEB_PORT:-3000}
-      DATABASE_URL: postgres://payhub:payhub@db:5432/payhub_development
+      # Through PgBouncer (transaction mode). advisory_locks=false: Rails takes
+      # no session advisory lock through the pool (a session lock is held by
+      # whichever client gets the server connection next, not by this one).
+      # prepared_statements=false: against Postgres 16 Rails frees statements
+      # with SQL DEALLOCATE, which breaks behind the pool (config/pgbouncer/pgbouncer.ini).
+      DATABASE_URL: postgres://payhub:${POSTGRES_PASSWORD:-payhub}@pgbouncer:6432/payhub_development?advisory_locks=false&prepared_statements=false
+      # Postgres itself, for every db: task (lib/tasks/direct_database.rake): migrations'
+      # session SETs and advisory lock must not go through the pool. RUNBOOK
+      # "Connection pooling".
+      MIGRATION_DATABASE_URL: postgres://payhub:${POSTGRES_PASSWORD:-payhub}@db:5432/payhub_development
       REDIS_URL: redis://redis:6379/0
+      # Secrets come from .env (git-ignored; template: .env.example), with the
+      # simulators' dev defaults. The simulators read the same variables.
       NORDPAY_URL: http://nordpay:4001
-      NORDPAY_API_KEY: np_test_key
-      NORDPAY_WEBHOOK_SECRET: np_whsec_test
+      NORDPAY_API_KEY: ${NORDPAY_API_KEY:-np_test_key}
+      NORDPAY_WEBHOOK_SECRET: ${NORDPAY_WEBHOOK_SECRET:-np_whsec_test}
       KIRIPAY_URL: http://kiripay:4002
-      KIRIPAY_API_KEY: kp_test_key
-      KIRIPAY_WEBHOOK_SECRET: kp_whsec_test
+      KIRIPAY_API_KEY: ${KIRIPAY_API_KEY:-kp_test_key}
+      KIRIPAY_WEBHOOK_SECRET: ${KIRIPAY_WEBHOOK_SECRET:-kp_whsec_test}
       RAILS_ENV: development
       VITE_RUBY_HOST: vite
       # Proxy /vite-dev through Rails: "vite" only resolves inside compose, so
@@ -72,6 +122,8 @@ services:
       METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
       db:
+        condition: service_healthy
+      pgbouncer:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -116,6 +168,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      pgbouncer:
+        condition: service_healthy
       redis:
         condition: service_healthy
       web:
@@ -136,7 +190,8 @@ services:
     ports:
       - "4001:4001"
     environment:
-      NORDPAY_API_KEY: np_test_key
+      NORDPAY_API_KEY: ${NORDPAY_API_KEY:-np_test_key}
+      NORDPAY_WEBHOOK_SECRET: ${NORDPAY_WEBHOOK_SECRET:-np_whsec_test}
       # Where the simulator POSTs its webhooks. Inside compose: the web service.
       # For a locally-run Rails (bin/rails s), override to http://host.docker.internal:3000/v1/webhooks/nordpay
       PAYHUB_WEBHOOK_URL: ${NORDPAY_WEBHOOK_URL:-http://web:3000/v1/webhooks/nordpay}
@@ -151,8 +206,8 @@ services:
     ports:
       - "4002:4002"
     environment:
-      KIRIPAY_API_KEY: kp_test_key
-      KIRIPAY_WEBHOOK_SECRET: kp_whsec_test
+      KIRIPAY_API_KEY: ${KIRIPAY_API_KEY:-kp_test_key}
+      KIRIPAY_WEBHOOK_SECRET: ${KIRIPAY_WEBHOOK_SECRET:-kp_whsec_test}
       KIRIPAY_PUBLIC_URL: http://localhost:4002
       # Where the simulator POSTs its webhooks. Inside compose: the web service.
       # For a locally-run Rails (bin/rails s), override to http://host.docker.internal:3000/v1/webhooks/kiripay
@@ -169,7 +224,7 @@ services:
     environment:
       CLICKHOUSE_DB: otel
       CLICKHOUSE_USER: otel
-      CLICKHOUSE_PASSWORD: otel
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-otel}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
     ports:
       - "8123:8123" # HTTP interface, for ad-hoc SQL: curl 'localhost:8123/?user=otel&password=otel' -d 'SELECT 1'
@@ -190,6 +245,7 @@ services:
     command: ["--config=/etc/otelcol/config.yaml"]
     environment:
       METRICS_TOKEN: ${METRICS_TOKEN:-} # sent on every /metrics scrape
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-otel}
     volumes:
       - ./observability/otel-collector.yaml:/etc/otelcol/config.yaml:ro
       - ./log:/var/log/payhub:ro # the JSON request/job lines, shipped as logs
@@ -201,6 +257,7 @@ services:
     image: grafana/grafana:11.2.2
     environment:
       GF_INSTALL_PLUGINS: grafana-clickhouse-datasource 4.4.0
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-otel} # provisioning/datasources/clickhouse.yaml
       # Local only: no login, everyone is admin.
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
@@ -224,5 +281,6 @@ services:
 
 volumes:
   pgdata:
+  redis-data:
   clickhouse-data:
   grafana-data:
