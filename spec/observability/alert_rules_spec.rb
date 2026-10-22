@@ -25,6 +25,7 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
       "payhub-circuit-open" => ["page", "MetricName = 'payhub_psp_circuit_opened_total'", "gt", 0, "1m", 300],
       "payhub-recon-breaks" => ["ticket", "MetricName = 'payhub_settlement_discrepancies_total'", "gt", 0, "1m", 86_400],
       "payhub-ledger-imbalance" => ["page", "MetricName = 'payhub_ledger_imbalance_detected_total'", "gt", 0, "1m", 86_400],
+      "payhub-cron-reloaded" => ["ticket", "MetricName = 'payhub_cron_schedule_reloaded_total'", "gt", 0, "1m", 3600],
       "payhub-stuck-alerts" => ["page", "MetricName = 'payhub_stuck_payment_alerts_total'", "gt", 0, "1m", 900],
       "payhub-stuck-unknown" => ["page", "MetricName = 'payhub_unknown_state_payments'", "gt", 0, "15m", 300],
       "payhub-dead-letters" => ["ticket", "MetricName = 'payhub_outbound_events_dead'", "gt", 0, "0s", 300],
@@ -91,7 +92,7 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
   # which max(Value) - min(Value) reads as 0. And ClickHouse compares maps by
   # key order, which differs between rows of one series: mapSort first.
   it "counts counter increases per series, never across services" do
-    expect(counter_uids.size).to eq(9)
+    expect(counter_uids.size).to eq(10)
     counter_sqls = counter_uids.map { |uid| sql(uid) }
     expect(counter_sqls).to all(include("lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), " \
                                         "mapSort(ResourceAttributes) ORDER BY TimeUnix"))
@@ -125,7 +126,7 @@ RSpec.describe "Grafana alert rules" do # rubocop:disable RSpec/DescribeClass
   end
 
   it "reads job-only counters from the worker" do
-    %w[payhub-late-success payhub-recon-breaks payhub-ledger-imbalance payhub-stuck-alerts].each do |uid|
+    %w[payhub-late-success payhub-recon-breaks payhub-ledger-imbalance payhub-stuck-alerts payhub-cron-reloaded].each do |uid|
       expect(sql(uid)).to include("ServiceName = 'payhub-worker'"), uid
     end
   end
