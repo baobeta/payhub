@@ -18,7 +18,7 @@ gem "connection_pool", "< 3"
 
 # Outbound HTTP to the PSP simulators. Faraday gives us per-request timeouts
 # and a retry middleware that we control (we must NOT retry blindly).
-gem "faraday", "~> 2.12"
+gem "faraday", "~> 2.15"
 gem "faraday-retry", "~> 2.2"
 gem "csv", "~> 3.2" # settlement reports (DECISIONS #18); no longer a default gem from Ruby 3.4
 
