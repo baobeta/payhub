@@ -219,7 +219,7 @@ Then run each of these in its own terminal:
 | `bin/check` | The full gate: zeitwerk → generated files → rubocop → sorbet → frontend → rspec → brakeman. CI runs the same gates, with rspec split into 3 shards |
 | `npm run e2e` | Playwright end-to-end tests (uses its own database, `payhub_e2e`) |
 
-**Versions:** Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22. Postgres is exposed on host port **5434**, because 5432 is often taken, and Redis on **6380**, so it does not clash with a Homebrew Redis on 6379: outside production, Rails, rspec and Sidekiq on the host default to `redis://localhost:6380/0`. Inside Compose, web and worker use `redis://redis:6379/0`. The simulators are standalone apps with their own specs: `cd simulators/nordpay && bundle exec rspec`.
+**Versions:** Ruby 3.3.12 (`.ruby-version`), Rails 8.1, Postgres 16, Node 22. Postgres is exposed on host port **5434**, because 5432 is often taken, and Redis on **6380**, so it does not clash with a Homebrew Redis on 6379: outside production, Rails, rspec and Sidekiq on the host default to `redis://localhost:6380/0`. Inside Compose, web and worker use `redis://redis:6379/0`. An existing checkout that still publishes 6379 needs `docker compose up -d redis` once after pulling (the `redis-data` volume, and the queued work in it, is kept); until then the host app fails with `RedisClient::CannotConnectError ... 127.0.0.1:6380`, or set `REDIS_URL=redis://localhost:6379/0`. The simulators are standalone apps with their own specs: `cd simulators/nordpay && bundle exec rspec`.
 
 ### Migrations
 

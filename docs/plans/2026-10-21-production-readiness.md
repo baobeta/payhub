@@ -32,7 +32,7 @@
   ```bash
   RAILS_ENV=test TEST_DATABASE=payhub_test_prod bin/rails db:create db:schema:load
   ```
-  Prefix every command with `TEST_DATABASE=payhub_test_prod`. Postgres listens on 5434 and Redis on 6379; start them with `docker compose up -d db redis`.
+  Prefix every command with `TEST_DATABASE=payhub_test_prod`. Postgres listens on 5434 and Redis on 6379 (now 6380 on the host, see README); start them with `docker compose up -d db redis`.
 - **Run one spec:**
   ```bash
   COVERAGE=false TEST_DATABASE=payhub_test_prod bundle exec rspec <file> -e "<name>"
