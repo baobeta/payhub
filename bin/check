@@ -38,15 +38,54 @@ if grep -rnE "role ?==|\.(owner|admin|developer|support|viewer|approver)\?" app 
   exit 1
 fi
 
-step "transaction pooling (no session state in app code)"
+step "transaction pooling (no session state in app code or config)"
 # Web and worker run behind a transaction-mode PgBouncer (RUNBOOK "Connection
-# pooling"): session SETs, session advisory locks, LISTEN/NOTIFY, WITH HOLD
-# cursors and temp tables would stick to a pooled server connection. SET LOCAL
-# and pg_advisory_xact_lock are fine. Opt out with # pooling-allow and a reason.
-hits="$( { grep -rnE "[\"'\`(]\s*SET\s" app lib --include='*.rb' --include='*.rake' | grep -vE "SET\s+LOCAL\s"
-          grep -rnE "pg_(try_)?advisory_lock(_shared)?\(|with_advisory_lock|\b(UN)?LISTEN\s|\bNOTIFY\s|pg_notify|WITH HOLD|CREATE\s+(TEMP|TEMPORARY)\s" \
-            app lib --include='*.rb' --include='*.rake'
-        } | grep -v "pooling-allow" || true )"
+# pooling"): session SETs (and set_config(..., false)), session advisory locks,
+# LISTEN/NOTIFY, WITH HOLD cursors and temp tables would stick to a pooled
+# server connection. SET LOCAL, SET TRANSACTION and pg_advisory_xact_lock are
+# fine. A SET counts only at the start of a SQL string (after a quote,
+# backtick, paren or ;) or of a line (heredoc SQL), so Ruby's set_x, .set( and
+# r.call("SET", ...) never match. Upper-case SET matches any `name = | TO`;
+# other cases only `name = ...` or `name to <literal>`, so English ("set X to
+# Postgres") does not, nor does `set search_path to myschema`. Also scans
+# config/ (initializers) and config/database.yml. Opt out with # pooling-allow
+# (-- pooling-allow inside SQL) and a reason.
+# grep exits 1 for no match and 2 for an error (a missing file): only the
+# error fails, so a broken scan cannot pass as "no session state".
+matches() {
+  local rc=0
+  grep "$@" || rc=$?
+  if [ "$rc" -gt 1 ]; then echo "bin/check: grep failed (exit $rc), see above" >&2; return "$rc"; fi
+}
+sp='[[:space:]]'
+sql_start="(^|[\"'\`(;])${sp}*"
+end_of_sql="${sp}*(\$|[\"'\`;),])"
+name='([a-z_][a-z0-9_.]*|#\{[^}]*\})'
+literal="(['\"0-9\$?-]|#\{|(default|on|off|true|false|public|local)([^a-z0-9_]|\$))"
+# Matched case-insensitively.
+pooling_any_case="${sql_start}set${sp}+(session${sp}+)?(${name}${sp}*=|${name}${sp}+to${sp}+${literal}"
+pooling_any_case+="|time${sp}+zone${sp}+(${literal}|interval)|role${sp}+[a-z_\"]+${end_of_sql}|authorization${sp}|characteristics${sp})"
+pooling_any_case+="|set_config${sp}*\(.*,${sp}*false${sp}*\)"
+pooling_any_case+="|pg_(try_)?advisory_lock(_shared)?${sp}*\(|with_advisory_lock|pg_notify${sp}*\("
+pooling_any_case+="|${sql_start}((un)?listen|notify)${sp}+[a-z_\"*]+${end_of_sql}|with${sp}+hold([^a-z_]|\$)"
+pooling_any_case+="|create${sp}+((global|local)${sp}+)?temp(orary)?${sp}+(table|view|sequence)"
+# Matched case-sensitively: upper-case SQL.
+pooling_upper="${sql_start}SET${sp}+(SESSION${sp}+)?(([A-Za-z_][A-Za-z0-9_.]*|#\{[^}]*\})${sp}*(=|TO${sp}|to${sp})"
+pooling_upper+="|TIME${sp}+ZONE${sp}|ROLE${sp}|AUTHORIZATION${sp}|CHARACTERISTICS${sp})"
+pooling_upper+="|(^|[^A-Za-z_])((UN)?LISTEN|NOTIFY)${sp}"
+pooling_src=(app lib config)
+pooling_inc=(--include='*.rb' --include='*.rake')
+# BSD grep (macOS) skips a missing directory without an error under --include.
+for dir in "${pooling_src[@]}"; do
+  [ -d "$dir" ] || { echo "bin/check: $dir/ is missing" >&2; exit 2; }
+done
+any_case="$(matches -rniE "$pooling_any_case" "${pooling_src[@]}" "${pooling_inc[@]}")"
+upper="$(matches -rnE "$pooling_upper" "${pooling_src[@]}" "${pooling_inc[@]}")"
+# database.yml: `variables:` SETs each one on every connect, and so does
+# schema_search_path unless it is Postgres' default ('"$user", public').
+db_yml="$(matches -HnE "^${sp}*(variables|schema_search_path)${sp}*:" config/database.yml)"
+db_yml="$(printf '%s\n' "$db_yml" | matches -vE "schema_search_path:${sp}*'\"[\$]user\",${sp}*public'${sp}*\$")"
+hits="$(printf '%s\n' "$any_case" "$upper" "$db_yml" | matches -v -e pooling-allow -e '^$' | sort -u)"
 if [ -n "$hits" ]; then
   echo "$hits"
   echo "Session state through the transaction pool: use SET LOCAL inside a transaction, pg_advisory_xact_lock, or a direct connection"
