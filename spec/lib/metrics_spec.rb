@@ -16,6 +16,20 @@ RSpec.describe Metrics do
     end).last.success?
   end
 
+  # When PROMETHEUS_MULTIPROC_DIR is unset the default Synchronized store is
+  # used. Synchronized rejects any store_settings, so gauge writes must not
+  # pass them in that case.
+  it "PR-4: a gauge write succeeds under the Synchronized (in-process) store" do
+    original_store = Prometheus::Client.config.data_store
+    Prometheus::Client.config.data_store = Prometheus::Client::DataStores::Synchronized.new
+    stub_const("Metrics::REGISTRY", Prometheus::Client::Registry.new)
+
+    expect { described_class.gauge(:unknown_state_payments, 42) }.not_to raise_error
+    expect(described_class::REGISTRY.get(:payhub_unknown_state_payments).get).to eq(42)
+  ensure
+    Prometheus::Client.config.data_store = original_store
+  end
+
   it "PR-4: the registry uses the file store when PROMETHEUS_MULTIPROC_DIR is set" do
     expect(Prometheus::Client.config.data_store).to be_a(Prometheus::Client::DataStores::DirectFileStore)
   end
