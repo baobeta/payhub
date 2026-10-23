@@ -478,9 +478,9 @@ GEM
       prism (>= 1.6.0)
       rbs (>= 4.0.0)
       tsort
-    redis (5.4.1)
-      redis-client (>= 0.22.0)
-    redis-client (0.31.0)
+    redis (6.0.0)
+      redis-client (= 0.30.1)
+    redis-client (0.30.1)
       connection_pool
     regexp_parser (2.12.0)
     reline (0.7.0)
@@ -657,7 +657,7 @@ DEPENDENCIES
   puma (>= 6.0, < 9)
   rack-attack (~> 6.7)
   rails (~> 8.1.4)
-  redis (~> 5.4)
+  redis (~> 6.0)
   rotp (~> 6.3)
   rqrcode (~> 2.2)
   rspec-rails (~> 8.0)
