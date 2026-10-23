@@ -32,7 +32,8 @@ module Metrics
       audit_write_failed: [:area],
       authz_undeclared: [:controller],
       tenant_not_found: [:area],
-      auth_failed: [:area, :factor]
+      auth_failed: [:area, :factor],
+      cron_schedule_reloaded: []
     }.freeze,
     T::Hash[Symbol, T::Array[Symbol]]
   )
