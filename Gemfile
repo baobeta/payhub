@@ -68,7 +68,7 @@ group :test do
   gem "pg_query", "~> 6.2" # prosopite needs it to fingerprint queries
   gem "webmock", "~> 3.24"
   # Line and branch coverage, started first thing in spec_helper.rb.
-  gem "simplecov", "~> 0.22", require: false
+  gem "simplecov", "~> 1.3", require: false
 end
 
 gem "vite_rails", "~> 3.0"
