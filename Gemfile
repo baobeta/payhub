@@ -66,7 +66,7 @@ group :test do
   # Fails the suite on N+1 queries in the payment list endpoint.
   gem "prosopite", "~> 2.2"
   gem "pg_query", "~> 6.2" # prosopite needs it to fingerprint queries
-  gem "webmock", "~> 3.24"
+  gem "webmock", "~> 3.34"
   # Line and branch coverage, started first thing in spec_helper.rb.
   gem "simplecov", "~> 0.22", require: false
 end
