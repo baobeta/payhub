@@ -23,7 +23,7 @@ gem "csv", "~> 3.3" # settlement reports (DECISIONS #18); no longer a default ge
 gem "rack-attack", "~> 6.7"
 # Production's Rails.cache (Rack::Attack counters shared by every process) is
 # Redis, the one Sidekiq already uses; RedisCacheStore needs this client.
-gem "redis", "~> 5.4"
+gem "redis", "~> 6.0"
 
 # Prometheus-style counters for /metrics.
 gem "prometheus-client", "~> 5.0"
