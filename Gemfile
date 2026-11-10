@@ -77,4 +77,4 @@ gem "bcrypt", "~> 3.1"
 
 gem "rotp", "~> 6.3"
 
-gem "rqrcode", "~> 2.2"
+gem "rqrcode", "~> 3.2"
