@@ -48,7 +48,7 @@ gem "strong_migrations", "~> 2.0"
 
 group :development, :test do
   gem "debug", platforms: %i[ mri windows ], require: "debug/prelude"
-  gem "rspec-rails", "~> 8.0"
+  gem "rspec-rails", "~> 8.1"
   gem "factory_bot_rails", "~> 6.4"
   gem "brakeman", require: false
 
