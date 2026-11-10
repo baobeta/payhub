@@ -9,7 +9,7 @@ gem "bootsnap", require: false
 gem "tzinfo-data", platforms: %i[ windows jruby ]
 
 # Background jobs — the PSP calls, status poller, and webhook sweepers all run here.
-gem "sidekiq", "~> 8.0"
+gem "sidekiq", "~> 8.1"
 # Periodic jobs (sweepers) scheduled from config/schedule.yml.
 gem "sidekiq-cron", "~> 2.0"
 
