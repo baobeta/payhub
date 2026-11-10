@@ -513,6 +513,75 @@ groups:
                     type: gt
                     params: [0]
 
+      # Raised by CronSchedule.heal! (worker, on Sidekiq's heartbeat).
+      - uid: payhub-cron-reloaded
+        title: "Cron schedule reloaded after Redis lost it"
+        condition: C
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: ticket
+        annotations:
+          summary: "A worker found sweeper cron jobs missing from Redis and loaded config/schedule.yml again: Redis lost data (a flush, a failover, a lost volume). Value: {{ index .Values \"B\" }}."
+          runbook_url: https://github.com/baobeta/payhub/blob/master/RUNBOOK.md#payhub-cron-reloaded
+        notification_settings:
+          receiver: payhub-tickets
+          group_by: [alertname, grafana_folder]
+          repeat_interval: 4h
+        data:
+          - refId: A
+            datasourceUid: clickhouse
+            relativeTimeRange:
+              from: 3600
+              to: 0
+            model:
+              refId: A
+              editorType: sql
+              queryType: table
+              format: 1
+              rawSql: |-
+                SELECT sum(rise) AS value
+                FROM (
+                  SELECT c.TimeUnix AS TimeUnix,
+                         if(isNaN(c.prev),
+                            if(u.first_up <= c.TimeUnix - INTERVAL 30 SECOND, c.Value, 0),
+                            if(c.Value >= c.prev, c.Value - c.prev, c.Value)) AS rise
+                  FROM (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, TimeUnix, Value,
+                           lagInFrame(Value, 1, nan) OVER (PARTITION BY ServiceName, mapSort(Attributes), mapSort(ResourceAttributes) ORDER BY TimeUnix
+                                                           ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS prev
+                    FROM otel.otel_metrics_sum
+                    WHERE MetricName = 'payhub_cron_schedule_reloaded_total' AND ServiceName = 'payhub-worker'
+                      AND TimeUnix >= now() - INTERVAL 1 HOUR - INTERVAL 1 DAY
+                  ) AS c
+                  INNER JOIN (
+                    SELECT ServiceName, ResourceAttributes['service.instance.id'] AS instance, min(TimeUnix) AS first_up
+                    FROM otel.otel_metrics_gauge
+                    WHERE MetricName = 'up' AND ServiceName = 'payhub-worker'
+                      AND TimeUnix >= now() - INTERVAL 1 HOUR - INTERVAL 1 DAY
+                    GROUP BY ServiceName, instance
+                  ) AS u ON c.ServiceName = u.ServiceName AND c.instance = u.instance
+                  WHERE c.TimeUnix >= now() - INTERVAL 1 HOUR
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+
       # Raised by StuckPaymentSweeperJob (worker).
       - uid: payhub-stuck-alerts
         title: "Payments stuck in pending or unknown"

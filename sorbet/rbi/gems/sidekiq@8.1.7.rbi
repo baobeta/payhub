@@ -21,75 +21,78 @@ class ActiveJob::QueueAdapters::SidekiqAdapter < ::ActiveJob::QueueAdapters::Abs
   # pkg:gem/sidekiq#lib/active_job/queue_adapters/sidekiq_adapter.rb:58
   def enqueue_after_transaction_commit?; end
 
-  # pkg:gem/sidekiq#lib/active_job/queue_adapters/sidekiq_adapter.rb:79
+  # pkg:gem/sidekiq#lib/active_job/queue_adapters/sidekiq_adapter.rb:82
   def enqueue_all(jobs); end
 
-  # pkg:gem/sidekiq#lib/active_job/queue_adapters/sidekiq_adapter.rb:71
+  # pkg:gem/sidekiq#lib/active_job/queue_adapters/sidekiq_adapter.rb:74
   def enqueue_at(job, timestamp); end
 
-  # pkg:gem/sidekiq#lib/active_job/queue_adapters/sidekiq_adapter.rb:111
-  def stopping?; end
+  # pkg:gem/sidekiq#lib/active_job/queue_adapters/sidekiq_adapter.rb:114
+  def stopping?(job = T.unsafe(nil)); end
 end
 
-# pkg:gem/sidekiq#lib/active_job/queue_adapters/sidekiq_adapter.rb:115
+# pkg:gem/sidekiq#lib/active_job/queue_adapters/sidekiq_adapter.rb:118
 ActiveJob::QueueAdapters::SidekiqAdapter::JobWrapper = Sidekiq::ActiveJob::Wrapper
 
 # pkg:gem/sidekiq#lib/sidekiq/version.rb:3
 module Sidekiq
   class << self
-    # pkg:gem/sidekiq#lib/sidekiq.rb:141
+    # pkg:gem/sidekiq#lib/sidekiq.rb:148
     def configure_client; end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:129
+    # pkg:gem/sidekiq#lib/sidekiq.rb:136
     def configure_embed(&block); end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:102
+    # pkg:gem/sidekiq#lib/sidekiq.rb:109
     def configure_server(&block); end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:90
+    # pkg:gem/sidekiq#lib/sidekiq.rb:97
     def default_configuration; end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:86
+    # pkg:gem/sidekiq#lib/sidekiq.rb:93
     def default_job_options; end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:82
+    # pkg:gem/sidekiq#lib/sidekiq.rb:89
     def default_job_options=(hash); end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:58
+    # pkg:gem/sidekiq#lib/sidekiq.rb:65
     def dump_json(object); end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:66
+    # pkg:gem/sidekiq#lib/sidekiq.rb:73
     def ent?; end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:107
+    # pkg:gem/sidekiq#lib/sidekiq.rb:114
     def freeze!; end
 
     # pkg:gem/sidekiq#lib/sidekiq/version.rb:7
     def gem_version; end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:54
+    # pkg:gem/sidekiq#lib/sidekiq.rb:61
     def load_json(string); end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:98
+    # pkg:gem/sidekiq#lib/sidekiq.rb:105
     def loader; end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:94
+    # pkg:gem/sidekiq#lib/sidekiq.rb:101
     def logger; end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:62
+    # pkg:gem/sidekiq#lib/sidekiq.rb:69
     def pro?; end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:74
+    # pkg:gem/sidekiq#lib/sidekiq.rb:81
     def redis(&block); end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:70
+    # pkg:gem/sidekiq#lib/sidekiq.rb:77
     def redis_pool; end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:50
+    # pkg:gem/sidekiq#lib/sidekiq.rb:57
     def server?; end
 
-    # pkg:gem/sidekiq#lib/sidekiq.rb:78
+    # pkg:gem/sidekiq#lib/sidekiq.rb:85
     def strict_args!(mode = T.unsafe(nil)); end
+
+    # pkg:gem/sidekiq#lib/sidekiq.rb:50
+    def testing!(mode = T.unsafe(nil), &block); end
 
     # pkg:gem/sidekiq#lib/sidekiq/transaction_aware_client.rb:46
     def transactional_push!; end
@@ -178,7 +181,7 @@ class Sidekiq::Client
   # pkg:gem/sidekiq#lib/sidekiq/client.rb:101
   def push(item); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/client.rb:134
+  # pkg:gem/sidekiq#lib/sidekiq/client.rb:139
   def push_bulk(items); end
 
   # pkg:gem/sidekiq#lib/sidekiq/client.rb:31
@@ -189,32 +192,32 @@ class Sidekiq::Client
 
   private
 
-  # pkg:gem/sidekiq#lib/sidekiq/client.rb:277
+  # pkg:gem/sidekiq#lib/sidekiq/client.rb:284
   def atomic_push(conn, payloads); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/client.rb:253
+  # pkg:gem/sidekiq#lib/sidekiq/client.rb:260
   def raw_push(payloads); end
 
   class << self
-    # pkg:gem/sidekiq#lib/sidekiq/client.rb:218
+    # pkg:gem/sidekiq#lib/sidekiq/client.rb:225
     def enqueue(klass, *args); end
 
-    # pkg:gem/sidekiq#lib/sidekiq/client.rb:246
+    # pkg:gem/sidekiq#lib/sidekiq/client.rb:253
     def enqueue_in(interval, klass, *args); end
 
-    # pkg:gem/sidekiq#lib/sidekiq/client.rb:225
+    # pkg:gem/sidekiq#lib/sidekiq/client.rb:232
     def enqueue_to(queue, klass, *args); end
 
-    # pkg:gem/sidekiq#lib/sidekiq/client.rb:232
+    # pkg:gem/sidekiq#lib/sidekiq/client.rb:239
     def enqueue_to_in(queue, interval, klass, *args); end
 
-    # pkg:gem/sidekiq#lib/sidekiq/client.rb:202
+    # pkg:gem/sidekiq#lib/sidekiq/client.rb:209
     def push(item); end
 
-    # pkg:gem/sidekiq#lib/sidekiq/client.rb:206
+    # pkg:gem/sidekiq#lib/sidekiq/client.rb:213
     def push_bulk(*, **, &); end
 
-    # pkg:gem/sidekiq#lib/sidekiq/client.rb:192
+    # pkg:gem/sidekiq#lib/sidekiq/client.rb:199
     def via(pool); end
   end
 end
@@ -227,22 +230,22 @@ module Sidekiq::Component
   # pkg:gem/sidekiq#lib/sidekiq/component.rb:25
   def config; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/component.rb:118
+  # pkg:gem/sidekiq#lib/sidekiq/component.rb:121
   def default_tag(dir = T.unsafe(nil)); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/component.rb:79
+  # pkg:gem/sidekiq#lib/sidekiq/component.rb:82
   def fire_event(event, options = T.unsafe(nil)); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/component.rb:75
+  # pkg:gem/sidekiq#lib/sidekiq/component.rb:78
   def handle_exception(ex, ctx = T.unsafe(nil)); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/component.rb:63
+  # pkg:gem/sidekiq#lib/sidekiq/component.rb:66
   def hostname; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/component.rb:71
+  # pkg:gem/sidekiq#lib/sidekiq/component.rb:74
   def identity; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/component.rb:100
+  # pkg:gem/sidekiq#lib/sidekiq/component.rb:103
   def inspect; end
 
   # pkg:gem/sidekiq#lib/sidekiq/component.rb:51
@@ -251,7 +254,7 @@ module Sidekiq::Component
   # pkg:gem/sidekiq#lib/sidekiq/component.rb:33
   def mono_ms; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/component.rb:67
+  # pkg:gem/sidekiq#lib/sidekiq/component.rb:70
   def process_nonce; end
 
   # pkg:gem/sidekiq#lib/sidekiq/component.rb:28
@@ -283,7 +286,7 @@ class Sidekiq::Config
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:71
   def []=(*args, **, &block); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:252
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:251
   def average_scheduled_poll_interval=(interval); end
 
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:134
@@ -301,7 +304,7 @@ class Sidekiq::Config
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:87
   def concurrency=(val); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:243
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:242
   def death_handlers; end
 
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:129
@@ -310,16 +313,16 @@ class Sidekiq::Config
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:71
   def dig(*args, **, &block); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:263
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:262
   def error_handlers; end
 
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:71
   def fetch(*args, **, &block); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:228
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:227
   def freeze!; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:307
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:301
   def handle_exception(ex, ctx = T.unsafe(nil)); end
 
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:71
@@ -331,25 +334,25 @@ class Sidekiq::Config
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:71
   def key?(*args, **, &block); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:158
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:157
   def local_redis_pool; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:281
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:280
   def logger; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:292
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:291
   def logger=(logger); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:220
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:219
   def lookup(name, default_class = T.unsafe(nil)); end
 
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:71
   def merge!(*args, **, &block); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:164
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:163
   def new_redis_pool(size, name = T.unsafe(nil)); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:275
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:274
   def on(event, &block); end
 
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:113
@@ -358,25 +361,22 @@ class Sidekiq::Config
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:109
   def queues=(val); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:152
-  def reap(timeout = T.unsafe(nil)); end
-
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:149
   def reap_idle_redis_connections(timeout = T.unsafe(nil)); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:186
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:185
   def redis; end
 
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:145
   def redis=(hash); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:170
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:169
   def redis_info; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:154
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:153
   def redis_pool; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:209
+  # pkg:gem/sidekiq#lib/sidekiq/config.rb:208
   def register(name, instance); end
 
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:123
@@ -393,11 +393,6 @@ class Sidekiq::Config
 
   # pkg:gem/sidekiq#lib/sidekiq/config.rb:95
   def total_concurrency; end
-
-  private
-
-  # pkg:gem/sidekiq#lib/sidekiq/config.rb:301
-  def parameter_size(handler); end
 end
 
 # pkg:gem/sidekiq#lib/sidekiq/config.rb:11
@@ -470,48 +465,48 @@ module Sidekiq::Job
   end
 end
 
-# pkg:gem/sidekiq#lib/sidekiq/job.rb:275
+# pkg:gem/sidekiq#lib/sidekiq/job.rb:277
 module Sidekiq::Job::ClassMethods
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:378
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:393
   def build_client; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:363
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:378
   def client_push(item); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:276
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:278
   def delay(*args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:280
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:282
   def delay_for(*args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:284
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:286
   def delay_until(*args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:296
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:298
   def perform_async(*args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:344
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:359
   def perform_at(interval, *args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:326
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:341
   def perform_bulk(*args, **kwargs); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:332
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:347
   def perform_in(interval, *args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:301
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:303
   def perform_inline(*args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:304
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:306
   def perform_sync(*args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:288
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:290
   def queue_as(q); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:292
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:294
   def set(options); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:359
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:374
   def sidekiq_options(opts = T.unsafe(nil)); end
 end
 
@@ -727,19 +722,19 @@ class Sidekiq::Job::Setter
   # pkg:gem/sidekiq#lib/sidekiq/job.rb:205
   def perform_async(*args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:261
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:263
   def perform_at(interval, *args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:251
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:253
   def perform_bulk(args, **options); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:258
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:260
   def perform_in(interval, *args); end
 
   # pkg:gem/sidekiq#lib/sidekiq/job.rb:215
   def perform_inline(*args); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:249
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:251
   def perform_sync(*args); end
 
   # pkg:gem/sidekiq#lib/sidekiq/job.rb:197
@@ -747,7 +742,7 @@ class Sidekiq::Job::Setter
 
   private
 
-  # pkg:gem/sidekiq#lib/sidekiq/job.rb:265
+  # pkg:gem/sidekiq#lib/sidekiq/job.rb:267
   def at(interval); end
 end
 
@@ -1184,16 +1179,22 @@ Sidekiq::Scheduled::Enq::LUA_ZPOPBYSCORE = T.let(T.unsafe(nil), String)
 class Sidekiq::Scheduled::Poller
   include ::Sidekiq::Component
 
-  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:76
+  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:77
   def initialize(config); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:106
+  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:108
   def enqueue; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:94
+  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:75
+  def rnd; end
+
+  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:75
+  def rnd=(_arg0); end
+
+  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:96
   def start; end
 
-  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:86
+  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:88
   def terminate; end
 
   private
@@ -1216,7 +1217,7 @@ class Sidekiq::Scheduled::Poller
   # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:182
   def scaled_poll_interval(process_count); end
 
-  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:117
+  # pkg:gem/sidekiq#lib/sidekiq/scheduled.rb:119
   def wait; end
 end
 
@@ -1244,7 +1245,7 @@ module Sidekiq::ServerMiddleware
   def redis_pool; end
 end
 
-# pkg:gem/sidekiq#lib/sidekiq.rb:151
+# pkg:gem/sidekiq#lib/sidekiq.rb:158
 class Sidekiq::Shutdown < ::Interrupt; end
 
 # pkg:gem/sidekiq#lib/sidekiq/transaction_aware_client.rb:7
