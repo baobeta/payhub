@@ -34,7 +34,7 @@ gem "lograge", "~> 0.15"
 # Distributed tracing via OpenTelemetry OTLP.
 gem "opentelemetry-sdk", "~> 1.8"
 gem "opentelemetry-exporter-otlp", "~> 0.30"
-gem "opentelemetry-instrumentation-all", "~> 0.99"
+gem "opentelemetry-instrumentation-all", "~> 0.100"
 
 # Gradual static typing. Runtime sigs are checked in dev/test and
 # stripped to no-ops in production via T::Configuration (see initializer).
